@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+
+<!--
+  Ribbon do AutoEDM. Recurso EMBUTIDO; carregado por ElectrodeRibbon via
+  LoadXml(assembly, "AutoEDM.AddIn.Ribbon.xml"). O 'id' de cada botão é o
+  CommandId recebido em OnControlClick.
+
+  ÍCONE (imageId): o Solid Edge busca a imagem num recurso de BITMAP Win32
+  embutido no DLL do add-in (SetAddInInfo(hInstance,...)); sem esse recurso o
+  botão aparece só com o rótulo (showLabel=true). A embutir depois.
+-->
+<ribbon xmlns="http://github.com/SolidEdgeCommunity/SolidEdge/Ribbon">
+  <tab name="AutoEDM">
+    <group name="Eletrodos">
+      <button id="3" size="large" label="Analisar (Z)"
+              screentip="Analisar eletrodos por níveis de Z"
+              supertip="Lê a montagem ativa (sem alterar nada) e propõe quantos eletrodos existem, por nível de profundidade, com a posição de cada um."
+              imageId="3" showLabel="true" />
+      <button id="1" size="large" label="Criar eletrodos"
+              screentip="Criar eletrodos + base"
+              supertip="Cria uma peça por eletrodo com o BLOCO da base (holder) modelado e posicionado na montagem (você copia as faces de queima por baixo). Não salva a montagem."
+              imageId="1" showLabel="true" />
+    </group>
+    <group name="Relatórios">
+      <button id="2" size="large" label="Coordenadas"
+              screentip="Relatório de coordenadas de queima"
+              supertip="Gera a tabela de coordenadas de queima (zero-máquina) por detalhe/eletrodo, em .txt e .csv. Não altera a montagem."
+              imageId="2" showLabel="true" />
+      <button id="4" size="large" label="Ficha (spec-sheet)"
+              screentip="Folha de dados dos eletrodos"
+              supertip="Gera a ficha por eletrodo (Ra, pegada, blank, offset por Ra, fixação) em .txt e .csv. Não altera a montagem."
+              imageId="4" showLabel="true" />
+    </group>
+  </tab>
+</ribbon>

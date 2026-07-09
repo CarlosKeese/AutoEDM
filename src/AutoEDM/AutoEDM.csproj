@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Console entry point for the MVP scaffold. A WinForms/WPF operator UI can be
+      layered on later (see README "Roadmap"). To switch to WinForms:
+        <OutputType>WinExe</OutputType> and <UseWindowsForms>true</UseWindowsForms>
+    -->
+    <!-- GUI WinForms de monitoramento como ponto de entrada. -->
+    <OutputType>WinExe</OutputType>
+    <!--
+      Fica em net472 por enquanto (decisão do projeto). O código já é PORTÁVEL para
+      .NET moderno: o SolidEdgeConnector usa ComInterop.GetActiveObject (P/Invoke)
+      em vez de Marshal.GetActiveObject, que foi removido do .NET Core/5+.
+      Para migrar para .NET 10, bastam dois passos:
+        1. <TargetFramework>net10.0-windows</TargetFramework>
+        2. <PackageReference Include="System.Drawing.Common" Version="..." />
+           (System.Drawing deixa de ser referência de framework no .NET moderno)
+    -->
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM</RootNamespace>
+    <AssemblyName>AutoEDM</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+
+    <!--
+      Solid Edge 2023 / 2026 ship as 64-bit only. The COM server is x64, so this
+      process MUST be x64 to talk to it (a 32-bit client cannot bind the x64
+      in-process/out-of-process server correctly).
+    -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Required for late binding (the `dynamic` keyword) on .NET Framework. -->
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Drawing" />
+    <!-- GUI de monitoramento. -->
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Todo o núcleo de automação vive na lib; aqui fica só a GUI (Program + UI). -->
+    <ProjectReference Include="..\AutoEDM.Core\AutoEDM.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    ======================================================================
+    EARLY BINDING (optional, recommended once you have Solid Edge installed)
+    ======================================================================
+    Late binding (dynamic) is used by default so the project compiles on any
+    machine without Solid Edge present. For production, add early-binding
+    Interop references generated from the installed type libraries. Either:
+
+    (A) Add COM references in Visual Studio:
+        Project > Add > COM Reference >
+          "Solid Edge Framework Type Library"
+          "Solid Edge Geometry Type Library"
+          "Solid Edge Part Type Library"
+          "Solid Edge Assembly Type Library"
+          "Solid Edge Draft Type Library"
+
+    (B) Or generate interop assemblies with TlbImp.exe and reference the DLLs:
+        <ItemGroup>
+          <Reference Include="Interop.SolidEdgeFramework"><HintPath>..\..\lib\Interop.SolidEdgeFramework.dll</HintPath></Reference>
+          <Reference Include="Interop.SolidEdgeGeometry"><HintPath>..\..\lib\Interop.SolidEdgeGeometry.dll</HintPath></Reference>
+          <Reference Include="Interop.SolidEdgePart"><HintPath>..\..\lib\Interop.SolidEdgePart.dll</HintPath></Reference>
+        </ItemGroup>
+
+    Then define the EARLYBIND constant to switch code paths where provided:
+        <PropertyGroup><DefineConstants>$(DefineConstants);EARLYBIND</DefineConstants></PropertyGroup>
+  -->
+
+</Project>

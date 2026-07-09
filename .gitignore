@@ -1,0 +1,52 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Rider
+.idea/
+
+## Generated interop assemblies (regenerate per machine)
+lib/Interop.SolidEdge*.dll
+
+## Runtime logs and API dumps (generated locally per SE installation)
+logs/
+*.log
+src/**/logs/
+
+## Keep the typed typelib dump as the offline SDK reference
+!src/**/logs/SE_API_dump_*.txt
+
+## Solid Edge / CAD files generated during tests
+*.par
+*.asm
+*.psm
+*.dft
+*.cfg
+
+## Except intentional test fixtures
+!scripts/*.par
+!scripts/*.asm
+!scripts/*.cfg
+
+## Temporary / output files
+output/
+electrodes/
+reports/
+*.tmp
+*.cache
+
+## OS files
+Thumbs.db
+desktop.ini
+.DS_Store

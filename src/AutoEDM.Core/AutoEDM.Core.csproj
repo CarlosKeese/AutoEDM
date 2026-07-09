@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Núcleo do AutoEDM: toda a automação COM do Solid Edge (Com, Selection,
+    Electrode, Assembly, Model, Diagnostics, Experiments). SEM UI. É consumido
+    pela GUI de debug (AutoEDM.exe) e pelo add-in (AutoEDM.AddIn), então fica como
+    biblioteca — assim existe UM único AutoEDM.exe (a GUI) e nada de exe duplicado.
+    Namespaces continuam AutoEDM.* (RootNamespace), independentes do AssemblyName.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM</RootNamespace>
+    <AssemblyName>AutoEDM.Core</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" /> <!-- late binding (dynamic) -->
+    <Reference Include="System.Drawing" />   <!-- Color (cor = Ra) -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Interop redistribuível do Solid Edge (compila sem SE instalado). Usado só onde
+      o late binding não basta: montar SAFEARRAY(IDispatch) de Face para o
+      CopySurfaces.Add. O resto do núcleo segue late-bound (dynamic).
+    -->
+    <PackageReference Include="Interop.SolidEdge" Version="219.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Add-in COM do Solid Edge (botão "Criar eletrodos" na ribbon).
+    Registra com:  regasm /codebase AutoEDM.AddIn.dll   (prompt admin, versão x64)
+    Remove com:    regasm /codebase /u AutoEDM.AddIn.dll
+    O framework SolidEdge.Community.AddIn escreve as chaves de CATID/AutoConnect.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM.AddIn</RootNamespace>
+    <AssemblyName>AutoEDM.AddIn</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <!-- SE 2023/2026 são x64: o add-in in-process precisa ser x64. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+    <!-- ComVisible por tipo (atributos na classe); não expor tudo. -->
+    <ComVisible>false</ComVisible>
+    <!--
+      Recurso Win32 com os bitmaps do ribbon (RT_BITMAP IDs 1..4 = imageId do XML).
+      O Solid Edge lê os ícones do DLL via SetAddInInfo(hInstance,...). Gerado por
+      tools/make_ribbon_res.ps1 (sem rc.exe). Substitui o recurso Win32 padrão (version info).
+    -->
+    <Win32Resource>Resources\AutoEDM.res</Win32Resource>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" /> <!-- dynamic -->
+    <Reference Include="System.Windows.Forms" /> <!-- MessageBox -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Base classes + ribbon + registro COM; traz Interop.SolidEdge. -->
+    <PackageReference Include="SolidEdge.Community.AddIn" Version="219.0.0" />
+    <!-- Reaproveita TODO o núcleo (Selection/Electrode/Com/Assembly) — lib, sem exe. -->
+    <ProjectReference Include="..\AutoEDM.Core\AutoEDM.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Ribbon.xml" />
+  </ItemGroup>
+
+</Project>

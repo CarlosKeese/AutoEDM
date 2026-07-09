@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Registrador POR USUÁRIO do add-in (HKCU\Software\Classes) — NÃO precisa de admin.
+    Uso:
+      AutoEDM.Register.exe            registra
+      AutoEDM.Register.exe /u         remove
+    O COM e a Solid Edge do seu usuário leem HKCU\Software\Classes antes do HKLM,
+    então o add-in é descoberto sem escrever em área de máquina.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM.Register</RootNamespace>
+    <AssemblyName>AutoEDM.Register</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Referencia o add-in (para o GUID/caminho) e o framework (constantes CATID). -->
+    <ProjectReference Include="..\AutoEDM.AddIn\AutoEDM.AddIn.csproj" />
+    <PackageReference Include="SolidEdge.Community.AddIn" Version="219.0.0" />
+  </ItemGroup>
+
+</Project>
