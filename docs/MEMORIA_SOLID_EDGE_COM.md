@@ -109,8 +109,10 @@ Cada um destes já custou pelo menos um run. Todos ✅.
 | — armadilha | ✅ | passar só o template (como arg1) insere o próprio template read-only como ocorrência **standalone** → cópia falha | Log 21 |
 | Box (blank) | 🟡 | `Models.AddBoxByTwoPoints(x1,y1,z1,x2,y2,z2,dAngle,dDepth,pPlane,ExtentSide,vbKeyPointExtent,pKeyPointObj,pKeyPointFlags)` — 13 args, `pPlane = RefPlanes.Item(1)`, `ExtentSide` igLeft=1/igRight=2/igSymmetric=3 | Log 8 (assinatura); ainda `DISP_E_TYPEMISMATCH` no draw — **secundário** |
 | **Bloco sólido via sketch+extrude** | ✅ | `PartDocument.ProfileSets.Add() → .Profiles.Add(RefPlanes.Item(1)=plano XY) → Lines2d.AddBy2Points(x1,y1,x2,y2)×4 → Profile.End(1) → Models.AddFiniteExtrudedProtrusion(1, Profile[] TIPADO, side, distMetros)`. ProfileArray precisa ser `SolidEdgePart.Profile[]` (SAFEARRAY(IDispatch), como o Face[]); object[] falha. **side = direção: 1=igLeft (−normal/−Z), 2=igRight (+normal/+Z), 3=simétrico** (Log 35). Modelar na peça é STANDALONE (não precisa in-place). Em SÍNCRONO, apagar a sketch depois (`ProfileSet.Delete()`). | **Logs 33–35 ✓** |
-| Criar peça + inserir posicionada na montagem | ✅ | `app.Documents.Add("SolidEdge.PartDocument")` → modela/`SaveAs(path)`/`Close()` → `AssemblyDocument.Occurrences.AddByFilename(path)` → `Occurrence.PutOrigin(x,y,z)` (metros). Sem inter-part copy, sem in-place. | **Log 35 ✓** (6 eletrodos) |
-| Box via `AddBoxByTwoPoints` | ❌ | `DISP_E_TYPEMISMATCH` recorrente — use sketch+extrude acima | Logs 8–30 |
+| Criar peça + inserir posicionada na montagem | ✅ | `app.Documents.Add("SolidEdge.PartDocument")` → modela/`SaveAs(path)`/`Close()` → `AssemblyDocument.Occurrences.AddByFilename(path)` → `Occurrence.PutOrigin(x,y,z)` (metros). Sem inter-part copy, sem in-place. | **Log 35 ✓** (6 eletrodos); **Log 045 ✓** (3/3 eletrodos com furos) |
+| **Furos de fixação simples (M6 Ø5 + 2×Ø4)** | ✅ | `HoleDataCollection.Add(33, diameter)` (`igRegularHole=33`) + `Profile.Holes2d.Add(x,y)` + `Profile.End(1)` + `Holes.AddSync(1, Profile[], side=1, 13, depth, holeData)`. Funciona em síncrono. | **Log 045 ✓** |
+| **Furo roscado (`igTappedHole=37`)** | ❌ | `HoleDataCollection.Add(37, ...)` cria o `HoleData`, mas `Holes.AddSync` retorna **E_FAIL** e corrompe o proxy (`0x80010114`), abortando o eletrodo. | **Logs 046–047 ❌** |
+| Box via `AddBoxByTwoPoints` | ❌ | `DISP_E_TYPEMISMATCH` recorrente — use sketch+extrude acima. Também usado em `ElectrodeBuilder.CreateBlankAndHolder` — deve ser substituído. | Logs 8–30; revisão 2026-07-10 |
 | Cilindro (holder) | 📖 | `Models.AddCylinderByCenterAndRadius(x,y,z,dRadius,dDepth,pPlane,ExtentSide,vbKeyPointExtent,pKeyPointObj,pKeyPointFlags)` — 10 args | Log 8 |
 
 ### 2.6. Cópia de superfícies / Inter-Part (⛔ **o nó atual**)
@@ -214,15 +216,18 @@ tipo do array **não** são a causa.
 1. ~~**Diagnóstico in-place** (§3)~~ ✅ **FEITO (Log 29): `ModelingInAssembly=False`** — o
    problema É o contexto: nunca entramos em edição in-place. Falta o gesto que faz
    `ModelingInAssembly=True` (ver §3). As tentativas 2–4 abaixo só valem depois disso.
-2. **TopologyReference** (Kimi 2.5, intocado): `Face.GetReferenceKey(out key)` na cavidade
+2. **TopologyReference** (🟡, intocado): `Face.GetReferenceKey(out key)` na cavidade
    → `Occurrence.CreateTopologyReference(key)` no contexto do eletrodo. É a API dedicada de
-   referência de topologia in-context.
+   referência de topologia in-context. **Esta é a alternativa mais promissora ao Inter-Part Copy.**
 3. **Comando nativo do SE**: `AssemblyDocument.SelectSet` + `Application.StartCommand`.
    Ressalva: `StartCommand` é **interativo/assíncrono** — difícil dirigir 100% headless;
    tende ao fluxo **semi-automático**.
 4. **Semi-automático (bridge pragmático)**: o desenhista faz o Inter-Part Copy no clique
    nativo; a ferramenta faz offset/blank/fixação/recolor/save. Desbloqueia o resto do
    pipeline sem resolver o nó COM.
+5. **Rosca M6 via `Model.Threads.Add`** (🟡, descoberto Log 047): assinatura
+   `Add(HoleData: IDispatch, NumberOfCylinders: int, CylinderArray: VARIANT, CylinderEndArray: VARIANT, ...)`
+   pode renderizar rosca separadamente, sem depender do `igTappedHole` que corrompe o proxy.
 
 > **Decisão registrada (Carlos):** após a última tentativa via COM, **pivotar** para
 > outras ferramentas independentes do blocker (destacar faces, spec-sheet, checagem de
@@ -241,6 +246,7 @@ tipo do array **não** são a causa.
 | `DISP_E_PARAMNOTOPTIONAL` (0x8002000F) | param obrigatório omitido (`Type.Missing` recusado) | passar `null` no objeto obrigatório; conferir aridade no dump |
 | `E_FAIL` (0x80004005) no `CopySurfaces.Add` | operação inválida no contexto (ver §4) — **não** é tipo nem opção global | investigar in-place real (§3) / mudar de API |
 | `E_NOINTERFACE` (0x80004002) | objeto não expõe a interface que o método quer (ex.: `IPC.Add(occ)`) | passar o tipo certo de `AsmSource` (provável `Reference`/topology) |
+| `0x80010114` ("O objeto solicitado não existe") | proxy COM corrompido após falha anterior (ex.: `igTappedHole` E_FAIL) | abortar operação após falha crítica; não reutilizar coleção COM envenenada; usar furo simples como fallback |
 | `InvalidCastException` no `IPC.Add(occ)` | binder dinâmico não coage o COM | chamar via **`InvokeMember`** (marshaling robusto) |
 | `cParams=0` num método real | é **coleção-propriedade** | `.Add(...)` na coleção |
 | Enum errado entre versões | valores são por versão | ler o valor **no dump** desta versão |
@@ -250,14 +256,17 @@ tipo do array **não** são a causa.
 
 ## 6. Limites conhecidos (o que HOJE não dá / não sabemos)
 
-- ⛔ **Inter-Part Copy via COM** — sem caminho validado (§4). Plano B = semi-automático.
+- ⛔ **Inter-Part Copy via COM** — sem caminho validado (§4). Plano B = semi-automático ou `CreateTopologyReference`.
 - ❌ **`Occurrence.Activate=true` NÃO entra em edição in-place** — confirmado Log 29
   (`ModelingInAssembly=False`). Falta a API real de in-place; sem ela o Inter-Part não roda (§3).
-- 🟡 **Box via `AddBoxByTwoPoints`** — assinatura conhecida, ainda `DISP_E_TYPEMISMATCH`;
-  há fallback sketch+extrude. Secundário.
+- ✅ **Bloco + furos simples via sketch+extrude** — caminho funcional (Log 045).
+- ❌ **Furo roscado (`igTappedHole=37`) no síncrono** — `E_FAIL` seguido de `0x80010114`. Fallback: furo simples Ø5 + rosca manual futura via `Model.Threads.Add`.
+- ❌ **Box via `AddBoxByTwoPoints`** — assinatura conhecida, ainda `DISP_E_TYPEMISMATCH`;
+  há fallback sketch+extrude. Também usado em `CreateBlankAndHolder` — deve ser substituído.
 - 🟡 **Escrever cor de face no fluxo** — API do lado da escrita conhecida, não exercitada.
 - 📖 **Offset / Stitch** — assinaturas conhecidas, mas **dependem** da cópia funcionar
-  primeiro; não exercitados.
+  primeiro; não exercitados. Além disso, `ModelingHelpers.AddFaceOffset`/`AddOffsetSurface`
+  passam `object[]` onde a API quer `FaceSet`/`IDispatch`.
 - ⚠️ **Dump tipado incompleto** — crasha antes de terminar a lib Assembly; por isso
   `CopySurfaces`/`InterpartConstructions` não aparecem nele. Um dump completo é uma
   pendência que ajudaria a fechar §4.

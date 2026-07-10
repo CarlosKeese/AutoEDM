@@ -15,8 +15,8 @@ namespace AutoEDM.Electrode
         /// <summary>Diâmetro do furo-guia da rosca central (broca de M6 ≈ 5,0 mm).</summary>
         public double CenterTapDrillDiameter { get; set; } = 5.0;
 
-        /// <summary>Profundidade do furo roscado central M6 (mm) — confirmado Carlos.</summary>
-        public double CenterHoleDepth { get; set; } = 11.0;
+        /// <summary>Profundidade do furo central M6 na BASE (mm) — Carlos: Ø5 × 8 mm, cego.</summary>
+        public double CenterHoleDepth { get; set; } = 8.0;
 
         /// <summary>Diâmetro dos dois furos de pino.</summary>
         public double DowelDiameter { get; set; } = 4.0;

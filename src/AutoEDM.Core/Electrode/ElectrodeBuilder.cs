@@ -318,14 +318,18 @@ namespace AutoEDM.Electrode
                     // origem (plano da sketch) fica 1 mm ACIMA do topo do bolsão e o bloco
                     // extruda em +Z acima dela ("acima do plano na altura da cavidade+1mm").
                     double blockH = p.HolderHeight;
-                    double baseZmm = e.TopZmm + 1.0;
+                    // Origem NA SUPERFÍCIE a erodir (topo da queima = TopZ). A base sobe +Z
+                    // a partir da origem (fica sobre a superfície, não muito acima); os furos
+                    // são feitos no plano de topo (offset +holderH). Escolha do Carlos.
+                    double baseZmm = e.TopZmm;
 
                     string path = System.IO.Path.Combine(folder, $"{p.ElectrodeName}_D{e.Index:00}.par");
                     Log.Info($"Eletrodo {e.Index}: base {blockX:0.0}×{blockY:0.0}×{blockH:0.0} mm, " +
-                             $"origem ({e.CenterXmm:0.0}, {e.CenterYmm:0.0}, {baseZmm:0.0}) mm [topo cavidade {e.TopZmm:0.0}+1] -> {System.IO.Path.GetFileName(path)}");
+                             $"origem/superfície ({e.CenterXmm:0.0}, {e.CenterYmm:0.0}, {baseZmm:0.0}) mm -> {System.IO.Path.GetFileName(path)}");
 
                     partDoc = app.Documents.Add("SolidEdge.PartDocument");
-                    BlankModeler.CreateBox(partDoc, blockX, blockY, blockH);
+                    BlankModeler.CreateBox(partDoc, blockX, blockY, blockH, 1, 2); // side=2: sobe +Z a partir da superfície
+                    BlankModeler.AddFixationHoles(partDoc, blockX, blockY, blockH);
                     partDoc.SaveAs(path);
                     partDoc.Close();
                     partDoc = null;

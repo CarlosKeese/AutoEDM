@@ -29,6 +29,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | [`docs/api/SolidEdgeFramework.md`](./api/SolidEdgeFramework.md) | Tipos da type library `SolidEdgeFramework` (Application, Documents, add-ins, eventos, etc.). |
 | [`docs/api/SolidEdgePart.md`](./api/SolidEdgePart.md) | Tipos da type library `SolidEdgePart` (PartDocument, Models, Constructions, features, etc.). |
 | [`docs/api/constants.md`](./api/constants.md) | **231 enums e constantes** COM consolidadas com valores. |
+| [`docs/SolidEdge_API_COM_Referencia_Completa.md`](./SolidEdge_API_COM_Referencia_Completa.md) | Catálogo AMPLO de tipos da API (nomes + descrições de todas as classes, do Programmer's Guide; pesquisa do Kimi). Bom mapa de descoberta — mas **sem assinaturas nem valores de enum**: para esses, use o dump ou reflita `Interop.SolidEdge`. |
 | [`docs/COM_INTEGRATION.md`](./COM_INTEGRATION.md) | Guia de integração COM: arquitetura, ProgID, type libraries, configuração do projeto, objetos principais. |
 | [`docs/MAPEAMENTO_INTEGRACAO_COM.md`](./MAPEAMENTO_INTEGRACAO_COM.md) | Mapeamento das funções COM usadas em cada estágio do núcleo AutoEDM. |
 

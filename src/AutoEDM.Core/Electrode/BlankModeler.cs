@@ -72,5 +72,87 @@ namespace AutoEDM.Electrode
         }
 
         private static string SafeName(dynamic o) { try { return (string)o.Name; } catch { return "?"; } }
+
+        /// <summary>
+        /// Fura a fixação no TOPO da base, cega: M6 central (Ø5×8) + 2×Ø4×9 a 15 mm,
+        /// alinhados ao MAIOR lado do blank. A base foi extrudada +Z a partir de
+        /// Item(1)=origem=superfície; então cria um plano paralelo no topo (offset
+        /// +normal por holderH) e fura para dentro (–normal). Cada furo é 1 perfil (o
+        /// grupo com 2 Holes2d fazia só 1). Apaga esboços e o plano de topo (ordenados).
+        ///
+        /// O M6 é o FURO DA BROCA DE ROSCA (Ø5 SIMPLES) — o operador tapea a rosca M6. A
+        /// renderização da rosca via COM (HoleData tapped / Model.Threads.Add) está em
+        /// validação no BlankBoxProbe e NÃO entra aqui: um HoleData tapped (igTappedHole)
+        /// fazia Holes.AddSync retornar E_FAIL, que ENVENENAVA o proxy COM (a chamada
+        /// seguinte estourava 0x80010114) e abortava o eletrodo inteiro (Log 047: 0/3).
+        ///
+        /// NUNCA lança: furos são secundários ao bloco, então qualquer falha é logada e
+        /// o bloco segue para o SaveAs.
+        /// </summary>
+        public static void AddFixationHoles(dynamic partDoc, double blockXmm, double blockYmm, double holderHmm, FixationPattern fix = null)
+        {
+            fix = fix ?? new FixationPattern();
+            try
+            {
+                int mode = 1; try { mode = (int)partDoc.ModelingMode; } catch { }
+
+                dynamic topPlane;
+                try
+                {
+                    topPlane = partDoc.RefPlanes.AddParallelByDistance(
+                        partDoc.RefPlanes.Item(1), holderHmm / 1000.0, 2,   // 2 = igRight (+normal = topo da base)
+                        Type.Missing, Type.Missing, Type.Missing, Type.Missing);
+                }
+                catch (Exception e) { Log.Warn($"Plano de topo (AddParallelByDistance) falhou: {e.GetBaseException().Message}"); return; }
+
+                bool alongX = blockXmm >= blockYmm;
+                Log.Info($"Furos (ModelingMode={mode}): M6 Ø{fix.CenterTapDrillDiameter:0.#}×{fix.CenterHoleDepth:0.#} (broca de rosca) + " +
+                         $"2×Ø{fix.DowelDiameter:0.#}×{fix.DowelDepth:0.#} @ {fix.DowelCenterDistance:0.#} (maior lado " +
+                         (alongX ? "X" : "Y") + ").");
+
+                dynamic model = partDoc.Models.Item(1);
+                dynamic holes = model.Holes;
+
+                // M6 = furo SIMPLES Ø5 (igRegularHole=33), receita validada. (Rosca só no probe.)
+                object m6 = partDoc.HoleDataCollection.Add(33, fix.CenterTapDrillDiameter / 1000.0);
+                HoleAt(partDoc, holes, mode, topPlane, 0.0, 0.0, m6, fix.CenterHoleDepth, "M6 (Ø5)");
+
+                // 2×Ø4 ao longo do MAIOR lado (perfis SEPARADOS — 1 furo por AddSync).
+                double half = fix.DowelCenterDistance / 2.0;
+                object hd4 = partDoc.HoleDataCollection.Add(33, fix.DowelDiameter / 1000.0); // 33 = igRegularHole
+                HoleAt(partDoc, holes, mode, topPlane, alongX ? -half : 0.0, alongX ? 0.0 : -half, hd4, fix.DowelDepth, "Ø4 #1");
+                HoleAt(partDoc, holes, mode, topPlane, alongX ? half : 0.0, alongX ? 0.0 : half, hd4, fix.DowelDepth, "Ø4 #2");
+
+                try { topPlane.Delete(); } catch { }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Furação de fixação falhou (bloco preservado): {ex.GetBaseException().Message}");
+            }
+        }
+
+        /// <summary>Um furo cego no centro (mm) do plano, cortando p/ dentro da base (side=1). Apaga o esboço.</summary>
+        private static void HoleAt(dynamic partDoc, dynamic holes, int mode, dynamic plane,
+            double cxMm, double cyMm, object holeData, double depthMm, string label)
+        {
+            dynamic ps = partDoc.ProfileSets.Add();
+            try
+            {
+                dynamic prof = ps.Profiles.Add(plane);
+                prof.Holes2d.Add(cxMm / 1000.0, cyMm / 1000.0);
+                prof.End(1);
+                double depthM = depthMm / 1000.0;
+                if (mode == 2)
+                    holes.AddFinite(prof, 1, depthM, holeData);
+                else
+                {
+                    var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)prof };
+                    holes.AddSync(1, arr, 1, 13, (object)depthM, holeData); // side=1 (–normal, p/ dentro), 13 = igFinite
+                }
+                Log.Info($"  Furo {label} — ok.");
+            }
+            catch (Exception e) { Log.Warn($"  Furo {label} falhou: {e.GetBaseException().Message}"); }
+            finally { try { ps.Delete(); } catch { } }
+        }
     }
 }
