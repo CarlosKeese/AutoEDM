@@ -15,10 +15,11 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | [`README.md`](../README.md) | Visão geral do projeto, propósito, estado atual, build & run. |
 | [`docs/INDEX.md`](./INDEX.md) | Este índice. |
 
-## ⭐ Ler primeiro — Memória compartilhada SE-COM
+## ⭐ Ler primeiro — Solid Edge por COM
 
 | Documento | Descrição |
 |---|---|
+| [`docs/GUIA_SOLID_EDGE_COM.md`](./GUIA_SOLID_EDGE_COM.md) | **A "Pedra de Roseta": guia de aprendizados** para automatizar o SE por COM sem o SDK — introspecção, out-params (`ParameterModifier`), late binding, unidades/STA/message filter, receitas de modelagem (sketch+extrusão, furos, superfícies intra-peça), síncrono×ordenado, in-place bloqueado, add-in de ribbon, tabela **erro→causa→fix**. Comece por aqui. |
 | [`docs/MEMORIA_SOLID_EDGE_COM.md`](./MEMORIA_SOLID_EDGE_COM.md) | **Fonte de verdade compartilhada (Claude ↔ Kimi):** o que a API COM do SE **deixa** ou **recusa** fazer, com status (✅/❌/🟡/⛔) + evidência (run/dump) em cada item. Consultar antes de escrever, corrigir ou analisar código COM. Corrige entendimentos superados (edição in-place, `CopySurfaces`). |
 
 ## API, SDK, funções, parâmetros e métodos
@@ -28,6 +29,8 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | [`docs/api/README.md`](./api/README.md) | Catálogo de API COM gerado a partir do dump da type library. |
 | [`docs/api/SolidEdgeFramework.md`](./api/SolidEdgeFramework.md) | Tipos da type library `SolidEdgeFramework` (Application, Documents, add-ins, eventos, etc.). |
 | [`docs/api/SolidEdgePart.md`](./api/SolidEdgePart.md) | Tipos da type library `SolidEdgePart` (PartDocument, Models, Constructions, features, etc.). |
+| [`docs/api/SolidEdgeGeometry.md`](./api/SolidEdgeGeometry.md) | **Body / Face / Edge / Vertex / Loop / Shell** + enums de query topológica (`igQueryCylinder`…). Onde vivem `GetRange`, `GetRGBAVals`, `GetPointData`. Gerado por reflexão do interop (o dump não pega a lib de geometria). |
+| [`docs/api/SolidEdgeAssembly.md`](./api/SolidEdgeAssembly.md) | `Occurrence`/`Occurrences` (transforms `GetTransform`/`PutTransform`), `Relations3d` (mates), padrões. Gerado por reflexão do interop. |
 | [`docs/api/constants.md`](./api/constants.md) | **231 enums e constantes** COM consolidadas com valores. |
 | [`docs/SolidEdge_API_COM_Referencia_Completa.md`](./SolidEdge_API_COM_Referencia_Completa.md) | Catálogo AMPLO de tipos da API (nomes + descrições de todas as classes, do Programmer's Guide; pesquisa do Kimi). Bom mapa de descoberta — mas **sem assinaturas nem valores de enum**: para esses, use o dump ou reflita `Interop.SolidEdge`. |
 | [`docs/COM_INTEGRATION.md`](./COM_INTEGRATION.md) | Guia de integração COM: arquitetura, ProgID, type libraries, configuração do projeto, objetos principais. |
@@ -57,7 +60,8 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 ## Fontes da verdade
 
 - **Dump da type library:** `src/AutoEDM/bin/Debug/net472/logs/SE_API_dump_223.00.13.05.txt`
-- **Gerador de documentação:** `tools/generate_api_docs.py`
+- **Interop tipado (todas as libs):** `Interop.SolidEdge.dll` (NuGet v219 = SE 2023) — reflita quando o dump não cobre (ex.: geometria).
+- **Geradores de documentação:** `tools/generate_api_docs.py` (do dump) · `tools/reflect_api_docs.ps1` (por reflexão do interop → Geometry/Assembly)
 - **Código-fonte:** `src/AutoEDM.Core/`, `src/AutoEDM.AddIn/`, `src/AutoEDM/`
 
 ## Convenções importantes
