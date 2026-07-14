@@ -26,5 +26,18 @@ namespace AutoEDM.Electrode
 
         /// <summary>Distância entre os centros dos dois furos Ø4 (mm) — 7,5 mm do centro.</summary>
         public double DowelCenterDistance { get; set; } = 15.0;
+
+        // --- Fixação ALTERNATIVA por EIXO (Carlos): quando os furos M6+2×Ø4 NÃO cabem no
+        //     bloco, modela-se um EIXO cilíndrico no topo, preso num suporte com furo +
+        //     parafuso lateral. Usa-se o Ø maior quando cabe; o menor só quando não couber.
+
+        /// <summary>Diâmetro do eixo de fixação PADRÃO (mm) — usado quando cabe no topo.</summary>
+        public double ShaftDiameterLarge { get; set; } = 9.6;
+
+        /// <summary>Diâmetro do eixo de fixação MENOR (mm) — só quando o Ø9,6 não cabe.</summary>
+        public double ShaftDiameterSmall { get; set; } = 6.1;
+
+        /// <summary>Altura do eixo de fixação (mm). CALIBRÁVEL — confirmar com o Carlos.</summary>
+        public double ShaftHeight { get; set; } = 20.0;
     }
 }

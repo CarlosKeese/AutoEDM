@@ -17,6 +17,19 @@ namespace AutoEDM.Selection
         public FaceGroup(Color color, double ra) { Color = color; Ra = ra; }
     }
 
+    /// <summary>Contagem de faces por COR encontrada numa peça — mapeada (com Ra) ou não.
+    /// Usado para o usuário CONFERIR a detecção antes de criar eletrodos (evita criar em
+    /// cor residual quando a queima real está numa cor não mapeada — Log 57).</summary>
+    public sealed class ColorTally
+    {
+        public Color Color { get; }
+        public int FaceCount { get; }
+        public bool Mapped { get; }
+        public double Ra { get; }
+        public ColorTally(Color color, int faceCount, bool mapped, double ra)
+        { Color = color; FaceCount = faceCount; Mapped = mapped; Ra = ra; }
+    }
+
     /// <summary>
     /// Seleciona faces de queima por cor.
     ///
@@ -80,6 +93,15 @@ namespace AutoEDM.Selection
         public IReadOnlyList<FaceGroup> SelectByRaColorMap(dynamic partDocument, dynamic application,
             Electrode.RaColorMap raColorMap)
         {
+            IReadOnlyList<ColorTally> ignore;
+            return SelectByRaColorMap(partDocument, application, raColorMap, out ignore);
+        }
+
+        /// <summary>Overload que também devolve o HISTOGRAMA de cores (todas as cores + contagem +
+        /// se são mapeadas) — para a confirmação "conferir antes de criar".</summary>
+        public IReadOnlyList<FaceGroup> SelectByRaColorMap(dynamic partDocument, dynamic application,
+            Electrode.RaColorMap raColorMap, out IReadOnlyList<ColorTally> colorTally)
+        {
             var groups = new Dictionary<double, FaceGroup>();
             var seen = new Dictionary<int, int>(); // RGB empacotado -> contagem
             IEnumerable<SelectedFace> all = EnumerateColoredFaces(partDocument, application);
@@ -95,14 +117,17 @@ namespace AutoEDM.Selection
                 g.Faces.Add(sf);
             }
 
-            // Diagnóstico: mostra TODAS as cores achadas e se casaram com o mapa Ra.
+            // Diagnóstico + histograma: mostra TODAS as cores achadas e se casaram com o mapa Ra.
+            var tally = new List<ColorTally>();
             foreach (var kv in seen)
             {
                 Color col = Color.FromArgb(kv.Key);
                 bool mapped = raColorMap.TryGetRa(col, out double raM, out _);
+                tally.Add(new ColorTally(col, kv.Value, mapped, mapped ? raM : 0));
                 Log.Info($"Cor RGB({col.R},{col.G},{col.B}) em {kv.Value} face(s)" +
                          (mapped ? $" -> Ra {raM}" : " (não mapeada)"));
             }
+            colorTally = tally.OrderByDescending(t => t.FaceCount).ToList();
 
             return groups.Values.OrderByDescending(g => g.Ra).ToList();
         }

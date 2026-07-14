@@ -200,26 +200,66 @@ namespace AutoEDM.Experiments
             try { ComDiagnostics.LogSignatures((object)model.Threads, "Add", "AddEx"); }
             catch (Exception e) { Log.Warn("LogSignatures(Threads) falhou: " + e.GetBaseException().Message); }
 
-            TryTappedHoleOneShot(partDoc, model); // Receita A
+            // B primeiro: o E_FAIL da A já envenenou o proxy uma vez (Log 47); B antes
+            // garante que o teste da feature de rosca rode com o documento saudável.
             TryThreadFeature(partDoc, model);      // Receita B
+            TryTappedHoleOneShot(partDoc, model);  // Receita A
 
             Log.Info("===== FIM (rosca) — diga qual (A/B) renderizou a rosca; levo pro eletrodo. =====");
         }
 
-        /// <summary>Receita A: furo roscado numa feature só (HoleData tapped + ThreadDataByDescription + AddSync).</summary>
+        /// <summary>
+        /// Preenche o HoleData de rosca. Log 49: `ThreadDataByDescription("M6")` falhou e
+        /// deixou Size=7/Ønominal=0 (HoleData incompleto -> E_FAIL no AddSync). Tenta
+        /// variantes da descrição (a string tem de bater com a tabela de roscas do SE,
+        /// ex. "M6x1.0") e, se nenhuma pegar, preenche as props na mão.
+        /// </summary>
+        private static bool FillThreadData(dynamic hd, string ctx)
+        {
+            foreach (var desc in new[] { "M6", "M6x1.0", "M6 x 1.0", "M6X1", "M6x1" })
+            {
+                try
+                {
+                    hd.ThreadDataByDescription(desc);
+                    string got = ""; try { got = (string)hd.ThreadDescription; } catch { }
+                    double nom = 0; try { nom = (double)hd.ThreadNominalDiameter; } catch { }
+                    if (!string.IsNullOrEmpty(got) || nom > 0)
+                    {
+                        Log.Info($"  {ctx}: ThreadDataByDescription('{desc}') OK (desc='{got}', Ønom={nom * 1000:0.##}).");
+                        return true;
+                    }
+                    Log.Warn($"  {ctx}: ThreadDataByDescription('{desc}') passou mas não populou.");
+                }
+                catch (Exception e) { Log.Warn($"  {ctx}: ThreadDataByDescription('{desc}') falhou: {e.GetBaseException().Message}"); }
+            }
+            // Preenchimento manual (valores M6×1.0 ISO: nominal 6, broca 5, minor ~4,917).
+            try
+            {
+                try { hd.Size = "M6"; } catch { }
+                try { hd.ThreadDescription = "M6x1.0"; } catch { }
+                try { hd.ThreadNominalDiameter = 0.006; } catch { }
+                try { hd.ThreadTapDrillDiameter = 0.005; } catch { }
+                try { hd.ThreadMinorDiameter = 0.004917; } catch { }
+                Log.Info($"  {ctx}: props de rosca preenchidas na mão (M6x1.0).");
+                return true;
+            }
+            catch (Exception e) { Log.Warn($"  {ctx}: preenchimento manual falhou: {e.GetBaseException().Message}"); return false; }
+        }
+
+        /// <summary>Receita A: furo roscado numa feature só (HoleData tapped preenchido + AddSync).
+        /// Furo em (+8, 0) mm — DENTRO do bloco 30×20 (no Log 49 estava em (12,12), FORA em Y!).</summary>
         private static void TryTappedHoleOneShot(dynamic partDoc, dynamic model)
         {
-            Log.Info("--- RECEITA A: furo TAPPED (HoleData igTappedHole + ThreadDataByDescription('M6') + AddSync) ---");
+            Log.Info("--- RECEITA A: furo TAPPED (HoleData igTappedHole + rosca preenchida + AddSync) @ (+8, 0) ---");
             dynamic ps = null;
             try
             {
                 dynamic prof = (ps = partDoc.ProfileSets.Add()).Profiles.Add(partDoc.RefPlanes.Item(1));
-                prof.Holes2d.Add(0.012, 0.012); // longe do furo simples anterior
+                prof.Holes2d.Add(0.008, 0.0); // DENTRO do bloco (x half=15, y half=10)
                 prof.End(1);
 
                 dynamic hd = partDoc.HoleDataCollection.Add(37, 0.005); // 37 = igTappedHole, Ø5 broca
-                try { hd.ThreadDataByDescription("M6"); Log.Info("  ThreadDataByDescription('M6') OK."); }
-                catch (Exception e) { Log.Warn("  ThreadDataByDescription('M6') falhou: " + e.GetBaseException().Message); }
+                FillThreadData(hd, "A");
                 LogThreadState(hd);
 
                 var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)prof };
@@ -234,15 +274,17 @@ namespace AutoEDM.Experiments
             finally { try { if (ps != null) ps.Delete(); } catch { } }
         }
 
-        /// <summary>Receita B: furo simples + feature de rosca separada Model.Threads.Add na face cilíndrica.</summary>
+        /// <summary>Receita B: furo simples em (−8, 0) + feature de rosca Model.Threads.Add.
+        /// Log 49: CylinderEndArray como Face[] deu "valor fora do intervalo" — o nome sugere
+        /// que é o array de EXTREMIDADES (constantes int, qual ponta do cilindro), não faces.</summary>
         private static void TryThreadFeature(dynamic partDoc, dynamic model)
         {
-            Log.Info("--- RECEITA B: furo simples + Model.Threads.Add(HoleData, 1, cyl[], cylEnd[]) ---");
+            Log.Info("--- RECEITA B: furo simples @ (−8, 0) + Model.Threads.Add(HoleData, 1, cyl[], cylEnd[]) ---");
             dynamic ps = null;
             try
             {
                 dynamic prof = (ps = partDoc.ProfileSets.Add()).Profiles.Add(partDoc.RefPlanes.Item(1));
-                prof.Holes2d.Add(-0.012, -0.012);
+                prof.Holes2d.Add(-0.008, 0.0); // DENTRO do bloco (no Log 49 estava fora)
                 prof.End(1);
                 dynamic hdPlain = partDoc.HoleDataCollection.Add(33, 0.005);
                 var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)prof };
@@ -257,21 +299,30 @@ namespace AutoEDM.Experiments
                 var cylArr = new SolidEdgeGeometry.Face[] { (SolidEdgeGeometry.Face)cyls.Item(nc) };
 
                 dynamic hdThread = partDoc.HoleDataCollection.Add(37, 0.005);
-                try { hdThread.ThreadDataByDescription("M6"); } catch (Exception e) { Log.Warn("  (B) ThreadDataByDescription: " + e.GetBaseException().Message); }
+                FillThreadData(hdThread, "B");
 
-                // CylinderEndArray: formato incerto — tenta o mesmo array de faces e um vazio.
                 dynamic threads = model.Threads;
-                foreach (var tag in new[] { "cylEnd=cyl[]", "cylEnd=empty" })
+                // CylinderEndArray: prova as duas leituras — constantes de extremidade
+                // (int 2=igRight/1=igLeft) e o próprio array de faces (Log 49 rejeitou).
+                foreach (var tag in new[] { "end=int[]{2}", "end=int[]{1}", "end=faces" })
                 {
                     try
                     {
-                        object endArg = tag == "cylEnd=cyl[]" ? (object)cylArr : (object)new SolidEdgeGeometry.Face[0];
+                        object endArg = tag == "end=faces" ? (object)cylArr
+                            : (object)new int[] { tag == "end=int[]{2}" ? 2 : 1 };
                         threads.Add(hdThread, 1, cylArr, endArg);
                         Log.Info($"  RECEITA B: THREADS.ADD OK ✓ ({tag}) — CONFIRME a rosca na tela.");
                         return;
                     }
                     catch (Exception e) { Log.Warn($"  RECEITA B Threads.Add ({tag}) falhou: " + e.GetBaseException().Message); }
                 }
+                // Última tentativa: AddEx com rosca FÍSICA explícita.
+                try
+                {
+                    threads.AddEx(hdThread, 1, cylArr, (object)new int[] { 2 }, true, Type.Missing, Type.Missing);
+                    Log.Info("  RECEITA B: THREADS.ADDEX OK ✓ (física) — CONFIRME a rosca na tela.");
+                }
+                catch (Exception e) { Log.Warn("  RECEITA B AddEx falhou: " + e.GetBaseException().Message); }
             }
             catch (Exception ex) { Log.Warn("  RECEITA B falhou: " + ex.GetBaseException().Message); }
             finally { try { if (ps != null) ps.Delete(); } catch { } }

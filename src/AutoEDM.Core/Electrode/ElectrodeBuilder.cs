@@ -247,6 +247,19 @@ namespace AutoEDM.Electrode
         public Selection.ZAnalysisResult AnalyzeElectrodesByZ(dynamic asmDoc, ElectrodeParams p,
             Selection.ZSegmentationParams zprm = null)
         {
+            OccurrenceInfo ignored;
+            return AnalyzeElectrodesByZWithSource(asmDoc, p, zprm, out ignored);
+        }
+
+        /// <summary>
+        /// Igual a <see cref="AnalyzeElectrodesByZ"/>, mas devolve também a OCORRÊNCIA da
+        /// cavidade analisada — as coordenadas da análise são LOCAIS da peça, e quem cria
+        /// eletrodos precisa do transform da ocorrência p/ converter ao espaço da montagem.
+        /// </summary>
+        public Selection.ZAnalysisResult AnalyzeElectrodesByZWithSource(dynamic asmDoc, ElectrodeParams p,
+            Selection.ZSegmentationParams zprm, out OccurrenceInfo cavity)
+        {
+            cavity = null;
             if (_connector.Application == null)
                 throw new InvalidOperationException("Conecte o SolidEdgeConnector primeiro.");
             if (asmDoc == null) throw new ArgumentNullException(nameof(asmDoc));
@@ -255,7 +268,9 @@ namespace AutoEDM.Electrode
             var ctx = new AssemblyContext(asmDoc);
             var hit = FindBurnOccurrence(ctx, app);
             OccurrenceInfo target = hit.Item1;
+            cavity = target;
             IReadOnlyList<FaceGroup> groups = hit.Item2;
+            IReadOnlyList<Selection.ColorTally> tally = hit.Item3;
             if (target == null)
             {
                 Log.Warn("Nenhuma ocorrência com faces de queima encontrada.");
@@ -267,7 +282,19 @@ namespace AutoEDM.Electrode
             Log.Info($"Análise Z de eletrodos em '{target.Name}': {all.Count} face(s) de queima " +
                      $"em {groups.Count} cor(es).");
 
-            return new Selection.ElectrodeZAnalyzer().Analyze(all, zprm ?? new Selection.ZSegmentationParams());
+            var result = new Selection.ElectrodeZAnalyzer().Analyze(all, zprm ?? new Selection.ZSegmentationParams());
+
+            // Anexa a detecção de cor p/ a confirmação "conferir antes de criar" (Log 57):
+            // cor de queima escolhida (grupo com mais faces) + histograma da peça-alvo.
+            var main = groups.OrderByDescending(g => g.Faces.Count).FirstOrDefault();
+            if (main != null)
+            {
+                result.BurnColor = main.Color;
+                result.BurnRa = main.Ra;
+                result.BurnFaceCount = main.Faces.Count;
+            }
+            if (tally != null) result.ColorTally.AddRange(tally);
+            return result;
         }
 
         // ------------------------------------------------------------------
@@ -293,17 +320,42 @@ namespace AutoEDM.Electrode
             if (asmDoc == null) throw new ArgumentNullException(nameof(asmDoc));
 
             dynamic app = _connector.Application;
-            Selection.ZAnalysisResult res = AnalyzeElectrodesByZ(asmDoc, p, zprm);
+            OccurrenceInfo cavity;
+            Selection.ZAnalysisResult res = AnalyzeElectrodesByZWithSource(asmDoc, p, zprm, out cavity);
             if (res.Electrodes.Count == 0) { Log.Warn("Nenhum eletrodo proposto — nada a criar."); return 0; }
+
+            // As coordenadas da análise são LOCAIS da peça da cavidade; a ocorrência do
+            // eletrodo é posicionada no espaço da MONTAGEM aplicando o TRANSFORM da
+            // ocorrência da cavidade — translação E rotação (a cavidade pode estar girada
+            // na montagem; sem aplicar a rotação, o bloco sai atravessado, Log 53).
+            double occXmm = 0, occYmm = 0, occZmm = 0;   // translação da cavidade (mm)
+            double occAx = 0, occAy = 0, occAz = 0;       // rotação da cavidade (rad)
+            if (cavity != null)
+            {
+                var actx = new AssemblyContext(asmDoc);
+                if (actx.TryGetPlacement(cavity, out double cox, out double coy, out double coz,
+                                         out double cax, out double cay, out double caz))
+                {
+                    occXmm = cox * 1000.0; occYmm = coy * 1000.0; occZmm = coz * 1000.0; // METROS→mm
+                    occAx = cax; occAy = cay; occAz = caz;
+                    bool rotated = Math.Abs(cax) + Math.Abs(cay) + Math.Abs(caz) > 1e-6;
+                    Log.Info($"Cavidade '{cavity.Name}' na montagem: origem ({occXmm:0.0}, {occYmm:0.0}, {occZmm:0.0}) mm" +
+                             (rotated ? $" + ROTAÇÃO (rad X={cax:0.###} Y={cay:0.###} Z={caz:0.###})" : ", sem rotação"));
+                    if (Math.Abs(cax) + Math.Abs(cay) > 1e-4)
+                        Log.Warn("Cavidade INCLINADA (rotação X/Y ≠ 0) — só a rotação Z é aplicada ao eletrodo; confira a orientação.");
+                }
+                else Log.Warn("Transform da cavidade ilegível — usando coordenadas locais como se fossem da montagem.");
+            }
 
             string folder = ResolveElectrodeFolder(asmDoc, p);
             System.IO.Directory.CreateDirectory(folder);
             Log.Info($"Criando {res.Electrodes.Count} eletrodo(s) (peça + bloco) em: {folder}");
 
-            // Folga p/ a fixação: o bloco tem de comportar a pegada + os furos M6 + 2×Ø4.
+            // Fixação decidida por TAMANHO (BlankModeler): furos M6+2×Ø4 se couberem no
+            // bloco, senão EIXO cilíndrico no topo (regra do Carlos). O bloco NÃO é inflado
+            // para caber os furos — é dimensionado pela pegada; a fixação se adapta.
             var fix = new FixationPattern();
-            double edge = 5.0; // folga por lado (mm), calibrável
-            double minFix = fix.DowelCenterDistance + fix.DowelDiameter + 2 * edge; // ~27 mm
+            double blockMin = fix.ShaftDiameterSmall + 4.0; // ~10mm: piso p/ ao menos o eixo Ø6,1 caber
 
             int created = 0;
             foreach (var e in res.Electrodes)
@@ -311,32 +363,117 @@ namespace AutoEDM.Electrode
                 dynamic partDoc = null;
                 try
                 {
-                    double blockX = Math.Max(e.FootprintXmm + 2 * edge, minFix);
-                    double blockY = Math.Max(e.FootprintYmm + 2 * edge, minFix);
-                    // Só a BASE do eletrodo (holder), acima da cavidade — Carlos copia as
-                    // faces de queima por baixo, manualmente. Altura = HolderHeight; a
-                    // origem (plano da sketch) fica 1 mm ACIMA do topo do bolsão e o bloco
-                    // extruda em +Z acima dela ("acima do plano na altura da cavidade+1mm").
                     double blockH = p.HolderHeight;
-                    // Origem NA SUPERFÍCIE a erodir (topo da queima = TopZ). A base sobe +Z
-                    // a partir da origem (fica sobre a superfície, não muito acima); os furos
-                    // são feitos no plano de topo (offset +holderH). Escolha do Carlos.
-                    double baseZmm = e.TopZmm;
+
+                    // DIMENSIONAMENTO: menor blank PADRÃO (catálogo de cobre) que comporta a
+                    // PEGADA da queima (SEM sobremetal). NÃO inflado p/ os furos — a fixação
+                    // se adapta (furos ou eixo). Piso mínimo só p/ o eixo menor caber.
+                    double footLong  = Math.Max(e.FootprintXmm, e.FootprintYmm) + 2 * p.BlankMargin;
+                    double footShort = Math.Min(e.FootprintXmm, e.FootprintYmm) + 2 * p.BlankMargin;
+                    double needLong  = Math.Max(footLong,  blockMin);
+                    double needShort = Math.Max(footShort, blockMin);
+
+                    var needBox = new BoundingBox { MaxX = needLong, MaxY = needShort };
+                    BlankSpec blank = _blankLibrary.SelectBlank(needBox, 0.0, p.Material);
+
+                    double blockLong, blockShort; bool roundBlank = false;
+                    if (blank != null)
+                    {
+                        switch (blank.Shape)
+                        {
+                            case BlankShape.Rectangular: blockLong = blank.DimA; blockShort = blank.DimB ?? blank.DimA; break;
+                            case BlankShape.Round:       roundBlank = true; blockLong = blockShort = blank.DimA; break;
+                            default:                     blockLong = blockShort = blank.DimA; break; // Square
+                        }
+                        Log.Info($"Eletrodo {e.Index}: blank {blank.Describe()} p/ pegada {e.FootprintXmm:0.0}×{e.FootprintYmm:0.0}.");
+                    }
+                    else
+                    {
+                        blockLong = needLong; blockShort = needShort;
+                        Log.Warn($"Eletrodo {e.Index}: NENHUM blank de '{p.Material}' comporta {needLong:0.0}×{needShort:0.0} mm — " +
+                                 "COMPRAR MATERIAL. Usando caixa sob medida.");
+                    }
+
+                    // Orienta o lado MAIOR do blank ao longo do lado maior da pegada.
+                    bool xIsLong = e.FootprintXmm >= e.FootprintYmm;
+                    double blockX = xIsLong ? blockLong : blockShort;
+                    double blockY = xIsLong ? blockShort : blockLong;
+
+                    // POSICIONAMENTO (regra do Carlos, Logs 51-52) — DOIS deslocamentos:
+                    //  (1) MONTAGEM: PutOrigin coloca o ZERO-PEÇA (origem do .par) na
+                    //      SUPERFÍCIE de queima, no espaço da MONTAGEM. A superfície local da
+                    //      cavidade vira montagem somando o TRANSFORM da ocorrência da cavidade
+                    //      (occ*mm) — que agora é lido CORRETO (antes vinha 0 por bug do
+                    //      GetTransform, jogando o eletrodo ~23mm fora no Z).
+                    //  (2) .par: o bloco é levantado internamente pela distância
+                    //      (superfície→zero-máquina) + folga, de modo que o FUNDO do holder
+                    //      fique 'HolderBaseClearanceMm' acima do zero-máquina (origem da
+                    //      montagem). Assim a origem toca a superfície (lá embaixo) e o holder
+                    //      fica no plano de referência da máquina (todos os holders juntos).
+                    //
+                    // A superfície que o eletrodo toca é o FUNDO do bolsão — a face
+                    // PERPENDICULAR ao Z no ponto MAIS FUNDO (Z mais negativo na montagem),
+                    // não o topo/abertura (paredes paralelas ao Z). Por isso DeepestZmm
+                    // (Z mínimo das faces), não TopZmm — antes estava invertido (Log 52).
+                    double baseZmm = e.DeepestZmm;                      // fundo do bolsão (Z mín.), LOCAL da cavidade
+                    // Aplica a rotação Z da cavidade ao CENTRO da queima (local -> montagem).
+                    // Z não muda numa rotação em torno de Z. A ocorrência do eletrodo também
+                    // é girada por occAz (PutTransform), alinhando o bloco à região de queima.
+                    double cosZ = Math.Cos(occAz), sinZ = Math.Sin(occAz);
+                    double rcx = e.CenterXmm * cosZ - e.CenterYmm * sinZ;
+                    double rcy = e.CenterXmm * sinZ + e.CenterYmm * cosZ;
+                    double asmX = occXmm + rcx;
+                    double asmY = occYmm + rcy;
+                    double asmZ = occZmm + baseZmm;                     // superfície, MONTAGEM (a origem vai aqui)
+
+                    double clearance = p.HolderBaseClearanceMm;         // folga do fundo do bloco acima do zero-máquina
+                    double lift = clearance - asmZ;                     // leva o fundo do bloco a Z=+clearance na montagem
+                    if (lift <= 0)
+                    {
+                        Log.Warn($"Eletrodo {e.Index}: superfície de queima em Z={asmZ:0.0}mm (montagem) NÃO está abaixo do " +
+                                 $"zero-máquina+{clearance:0.0} — lift calculado {lift:0.0} inválido; usando {clearance:0.0}mm. " +
+                                 "Confira o transform da cavidade / o sinal de Z.");
+                        lift = clearance;
+                    }
+                    double blockBaseAsm = asmZ + lift;                  // ~= clearance (fundo do bloco na montagem)
 
                     string path = System.IO.Path.Combine(folder, $"{p.ElectrodeName}_D{e.Index:00}.par");
-                    Log.Info($"Eletrodo {e.Index}: base {blockX:0.0}×{blockY:0.0}×{blockH:0.0} mm, " +
-                             $"origem/superfície ({e.CenterXmm:0.0}, {e.CenterYmm:0.0}, {baseZmm:0.0}) mm -> {System.IO.Path.GetFileName(path)}");
+                    Log.Info($"Eletrodo {e.Index}: base {blockX:0.0}×{blockY:0.0}×{blockH:0.0} mm; " +
+                             $"superfície local Z={baseZmm:0.0} -> montagem Z={asmZ:0.0} (origem); " +
+                             $"lift .par={lift:0.0}mm -> fundo do bloco na montagem Z={blockBaseAsm:0.0}mm; " +
+                             $"XY montagem ({asmX:0.0}, {asmY:0.0}), rotZ={occAz * 180.0 / Math.PI:0.0}° -> {System.IO.Path.GetFileName(path)}");
 
                     partDoc = app.Documents.Add("SolidEdge.PartDocument");
-                    BlankModeler.CreateBox(partDoc, blockX, blockY, blockH, 1, 2); // side=2: sobe +Z a partir da superfície
-                    BlankModeler.AddFixationHoles(partDoc, blockX, blockY, blockH);
+                    // Bloco: cilindro se o blank é redondo, senão caixa. Origem na superfície;
+                    // levantado 'lift' até o fundo do holder ficar no zero-máquina+folga.
+                    if (roundBlank) BlankModeler.CreateCylinder(partDoc, blockLong, blockH, 1, 2, lift);
+                    else            BlankModeler.CreateBox(partDoc, blockX, blockY, blockH, 1, 2, lift);
+
+                    // Fixação: furos M6+2×Ø4 se couberem no bloco; senão EIXO no topo (Carlos).
+                    if (BlankModeler.FixationHolesFit(blockX, blockY, fix))
+                    {
+                        Log.Info($"Eletrodo {e.Index}: fixação por FUROS (M6 + 2×Ø4).");
+                        BlankModeler.AddFixationHoles(partDoc, blockX, blockY, blockH, lift, fix);
+                    }
+                    else
+                    {
+                        Log.Info($"Eletrodo {e.Index}: furos não cabem no bloco {blockX:0.0}×{blockY:0.0} — fixação por EIXO no topo.");
+                        BlankModeler.AddShaft(partDoc, blockX, blockY, lift + blockH, fix);
+                    }
                     partDoc.SaveAs(path);
                     partDoc.Close();
                     partDoc = null;
 
                     dynamic occ = asmDoc.Occurrences.AddByFilename(path);
-                    try { occ.PutOrigin(e.CenterXmm / 1000.0, e.CenterYmm / 1000.0, baseZmm / 1000.0); }
-                    catch (Exception pe) { Log.Warn($"Eletrodo {e.Index}: PutOrigin falhou: {pe.GetBaseException().Message}"); }
+                    // PutTransform (dump linha 6707): origem→superfície + rotação Z da cavidade,
+                    // alinhando o bloco à região de queima girada. Fallback p/ PutOrigin.
+                    try { occ.PutTransform(asmX / 1000.0, asmY / 1000.0, asmZ / 1000.0, 0.0, 0.0, occAz); }
+                    catch (Exception pe)
+                    {
+                        Log.Warn($"Eletrodo {e.Index}: PutTransform falhou ({pe.GetBaseException().Message}); tentando PutOrigin (sem rotação).");
+                        try { occ.PutOrigin(asmX / 1000.0, asmY / 1000.0, asmZ / 1000.0); }
+                        catch (Exception pe2) { Log.Warn($"Eletrodo {e.Index}: PutOrigin também falhou: {pe2.GetBaseException().Message}"); }
+                    }
 
                     created++;
                     Log.Info($"Eletrodo {e.Index} criado e posicionado ✓");
@@ -427,11 +564,12 @@ namespace AutoEDM.Electrode
         //  Localiza a ocorrência com faces nas cores de queima
         // ------------------------------------------------------------------
 
-        private Tuple<OccurrenceInfo, IReadOnlyList<FaceGroup>> FindBurnOccurrence(
+        private Tuple<OccurrenceInfo, IReadOnlyList<FaceGroup>, IReadOnlyList<Selection.ColorTally>> FindBurnOccurrence(
             AssemblyContext ctx, dynamic app)
         {
             OccurrenceInfo best = null;
             IReadOnlyList<FaceGroup> bestGroups = new List<FaceGroup>();
+            IReadOnlyList<Selection.ColorTally> bestTally = new List<Selection.ColorTally>();
             int bestFaceCount = 0;
 
             foreach (var occ in ctx.GetOccurrences())
@@ -439,19 +577,24 @@ namespace AutoEDM.Electrode
                 if (occ.OccurrenceDocument == null) continue;
 
                 IReadOnlyList<FaceGroup> groups;
-                try { groups = _faceSelector.SelectByRaColorMap(occ.OccurrenceDocument, app, _raColorMap); }
+                IReadOnlyList<Selection.ColorTally> tally;
+                try { groups = _faceSelector.SelectByRaColorMap(occ.OccurrenceDocument, app, _raColorMap, out tally); }
                 catch (Exception ex)
                 {
                     Log.Warn($"Falha ao analisar '{occ.Name}': {ex.Message}");
                     continue;
                 }
 
+                // "Melhor" = a que tem MAIS faces de queima MAPEADAS (mantém a mira original);
+                // guarda também o histograma DELA (com as cores não mapeadas, ex. roxo) p/ o
+                // aviso de "cor dominante não mapeada" na confirmação.
                 int faceCount = groups.Sum(gr => gr.Faces.Count);
                 if (faceCount > bestFaceCount)
                 {
                     bestFaceCount = faceCount;
                     best = occ;
                     bestGroups = groups;
+                    bestTally = tally;
                 }
             }
 
@@ -459,7 +602,7 @@ namespace AutoEDM.Electrode
                 try { DiagnoseNoBurn(ctx); }
                 catch (Exception e) { Log.Warn("[DIAG] no-burn falhou: " + e.GetBaseException().Message); }
 
-            return Tuple.Create(best, bestGroups);
+            return Tuple.Create(best, bestGroups, bestTally);
         }
 
         /// <summary>
@@ -691,7 +834,7 @@ namespace AutoEDM.Electrode
             {
                 var ctx = new AssemblyContext(asmDoc);
                 if (ctx.TryGetOrigin(target, out double ox, out double oy, out double oz))
-                    occurrence.PutOrigin(ox / 1000.0, oy / 1000.0, oz / 1000.0);
+                    occurrence.PutOrigin(ox, oy, oz); // já em METROS (GetTransform devolve metros); PutOrigin espera metros
             }
             catch (Exception ex)
             {

@@ -135,7 +135,7 @@ namespace AutoEDM.Electrode
         {
             try
             {
-                dynamic faces = feature.Faces(0); // 0 = all faces?
+                dynamic faces = feature.Faces[1]; // 1 = igQueryAll (coleção indexada por query-type; 0 é inválido)
                 int count = faces.Count;
                 var list = new object[count];
                 for (int i = 1; i <= count; i++)
@@ -164,7 +164,10 @@ namespace AutoEDM.Electrode
             }
             catch (TargetInvocationException tie) when (tie.InnerException != null)
             {
-                throw tie.InnerException;
+                // Preserva a exceção COM original (mensagem + tipo) com o nome do método,
+                // em vez de re-lançar o inner cru (que zera o stack trace).
+                throw new InvalidOperationException(
+                    $"Falha ao chamar {methodName}: {tie.InnerException.Message}", tie.InnerException);
             }
         }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Globalization;
 using System.Linq;
 using AutoEDM.Diagnostics;
@@ -52,6 +53,54 @@ namespace AutoEDM.Selection
         public int FlatFaces { get; set; }
         public int SteepFaces { get; set; }
         public List<string> Warnings { get; } = new List<string>();
+
+        // --- Detecção de QUEIMA (para conferir antes de criar — Log 57) ---------
+        /// <summary>Cor mapeada usada como queima (a de mais faces). Vazia se nada mapeado.</summary>
+        public Color BurnColor { get; set; }
+        /// <summary>Ra da cor de queima escolhida.</summary>
+        public double BurnRa { get; set; }
+        /// <summary>Nº de faces na cor de queima.</summary>
+        public int BurnFaceCount { get; set; }
+        /// <summary>Histograma de TODAS as cores na peça-alvo (mapeadas e não), maior primeiro.</summary>
+        public List<ColorTally> ColorTally { get; } = new List<ColorTally>();
+
+        /// <summary>Existe uma cor NÃO mapeada com MAIS faces que a queima detectada? Sinal
+        /// forte de que a queima real foi pintada numa cor fora do mapa (Log 57: roxo 132 &gt;
+        /// vermelho 52) — a detecção provavelmente pegou a região errada.</summary>
+        public bool HasDominantUnmappedColor
+        {
+            get
+            {
+                var topUnmapped = ColorTally.Where(t => !t.Mapped).OrderByDescending(t => t.FaceCount).FirstOrDefault();
+                return topUnmapped != null && topUnmapped.FaceCount > BurnFaceCount;
+            }
+        }
+
+        /// <summary>Texto p/ a confirmação "conferir antes de criar": cores detectadas +
+        /// nº de eletrodos + aviso se a maior região colorida não estiver mapeada.</summary>
+        public string DescribeBurnDetection()
+        {
+            var sb = new System.Text.StringBuilder();
+            if (BurnFaceCount > 0)
+                sb.AppendLine($"Queima detectada: RGB({BurnColor.R},{BurnColor.G},{BurnColor.B}) → Ra {BurnRa:0.0} — {BurnFaceCount} face(s).");
+            else
+                sb.AppendLine("Nenhuma cor de queima MAPEADA foi encontrada.");
+
+            sb.AppendLine($"Eletrodos propostos: {Electrodes.Count}.");
+            foreach (var e in Electrodes)
+                sb.AppendLine($"  • D{e.Index:00}: pegada {e.FootprintXmm:0.0}×{e.FootprintYmm:0.0} mm, fundo Z={e.DeepestZmm:0.0}.");
+
+            var unmapped = ColorTally.Where(t => !t.Mapped).OrderByDescending(t => t.FaceCount).Take(3).ToList();
+            if (unmapped.Count > 0)
+            {
+                sb.AppendLine("Cores NÃO mapeadas na peça (maiores):");
+                foreach (var t in unmapped)
+                    sb.AppendLine($"  • RGB({t.Color.R},{t.Color.G},{t.Color.B}): {t.FaceCount} face(s)");
+            }
+            if (HasDominantUnmappedColor)
+                sb.AppendLine("\n⚠ A MAIOR região colorida NÃO está mapeada — a queima real pode estar numa cor fora do mapa. Confira antes de criar.");
+            return sb.ToString().TrimEnd();
+        }
     }
 
     /// <summary>

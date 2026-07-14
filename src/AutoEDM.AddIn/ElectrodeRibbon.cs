@@ -1,6 +1,7 @@
 using System;
 using System.Windows.Forms;
 using SolidEdgeCommunity.AddIn;
+using AutoEDM.AddIn.UI;
 using AutoEDM.Com;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
@@ -20,6 +21,7 @@ namespace AutoEDM.AddIn
         private const int CmdRelatorio = 2;      // Coordenadas de queima
         private const int CmdAnalisarZ = 3;      // Analisar eletrodos por Z
         private const int CmdSpecSheet = 4;      // Ficha (spec-sheet)
+        private const int CmdBlocoSuperficies = 5; // Bloco sobre superfícies (ambiente de PEÇA)
 
         public ElectrodeRibbon() : base()
         {
@@ -34,6 +36,7 @@ namespace AutoEDM.AddIn
                 case CmdRelatorio: GerarRelatorioCoordenadas(); break;
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
+                case CmdBlocoSuperficies: CriarBlocoSobreSuperficies(); break;
             }
         }
 
@@ -57,19 +60,37 @@ namespace AutoEDM.AddIn
         {
             if (!TryAssembly(out dynamic app, out dynamic doc)) return;
 
-            var confirm = MessageBox.Show(
-                "Isto vai CRIAR uma peça por eletrodo (com o bloco da base) na subpasta " +
-                "'Eletrodos' ao lado da montagem e inseri-las posicionadas.\n\n" +
-                "A montagem NÃO será salva automaticamente. Continuar?",
-                "AutoEDM — Criar eletrodos", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            if (confirm != DialogResult.Yes) return;
-
             try
             {
                 Log.Info("===== CRIAR ELETRODOS + BASE (add-in) =====");
                 var connector = SolidEdgeConnector.Attach(app);
                 var p = new ElectrodeParams { ElectrodeName = "ELD" };
-                int n = new ElectrodeBuilder(connector).CreateElectrodesWithBlank(doc, p);
+                var builder = new ElectrodeBuilder(connector);
+
+                // CONFERIR ANTES DE CRIAR (Log 57): mostra a queima detectada + as cores não
+                // mapeadas; se a maior região colorida não estiver mapeada, avisa. Assim o
+                // usuário não cria eletrodos em cor RESIDUAL quando a queima real está fora do mapa.
+                Selection.ZAnalysisResult res = builder.AnalyzeElectrodesByZ(doc, p);
+                if (res.Electrodes.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Nenhum eletrodo detectado (sem cor de queima MAPEADA). Nada foi criado.\n\n" +
+                        "Veja no log as cores encontradas — a queima pode estar numa cor fora do mapa.",
+                        "AutoEDM — Criar eletrodos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    Log.Info("===== FIM (CRIAR ELETRODOS — nada detectado) =====");
+                    return;
+                }
+
+                var icon = res.HasDominantUnmappedColor ? MessageBoxIcon.Warning : MessageBoxIcon.Question;
+                var confirm = MessageBox.Show(
+                    res.DescribeBurnDetection() +
+                    "\n\nIsto vai CRIAR uma peça por eletrodo (com o bloco da base) na subpasta 'Eletrodos' " +
+                    "ao lado da montagem e inseri-las posicionadas. A montagem NÃO será salva automaticamente.\n\n" +
+                    "A queima detectada está CORRETA? Criar os eletrodos?",
+                    "AutoEDM — Conferir antes de criar", MessageBoxButtons.YesNo, icon);
+                if (confirm != DialogResult.Yes) { Log.Info("Criação cancelada pelo usuário (conferência)."); return; }
+
+                int n = builder.CreateElectrodesWithBlank(doc, p);
                 MessageBox.Show(
                     $"{n} eletrodo(s) criado(s) e posicionado(s).\n\n" +
                     "Revise, SALVE a montagem e copie as faces de queima em cada base.",
@@ -108,6 +129,28 @@ namespace AutoEDM.AddIn
             });
         }
 
+        /// <summary>
+        /// Bloco sobre superfícies (ambiente de PEÇA): abre a janela com parâmetros +
+        /// Preview. O usuário já copiou as faces de queima na peça manualmente; o AutoEDM
+        /// cria o bloco, estende/fecha/une as superfícies e aplica a fixação. ESCREVE na peça.
+        /// </summary>
+        private void CriarBlocoSobreSuperficies()
+        {
+            if (!TryPart(out dynamic app, out dynamic doc)) return;
+            try
+            {
+                Log.Info("===== BLOCO SOBRE SUPERFÍCIES (add-in) =====");
+                // Garante o log de arquivo do add-in; o Core loga cada passo + o probe.
+                var builder = new SurfaceBlockBuilder();
+                using (var form = new BlockOverSurfacesForm(builder, (object)doc))
+                {
+                    form.ShowDialog();
+                }
+                Log.Info("===== FIM (BLOCO SOBRE SUPERFÍCIES) =====");
+            }
+            catch (Exception ex) { Fail("criar o bloco sobre superfícies", ex); }
+        }
+
         // -------------------------------------------------------------- infra
 
         /// <summary>Boilerplate comum dos comandos SOMENTE LEITURA: valida montagem, conecta, roda.</summary>
@@ -135,6 +178,23 @@ namespace AutoEDM.AddIn
             {
                 MessageBox.Show(
                     "Abra uma MONTAGEM (.asm) ativa (a cavidade no zero-máquina) para usar esta ferramenta.",
+                    "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>Valida que o documento ativo é uma PEÇA (.par) — para o "Bloco sobre superfícies".</summary>
+        private static bool TryPart(out dynamic app, out dynamic doc)
+        {
+            app = ElectrodeAddIn.Current?.App;
+            doc = null;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return false; }
+            doc = app.ActiveDocument;
+            if (doc == null || (int)doc.Type != 1) // 1 = igPartDocument
+            {
+                MessageBox.Show(
+                    "Abra uma PEÇA (.par) ativa, com as faces de queima já copiadas nela, para usar esta ferramenta.",
                     "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }

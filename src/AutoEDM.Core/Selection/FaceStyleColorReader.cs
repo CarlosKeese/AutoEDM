@@ -112,7 +112,10 @@ namespace AutoEDM.Selection
             try
             {
                 object[] args = { 0.0, 0.0, 0.0 };
-                styleObj.GetType().InvokeMember("GetDiffuse", BindingFlags.InvokeMethod, null, styleObj, args);
+                var mod = new ParameterModifier(3);
+                mod[0] = mod[1] = mod[2] = true; // [out] by-ref, senão não populam em late binding
+                styleObj.GetType().InvokeMember("GetDiffuse", BindingFlags.InvokeMethod,
+                    null, styleObj, args, new[] { mod }, CultureInfo.InvariantCulture, null);
                 color = FromUnit(Convert.ToDouble(args[0]), Convert.ToDouble(args[1]), Convert.ToDouble(args[2]));
                 return true;
             }

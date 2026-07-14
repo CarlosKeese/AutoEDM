@@ -56,7 +56,22 @@ namespace AutoEDM.Electrode
         public string Describe() =>
             $"{Name}{(Material != null ? " - " + Material : "")} (cód {Code})";
 
-        /// <summary>Área da seção transversal (mm²), para escolher o menor que serve.</summary>
+        /// <summary>Maior dimensão da seção (mm) — usada p/ preferir o blank mais COMPACTO
+        /// (ex.: QUAD 19 em vez de RET 25×13 p/ um detalhe pequeno; assim os furos caem no
+        /// 45° como o Carlos observou). Quadrado/redondo = DimA; retangular = maior lado.</summary>
+        public double MaxDim
+        {
+            get
+            {
+                switch (Shape)
+                {
+                    case BlankShape.Rectangular: return Math.Max(DimA, DimB ?? DimA);
+                    default:                     return DimA;
+                }
+            }
+        }
+
+        /// <summary>Área da seção transversal (mm²), critério de desempate.</summary>
         public double SectionArea
         {
             get
@@ -101,6 +116,14 @@ namespace AutoEDM.Electrode
         /// compatível com o material pedido. Null se nada servir.
         /// </summary>
         BlankSpec SelectBlank(BoundingBox burnBox, double marginPerSide, string material);
+
+        /// <summary>
+        /// TODOS os blanks que comportam (pegada + 2·margem) e são compatíveis com o
+        /// material, do mais compacto ao maior. Alimenta o pop-up "escolher a base"
+        /// (o 1º é o mesmo que <see cref="SelectBlank"/> devolveria). Lista vazia se
+        /// nada servir.
+        /// </summary>
+        IReadOnlyList<BlankSpec> EligibleBlanks(BoundingBox burnBox, double marginPerSide, string material);
     }
 
     /// <summary>
@@ -128,6 +151,9 @@ namespace AutoEDM.Electrode
         }
 
         public BlankSpec SelectBlank(BoundingBox burnBox, double marginPerSide, string material)
+            => EligibleBlanks(burnBox, marginPerSide, material).FirstOrDefault();
+
+        public IReadOnlyList<BlankSpec> EligibleBlanks(BoundingBox burnBox, double marginPerSide, string material)
         {
             double needX = burnBox.SizeX + 2 * marginPerSide;
             double needY = burnBox.SizeY + 2 * marginPerSide;
@@ -135,8 +161,9 @@ namespace AutoEDM.Electrode
             return _catalog
                 .Where(b => IsMaterialCompatible(b, material))
                 .Where(b => b.Fits(needX, needY))
-                .OrderBy(b => b.SectionArea)
-                .FirstOrDefault();
+                .OrderBy(b => b.MaxDim)       // preferir o mais COMPACTO (quadrado p/ detalhe pequeno)
+                .ThenBy(b => b.SectionArea)   // desempate por menor área
+                .ToList();
         }
 
         /// <summary>

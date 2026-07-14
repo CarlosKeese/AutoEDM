@@ -31,5 +31,11 @@
               supertip="Gera a ficha por eletrodo (Ra, pegada, blank, offset por Ra, fixação) em .txt e .csv. Não altera a montagem."
               imageId="4" showLabel="true" />
     </group>
+    <group name="Peça">
+      <button id="5" size="large" label="Bloco s/ superfícies"
+              screentip="Bloco sobre superfícies (ambiente de PEÇA)"
+              supertip="Na PEÇA aberta (com as faces de queima já copiadas manualmente): cria o bloco no material mais próximo, estende as superfícies até o bloco, fecha-as e une ao bloco. Janela com parâmetros e Preview."
+              imageId="1" showLabel="true" />
+    </group>
   </tab>
 </ribbon>

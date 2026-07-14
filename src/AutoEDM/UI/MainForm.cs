@@ -30,6 +30,7 @@ namespace AutoEDM.UI
         private Button _btnZ;
         private Button _btnModelTest;
         private Button _btnCopyTest;
+        private Button _btnSurf;
         private Button _btnSaveLog;
         private Button _btnClear;
         private RichTextBox _log;
@@ -52,7 +53,7 @@ namespace AutoEDM.UI
         private void BuildUi()
         {
             Text = "AutoEDM — Monitor de Eletrodos (Solid Edge COM)";
-            Width = 1760;
+            Width = 2030;
             Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9f);
@@ -175,6 +176,18 @@ namespace AutoEDM.UI
             };
             _btnZ.Click += (s, e) => StartZAnalysis();
 
+            _btnSurf = new Button
+            {
+                Text = "🧩  Bloco sobre superfícies",
+                Left = 1514, Top = 8, Width = 250, Height = 44,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left,
+                BackColor = Color.FromArgb(150, 90, 40),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10f, FontStyle.Bold)
+            };
+            _btnSurf.Click += (s, e) => StartBlockOverSurfaces();
+
             _btnClear = new Button { Text = "Limpar", Dock = DockStyle.Right, Width = 90, Height = 44 };
             _btnClear.Click += (s, e) => ClearLog();
             _btnSaveLog = new Button { Text = "Salvar log...", Dock = DockStyle.Right, Width = 110, Height = 44 };
@@ -186,6 +199,7 @@ namespace AutoEDM.UI
             top.Controls.Add(_btnReport);
             top.Controls.Add(_btnSpec);
             top.Controls.Add(_btnZ);
+            top.Controls.Add(_btnSurf);
             top.Controls.Add(_btnSaveLog);
             top.Controls.Add(_btnClear);
 
@@ -326,9 +340,49 @@ namespace AutoEDM.UI
             => RunOnSta("Criando eletrodos + bloco...", (connector, app, doc) =>
             {
                 var p = new ElectrodeParams { ElectrodeName = "ELD", Material = "Cobre" };
+                var builder = new ElectrodeBuilder(connector);
+
+                // CONFERIR ANTES DE CRIAR (Log 57): não criar em cor residual.
+                var res = builder.AnalyzeElectrodesByZ(doc, p);
+                if (res.Electrodes.Count == 0)
+                {
+                    Log.Warn("Nenhum eletrodo detectado (sem cor de queima MAPEADA). Nada será criado — confira as cores no log.");
+                    return;
+                }
+                foreach (var line in res.DescribeBurnDetection().Split('\n')) Log.Info(line.TrimEnd('\r'));
+                if (!ConfirmOnUi(res.DescribeBurnDetection() + "\n\nA queima detectada está CORRETA? Criar os eletrodos?",
+                                 "AutoEDM — Conferir antes de criar", res.HasDominantUnmappedColor))
+                {
+                    Log.Info("Criação cancelada pelo usuário (conferência).");
+                    return;
+                }
                 Log.Info("Criando eletrodos posicionados com bloco (peça standalone + AddByFilename + PutOrigin)...");
-                int n = new ElectrodeBuilder(connector).CreateElectrodesWithBlank(doc, p);
+                int n = builder.CreateElectrodesWithBlank(doc, p);
                 Log.Info($"Concluído: {n} eletrodo(s). Revise no SE, salve a montagem e subtraia a cavidade de cada bloco.");
+            });
+
+        /// <summary>Confirmação (Yes/No) marshalada para a thread da UI — chamável da thread STA de trabalho.</summary>
+        private bool ConfirmOnUi(string text, string caption, bool warn)
+        {
+            if (InvokeRequired)
+                return (bool)Invoke((Func<bool>)(() => ConfirmOnUi(text, caption, warn)));
+            return MessageBox.Show(this, text, caption, MessageBoxButtons.YesNo,
+                warn ? MessageBoxIcon.Warning : MessageBoxIcon.Question) == DialogResult.Yes;
+        }
+
+        private void StartBlockOverSurfaces()
+            => RunOnSta("Bloco sobre superfícies...", (connector, app, doc) =>
+            {
+                int type = 0; try { type = (int)doc.Type; } catch { }
+                if (type != 1) // 1 = igPartDocument
+                {
+                    Log.Warn("Abra uma PEÇA (.par) ATIVA, com as faces de queima já copiadas nela (doc.Type != 1).");
+                    return;
+                }
+                Log.Info("Bloco sobre superfícies (peça ativa, opções default; 1ª vez também loga o PROBE das APIs de superfície)...");
+                var res = new SurfaceBlockBuilder().Build(doc, new BlockOverSurfacesOptions());
+                Log.Info($"Concluído: bloco={res.BlockCreated}, superfícies unidas={res.SurfacesUnited}, " +
+                         $"fixação={res.FixationApplied}, features criadas={res.CreatedFeatures.Count}. Revise no SE.");
             });
 
         /// <summary>
@@ -391,6 +445,7 @@ namespace AutoEDM.UI
             _btnZ.Enabled = on;
             _btnModelTest.Enabled = on;
             _btnCopyTest.Enabled = on;
+            _btnSurf.Enabled = on;
         }
 
         // ----------------------------------------------------------- UI marshaling

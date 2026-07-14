@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using AutoEDM.Diagnostics;
 
@@ -78,34 +79,17 @@ namespace AutoEDM.Assembly
         }
 
         /// <summary>
-        /// Best-effort read of an occurrence origin (mm) relative to the assembly.
-        /// Uses the late-bound GetTransform out-parameters. Returns false if the
-        /// method shape isn't as expected on this SE version.
+        /// Best-effort read of an occurrence origin (METROS) relative to the assembly.
+        /// GetTransform devolve metros na API COM do Solid Edge — NÃO dividir por 1000
+        /// no chamador (PutOrigin também espera metros). Returns false if the method
+        /// shape isn't as expected on this SE version.
         /// </summary>
         public bool TryGetOrigin(OccurrenceInfo occ, out double x, out double y, out double z)
         {
             x = y = z = 0;
-            try
-            {
-                // out params on a late-bound COM method: pass a filled args array,
-                // then read the mutated slots back out.
-                object[] args = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
-                object target = occ.ComOccurrence;
-                target.GetType().InvokeMember(
-                    "GetTransform",
-                    BindingFlags.InvokeMethod,
-                    null, target, args);
-
-                x = Convert.ToDouble(args[0]);
-                y = Convert.ToDouble(args[1]);
-                z = Convert.ToDouble(args[2]);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Log.Warn($"GetTransform failed for '{occ.Name}': {ex.Message}");
-                return false;
-            }
+            if (!TryReadTransform(occ, out double[] v)) return false;
+            x = v[0]; y = v[1]; z = v[2];
+            return true;
         }
 
         /// <summary>
@@ -118,22 +102,40 @@ namespace AutoEDM.Assembly
             out double ax, out double ay, out double az)
         {
             x = y = z = ax = ay = az = 0;
+            if (!TryReadTransform(occ, out double[] v)) return false;
+            x = v[0]; y = v[1]; z = v[2];
+            ax = v[3]; ay = v[4]; az = v[5];
+            return true;
+        }
+
+        /// <summary>
+        /// Lê os 6 valores de <c>Occurrence.GetTransform(out x,y,z, out ax,ay,az)</c>
+        /// (metros/radianos). Os 6 são parâmetros [out]; em late binding é OBRIGATÓRIO
+        /// marcá-los by-ref com um <see cref="ParameterModifier"/> — sem isso o
+        /// InvokeMember NÃO popula os slots e a leitura volta (0,0,0,0,0,0) (mesmo bug do
+        /// Face.GetRange, Logs 8-11). Era a causa de a cavidade aparecer sempre em (0,0,0)
+        /// e do eletrodo sair deslocado no eixo Z na montagem.
+        /// </summary>
+        private static bool TryReadTransform(OccurrenceInfo occ, out double[] vals)
+        {
+            vals = new double[6];
             try
             {
                 object[] args = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+                var mod = new ParameterModifier(6);
+                for (int i = 0; i < 6; i++) mod[i] = true; // [out] by-ref
+
                 object target = occ.ComOccurrence;
                 target.GetType().InvokeMember(
-                    "GetTransform",
-                    BindingFlags.InvokeMethod,
-                    null, target, args);
+                    "GetTransform", BindingFlags.InvokeMethod, null, target, args,
+                    new[] { mod }, CultureInfo.InvariantCulture, null);
 
-                x = Convert.ToDouble(args[0]); y = Convert.ToDouble(args[1]); z = Convert.ToDouble(args[2]);
-                ax = Convert.ToDouble(args[3]); ay = Convert.ToDouble(args[4]); az = Convert.ToDouble(args[5]);
+                for (int i = 0; i < 6; i++) vals[i] = Convert.ToDouble(args[i]);
                 return true;
             }
             catch (Exception ex)
             {
-                Log.Warn($"GetTransform (placement) failed for '{occ.Name}': {ex.Message}");
+                Log.Warn($"GetTransform failed for '{occ.Name}': {ex.GetBaseException().Message}");
                 return false;
             }
         }

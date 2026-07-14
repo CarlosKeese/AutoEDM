@@ -4,14 +4,16 @@ using AutoEDM.Diagnostics;
 namespace AutoEDM.Assembly
 {
     /// <summary>
-    /// Ativa uma ocorrência para edição in-context (in-place) e garante a
-    /// desativação ao sair do escopo — inclusive se houver exceção. Toda operação
-    /// que MODIFICA a peça do eletrodo dentro da montagem (Inter-Part Copy, offset,
-    /// blank, furos) deve rodar dentro deste escopo.
+    /// ⚠️ PREMISSA FALSA (confirmado em ~11 runs): <c>Occurrence.Activate = true</c> NÃO
+    /// entra em edição in-place — é apenas a flag de ATIVAÇÃO/carga da ocorrência
+    /// (gestão de memória de montagens grandes). Os sinais reais de edição in-place são
+    /// <c>AssemblyDocument.ModelingInAssembly</c> e <c>.InPlaceActivated</c>. Por isso a
+    /// Inter-Part Copy via COM está efetivamente BLOQUEADA (ver InterPartCopier) e o fluxo
+    /// de produção NÃO usa este escopo — os eletrodos são criados como peça standalone +
+    /// AddByFilename + PutOrigin (ver ElectrodeBuilder.CreateElectrodesWithBlank).
     ///
-    /// No SE 2023/2026, <c>Occurrence.Activate</c> é uma propriedade booleana,
-    /// não um método. Atribuir <c>true</c> entra em edição in-place; atribuir
-    /// <c>false</c> retorna à montagem.
+    /// Esta classe permanece só para os EXPERIMENTOS (InterPartCopyProbe). NÃO a use no
+    /// caminho de produção até existir um gesto COM confirmado de edição in-place.
     /// </summary>
     public sealed class EditInPlaceScope : IDisposable
     {

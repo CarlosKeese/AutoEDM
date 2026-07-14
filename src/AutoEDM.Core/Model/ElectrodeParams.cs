@@ -85,6 +85,16 @@ namespace AutoEDM.Model
         /// <summary>Holder height below the blank (mm).</summary>
         public double HolderHeight { get; set; } = 15.0;
 
+        /// <summary>
+        /// Folga (mm) do FUNDO do bloco/holder ACIMA do zero-máquina (origem da montagem).
+        /// Regra do Carlos (Log 51+): a origem/zero-peça do .par toca a SUPERFÍCIE de
+        /// queima; o bloco é levantado DENTRO do .par pela distância (superfície→zero-máquina)
+        /// + esta folga, de modo que o fundo do holder fique este tanto acima do zero-máquina
+        /// (todos os holders no mesmo plano de referência da máquina). O lift interno é
+        /// CALCULADO por eletrodo (não é fixo); esta folga é só o "+1 mm de espaço".
+        /// </summary>
+        public double HolderBaseClearanceMm { get; set; } = 1.0;
+
         /// <summary>Electrode identifier used for file naming and the drawing table.</summary>
         public string ElectrodeName { get; set; } = "ELD-001";
 
