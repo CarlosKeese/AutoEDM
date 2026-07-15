@@ -23,6 +23,7 @@ namespace AutoEDM.AddIn
         private const int CmdSpecSheet = 4;      // Ficha (spec-sheet)
         private const int CmdBlocoSuperficies = 5; // Bloco sobre superfícies (ambiente de PEÇA)
         private const int CmdInspecionar = 6;       // SPY: dumpa o objeto COM selecionado
+        private const int CmdUnirSuperficies = 7;   // Engrossar a queima e unir ao bloco (ISOLADO)
 
         public ElectrodeRibbon() : base()
         {
@@ -38,6 +39,7 @@ namespace AutoEDM.AddIn
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
                 case CmdBlocoSuperficies: CriarBlocoSobreSuperficies(); break;
+                case CmdUnirSuperficies: UnirSuperficies(); break;
                 case CmdInspecionar: InspecionarSelecao(); break;
             }
         }
@@ -151,6 +153,31 @@ namespace AutoEDM.AddIn
                 Log.Info("===== FIM (BLOCO SOBRE SUPERFÍCIES) =====");
             }
             catch (Exception ex) { Fail("criar o bloco sobre superfícies", ex); }
+        }
+
+        /// <summary>
+        /// Botão ISOLADO "Unir superfícies" (ambiente de PEÇA): engrossa a superfície de
+        /// queima selecionada para cima até dentro do bloco e une num sólido único. Separado
+        /// do "Bloco sobre superfícies" porque o thicken, ao falhar, envenenava o doc e
+        /// derrubava a fixação — aqui o experimento fica isolado. ESCREVE na peça.
+        /// </summary>
+        private void UnirSuperficies()
+        {
+            if (!TryPart(out dynamic app, out dynamic doc)) return;
+            try
+            {
+                Log.Info("===== UNIR SUPERFÍCIES (add-in) =====");
+                var builder = new SurfaceBlockBuilder();
+                BlockOverSurfacesResult res = builder.UniteSurfacesToBlock(doc, new BlockOverSurfacesOptions());
+                MessageBox.Show(
+                    res.SurfacesUnited
+                        ? "Superfícies engrossadas e unidas ao bloco. Confira no modelo.\n\nDetalhe no log (linhas 'Unir:')."
+                        : "Não consegui unir as superfícies ao bloco.\n\nVeja o log (linhas 'Unir:') para o ponto exato — o bloco/faixa/furos NÃO foram tocados.",
+                    "AutoEDM — Unir superfícies", MessageBoxButtons.OK,
+                    res.SurfacesUnited ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                Log.Info("===== FIM (UNIR SUPERFÍCIES) =====");
+            }
+            catch (Exception ex) { Fail("unir as superfícies", ex); }
         }
 
         /// <summary>

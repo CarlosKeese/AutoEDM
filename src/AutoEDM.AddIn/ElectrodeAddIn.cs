@@ -33,7 +33,7 @@ namespace AutoEDM.AddIn
             SolidEdgeFramework.AddIn AddInInstance)
         {
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 5; // incrementar ao mudar a ribbon (v5 = + Inspecionar seleção [SPY])
+            AddInEx.GuiVersion = 6; // incrementar ao mudar a ribbon (v6 = + Unir superfícies [isolado])
 
             Current = this;
             App = application;
@@ -49,6 +49,22 @@ namespace AutoEDM.AddIn
             }
             catch { /* log em arquivo é best-effort */ }
             Log.Info("AutoEDM add-in conectado ao Solid Edge.");
+            Log.Info("Build carregado: " + BuildStamp());
+        }
+
+        /// <summary>Carimbo dos binários EM MEMÓRIA (AddIn + Core) com a data de build — para
+        /// confirmar no log QUAL assembly o Solid Edge está rodando. O SE mantém o add-in
+        /// carregado no processo: recompilar SEM reiniciar o SE continua rodando o código
+        /// ANTIGO (diagnóstico 2026-07-15 — o botão parecia não estender porque a versão em
+        /// memória era pré-correção). Ver [[autoedm-decisions]].</summary>
+        private static string BuildStamp()
+        {
+            string One(System.Reflection.Assembly a)
+            {
+                try { return $"{System.IO.Path.GetFileName(a.Location)} @ {System.IO.File.GetLastWriteTime(a.Location):yyyy-MM-dd HH:mm:ss}"; }
+                catch { return a?.GetName()?.Name ?? "?"; }
+            }
+            return One(typeof(ElectrodeAddIn).Assembly) + "  |  " + One(typeof(AutoEDM.Electrode.SurfaceBlockBuilder).Assembly);
         }
 
         public override void OnConnectToEnvironment(SolidEdgeFramework.Environment environment, bool firstTime)

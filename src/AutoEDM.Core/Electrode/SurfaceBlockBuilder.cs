@@ -29,6 +29,15 @@ namespace AutoEDM.Electrode
         /// <summary>Altura do bloco/holder (mm).</summary>
         public double BlockHeightMm { get; set; } = 15.0;
 
+        /// <summary>
+        /// SOBREMETAL do bloco por LADO (mm): o bloco ULTRAPASSA a pegada da queima para
+        /// deixar material de usinagem (Carlos, 2026-07-15: "considerar um aumento de 0,5 no
+        /// bloco para garantir sobremetal para usinagem" — o bloco vinha exatamente nos
+        /// limites das superfícies). Entra no dimensionamento/corte do blank; a FAIXA continua
+        /// contendo a pegada. Default 0,5 mm/lado.
+        /// </summary>
+        public double BlockOversizeMm { get; set; } = 0.5;
+
         /// <summary>Aplicar a fixação (furos M6+2×Ø4 se couberem, senão eixo no topo).</summary>
         public bool ApplyFixation { get; set; } = true;
 
@@ -207,14 +216,18 @@ namespace AutoEDM.Electrode
             double footLong = Math.Max(box.SizeX, box.SizeY);
             double footShort = Math.Min(box.SizeX, box.SizeY);
 
-            // A FAIXA de medição (bloco − 2·margem) precisa CONTER as superfícies de queima
-            // (Carlos, 2026-07-15: "elas precisam estar dentro da faixa"). Então o blank é
-            // escolhido/dimensionado para a pegada + 2·margem da faixa — assim a faixa ≥ pegada.
+            // O blank é escolhido/cortado para a pegada + 2·crescimento por lado, satisfazendo
+            // as DUAS regras: (a) o BLOCO ultrapassa a pegada por BlockOversizeMm — sobremetal
+            // de usinagem (Carlos, 2026-07-15: o bloco vinha exatamente nos limites das
+            // superfícies); (b) a FAIXA (bloco − 2·margem) CONTÉM a pegada (Carlos: "elas
+            // precisam estar dentro da faixa"). Crescimento = o MAIOR entre sobremetal e margem
+            // da faixa → bloco ⩾ pegada + 2·sobremetal e faixa ⩾ pegada.
             double bandM = opt.AddMeasurementBand ? opt.BandMarginMm : 0.0;
+            double growPerSide = Math.Max(opt.BlockOversizeMm, bandM);
             BoundingBox needBox = new BoundingBox
             {
-                MinX = box.MinX - bandM, MaxX = box.MaxX + bandM,
-                MinY = box.MinY - bandM, MaxY = box.MaxY + bandM,
+                MinX = box.MinX - growPerSide, MaxX = box.MaxX + growPerSide,
+                MinY = box.MinY - growPerSide, MaxY = box.MaxY + growPerSide,
                 MinZ = box.MinZ, MaxZ = box.MaxZ
             };
             plan.EligibleBlanks = _blanks.BlankChoices(needBox, opt.Material, opt.BarMaxLengthMm, opt.BandHeightMm);
@@ -329,7 +342,8 @@ namespace AutoEDM.Electrode
             Log.Info($"Bloco sobre superfícies: pegada {plan.FootprintXmm:0.0}×{plan.FootprintYmm:0.0} mm @ " +
                      $"centro ({plan.CenterXmm:0.0},{plan.CenterYmm:0.0}), topo Z={plan.SurfacesTopZmm:0.0}; " +
                      $"blank {(plan.ChosenBlank?.Describe() ?? "(cru=pegada)")}; " +
-                     $"bloco {plan.BlockXmm:0.0}×{plan.BlockYmm:0.0}×{plan.BlockHmm:0.0}, base Z={plan.BlockBaseZmm:0.0} (gap {opt.GapMm:0.0}).");
+                     $"bloco {plan.BlockXmm:0.0}×{plan.BlockYmm:0.0}×{plan.BlockHmm:0.0}, base Z={plan.BlockBaseZmm:0.0} " +
+                     $"(gap {opt.GapMm:0.0}, sobremetal {opt.BlockOversizeMm:0.0}/lado).");
 
             // Baselines p/ o Cleanup (apaga o que passar disto, via doc re-adquirido).
             result.ModelsBaseline = ModelsCount(partDoc);
@@ -370,16 +384,10 @@ namespace AutoEDM.Electrode
                 catch (Exception ex) { Log.Warn("Faixa de medição (bloco preservado): " + ex.GetBaseException().Message); }
             }
 
-            // (2) ESTENDER a superfície de queima até o bloco → costurar em sólido → UNIR
-            // (itens 3/4, Path B do Carlos). Assinaturas reais do interop; guardado.
-            try
-            {
-                TryExtendStitchUnite(partDoc, plan, opt, result);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn("Estender/costurar/unir superfícies (bloco preservado): " + ex.GetBaseException().Message);
-            }
+            // (2) O trabalho de SUPERFÍCIE (engrossar/unir a queima ao bloco) foi ISOLADO num
+            // botão separado ("Unir superfícies", CmdUnirSuperficies) — Carlos, 2026-07-15: o
+            // thicken rodando aqui, ao falhar, ENVENENAVA o doc e derrubava os furos (todos E_FAIL).
+            // Este botão faz só o que funciona bem: bloco + faixa + fixação. Ver [[autoedm-decisions]].
 
             // (3) FIXAÇÃO (Carlos: incluir).
             if (opt.ApplyFixation)
@@ -601,6 +609,38 @@ namespace AutoEDM.Electrode
         ///     PROBE — é tentado guardado e logado; o bloco/faixa sobrevivem se falhar.
         /// Devolve as features criadas + flags de offset/união.
         /// </summary>
+        /// <summary>
+        /// Botão ISOLADO "Unir superfícies": engrossa a superfície de queima (faces
+        /// SELECIONADAS ou CopySurface existente) PARA CIMA, até dentro do bloco, e UNE ao
+        /// bloco → um sólido único. SEPARADO do "Bloco sobre superfícies" porque o thicken, ao
+        /// falhar, ENVENENA o doc e derruba a fixação (Carlos, 2026-07-15) — aqui o experimento
+        /// de superfície fica isolado do fluxo (bloco+faixa+furos) que já funciona. Requer o
+        /// BLOCO já criado (Models.Item(1)) e as faces de queima selecionadas na peça.
+        /// </summary>
+        public BlockOverSurfacesResult UniteSurfacesToBlock(dynamic partDoc, BlockOverSurfacesOptions opt)
+        {
+            opt = opt ?? new BlockOverSurfacesOptions();
+            var result = new BlockOverSurfacesResult { Plan = new BlockOverSurfacesPlan() };
+            result.ModelsBaseline = ModelsCount(partDoc);
+            result.CopySurfacesBaseline = CopySurfacesCount(partDoc);
+
+            ProbeModelApi(partDoc); // diagnóstico das ops reais do Model (Thicken/Unions/…)
+
+            // Topo/fundo das superfícies (p/ o overshoot do thicken).
+            var faces = CollectSurfaceFaces(partDoc, out string src);
+            BoundingBox box = default(BoundingBox);
+            if (faces.Count > 0 && TryFootprint(faces, out box))
+            {
+                result.Plan.SurfacesTopZmm = box.MaxZ; result.Plan.SurfacesBottomZmm = box.MinZ;
+                Log.Info($"Unir superfícies: {faces.Count} face(s) de queima ({src}), topo Z={box.MaxZ:0.0} mm.");
+            }
+            else Log.Warn("Unir superfícies: sem faces de queima — selecione as faces na peça (ou tenha uma CopySurface).");
+            result.Plan.BlockHmm = opt.BlockHeightMm;
+
+            TryExtendStitchUnite(partDoc, result.Plan, opt, result);
+            return result;
+        }
+
         // Path B (Carlos, 2026-07-15): ESTENDER a superfície de queima até o bloco →
         // COSTURAR+CURAR em sólido (AddByAutoTrim) → UNIR (booleana) ao bloco. Assinaturas
         // REAIS obtidas por reflexão do interop (SolidEdgePart). As coleções vêm por IDispatch
@@ -633,63 +673,96 @@ namespace AutoEDM.Electrode
             // Offset de faísca (item 7): o que SERÁ aplicado (na feature de união, em ordenado).
             foreach (var g in plan.OffsetGroups) Log.Info($"  (offset planejado) {g.Describe()}");
 
-            // Coleções tipadas (marshaling do ref Array). Via IDispatch dinâmico + cast.
-            SolidEdgePart.ExtendSurfaces extCol;
-            SolidEdgePart.IntersectSurfaces intCol;
-            SolidEdgePart.Unions uniCol;
-            try
-            {
-                extCol = (SolidEdgePart.ExtendSurfaces)blockModel.ExtendSurfaces;
-                intCol = (SolidEdgePart.IntersectSurfaces)blockModel.IntersectSurfaces;
-                uniCol = (SolidEdgePart.Unions)blockModel.Unions;
-            }
-            catch (Exception e) { Log.Warn("Unir: coleções ExtendSurfaces/IntersectSurfaces/Unions indisponíveis no Model — " + e.GetBaseException().Message); return; }
+            // O Model REAL não expõe ExtendSurfaces/IntersectSurfaces (probe 2026-07-15 — só
+            // TrimExtendCollection/Intersects/Unions/Subtracts/RedefineFaces/Thickens). Caminho
+            // robusto com o que EXISTE: ENGROSSAR (Models.AddThickenFeature) a superfície de queima
+            // PARA CIMA — vira um sólido com a FORMA da queima no fundo, subindo até DENTRO do bloco
+            // — e UNIR (Unions.Add) ao bloco → um sólido único (bloco/faixa em cima + forma embaixo).
+            // (corte a fio: "copia a superfície, estende até a base" — [[real-edm-workflow]].)
 
-            var edges = CollectExtendableEdges(surf, extCol);
-            Log.Info($"Unir: {edges.Count} aresta(s) extensível(is) (ValidEdge) na superfície.");
-            if (edges.Count == 0) { Log.Warn("Unir: nenhuma aresta extensível — abortando (inspecione a superfície pelo SPY)."); return; }
+            var burnFaces = new List<object>();
+            AddFacesFrom((object)surf, burnFaces);
+            if (ToTypedFaceArray(burnFaces).Length == 0) { Log.Warn("Unir: a superfície de queima não deu faces p/ engrossar."); return; }
 
-            int modelsBefore = ModelsCount(partDoc);
+            // Overshoot: do topo da queima até bem DENTRO do bloco — garante interseção p/ a união
+            // fundir os corpos. O SENTIDO da normal é desconhecido, então tenta os 2 lados e usa o
+            // que sobe até o bloco (o corpo do lado errado é limpo pela baseline no re-preview).
+            double thickenMm = (blockBottomZmm - plan.SurfacesTopZmm) + Math.Max(plan.BlockHmm, opt.BandHeightMm);
+            double thickenM = Math.Max(thickenMm, 3.0) / 1000.0;
 
-            // (1) ESTENDER as bordas da superfície até a face inferior do bloco (TargetSurface).
-            try
-            {
-                System.Array edgeArr = edges.ToArray();
-                double distM = Math.Max(blockBottomZmm - plan.SurfacesTopZmm + 5.0, 5.0) / 1000.0; // generoso; o alvo manda
-                object ext = extCol.Add1(edges.Count, ref edgeArr, distM,
-                    SolidEdgePart.ExtendSurfaceExtentTypeConstants.igESLinear, bottomFace);
-                if (ext != null) { result.CreatedFeatures.Add(ext); Log.Info("Unir: (1) ExtendSurfaces.Add1 OK — superfície estendida até o bloco."); }
-            }
-            catch (Exception e) { Log.Warn("Unir: (1) ExtendSurfaces.Add1 falhou — " + e.GetBaseException().Message); }
-
-            // (2) COSTURAR+CURAR a superfície em um SÓLIDO (auto-trim + stitch + heal).
-            try
-            {
-                System.Array surfs = new object[] { surf };
-                intCol.AddByAutoTrim(1, ref surfs, false, true, true, 0.0001);
-                result.SurfacesUnited = true;
-                Log.Info("Unir: (2) IntersectSurfaces.AddByAutoTrim OK — superfície fechada/curada em sólido.");
-            }
-            catch (Exception e) { Log.Warn("Unir: (2) AddByAutoTrim falhou — " + e.GetBaseException().Message); }
-
-            int modelsAfter = ModelsCount(partDoc);
-            Log.Info($"Unir: corpos antes={modelsBefore}, depois={modelsAfter} (corpo novo = superfície virou sólido).");
-
-            // (3) UNIR (booleana) o sólido da superfície ao bloco — só se surgiu um corpo novo.
-            if (modelsAfter > modelsBefore)
+            int before = ModelsCount(partDoc);
+            bool thickened = false;
+            foreach (int side in new[] { 1, 2 }) // FeaturePropertyConstants: lados da normal (igRight/igLeft)
             {
                 try
                 {
-                    System.Array targets = new object[] { blockModel.Body };
-                    System.Array tools = new object[] { partDoc.Models.Item(modelsAfter).Body };
+                    // Array TIPADO FRESCO por tentativa: reusar o mesmo array (com `ref`) corrompia
+                    // a 2ª chamada ("converter argumento 0", Log 2026-07-15). `Faces` é [in] no
+                    // probe → passa por VALOR (sem ref).
+                    System.Array fa = ToTypedFaceArray(burnFaces);
+                    object th = partDoc.Models.AddThickenFeature(side, thickenM, fa.Length, fa);
+                    int after = ModelsCount(partDoc);
+                    double maxZ = NewBodyMaxZmm(partDoc, before);
+                    Log.Info($"Unir: AddThickenFeature(lado={side}, {thickenMm:0.0}mm, {fa.Length} face) → retorno={(th != null ? "ok" : "null")}, corpos {before}->{after}, topo do novo ≈ {maxZ:0.0}mm (precisa ≥ {blockBottomZmm:0.0}).");
+                    if (after > before && maxZ >= blockBottomZmm - 0.5)
+                    {
+                        if (th != null) result.CreatedFeatures.Add(th);
+                        thickened = true; break;
+                    }
+                    if (after > before) { TryDeleteFeature(th); } // engrossou p/ o lado errado — desfaz
+                }
+                catch (Exception e) { Log.Warn($"Unir: AddThickenFeature(lado={side}) falhou — {e.GetBaseException().Message}"); }
+            }
+            if (!thickened) { Log.Warn("Unir: não consegui engrossar a superfície até o bloco. Provável: as faces da CopySurface não são engrossáveis por esse caminho — inspecione a superfície pelo SPY (vamos iterar neste botão isolado)."); return; }
+
+            // UNIR (booleana) o corpo engrossado ao bloco. Model.Unions.Add existe (probe).
+            try
+            {
+                var uniCol = (SolidEdgePart.Unions)blockModel.Unions;
+                int newCount = ModelsCount(partDoc);
+                System.Array targets = ToTypedBodyArray((object)blockModel.Body);
+                System.Array tools = ToTypedBodyArray((object)partDoc.Models.Item(newCount).Body);
+                if (targets.Length == 1 && tools.Length == 1)
+                {
                     uniCol.Add(1, ref targets, 1, ref tools,
                         SolidEdgePart.SETargetDesignBodyOption.igCreateSingleDesignBodyOnNonManifoldOption,
                         SolidEdgePart.SETargetConstructionBodyOption.igCreateSingleConstructionGeneralBodyOnNonManifoldOption);
-                    Log.Info("Unir: (3) Unions.Add OK — superfície unida ao bloco (sólido único).");
+                    result.SurfacesUnited = true;
+                    Log.Info($"Unir: Unions.Add OK — forma engrossada unida ao bloco (corpos agora = {ModelsCount(partDoc)}).");
                 }
-                catch (Exception e) { Log.Warn("Unir: (3) Unions.Add falhou — " + e.GetBaseException().Message); }
+                else Log.Warn("Unir: bloco ou corpo engrossado não expôs Body p/ unir (E_NOINTERFACE).");
             }
-            else Log.Info("Unir: (3) sem corpo novo separado — AddByAutoTrim já uniu ao bloco, ou não gerou sólido (confira no modelo).");
+            catch (Exception e) { Log.Warn("Unir: Unions.Add falhou — " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>Maior Z (mm) entre os corpos criados ALÉM da baseline (topo do corpo novo).</summary>
+        private static double NewBodyMaxZmm(dynamic partDoc, int baselineCount)
+        {
+            double maxZ = double.NegativeInfinity;
+            try
+            {
+                int n = ModelsCount(partDoc);
+                for (int i = baselineCount + 1; i <= n; i++)
+                {
+                    dynamic m; try { m = partDoc.Models.Item(i); } catch { continue; }
+                    dynamic faces; try { faces = m.Body.Faces[1]; } catch { continue; }
+                    int fn = 0; try { fn = (int)faces.Count; } catch { }
+                    for (int j = 1; j <= fn; j++)
+                    {
+                        object f; try { f = faces.Item(j); } catch { continue; }
+                        if (FaceGeometry.TryGetRangeMm(f, out double[] mn, out double[] mx)) maxZ = Math.Max(maxZ, mx[2]);
+                    }
+                }
+            }
+            catch { }
+            return maxZ;
+        }
+
+        /// <summary>Apaga uma feature recém-criada (best-effort) — p/ desfazer o engrosso do lado errado.</summary>
+        private static void TryDeleteFeature(object feature)
+        {
+            if (feature == null) return;
+            try { ((dynamic)feature).Delete(); } catch { }
         }
 
         /// <summary>Menor/maior face PLANAR do corpo (topo ou fundo) + seu Z (mm).</summary>
@@ -739,8 +812,17 @@ namespace AutoEDM.Electrode
             try
             {
                 var col = (SolidEdgePart.CopySurfaces)partDoc.Constructions.CopySurfaces;
-                System.Array farr = faces.ToArray();
-                object copy = col.Add(faces.Count, ref farr, Type.Missing, Type.Missing);
+                // O FaceArray é SAFEARRAY(IDispatch de Face): o array TEM de ser tipado
+                // `SolidEdgeGeometry.Face[]` (object[] vira SAFEARRAY(VARIANT) → "não foi
+                // possível converter argumento 2", Log 2026-07-15). Ver [[autoedm-decisions]].
+                System.Array farr = ToTypedFaceArray(faces);
+                if (farr.Length == 0)
+                {
+                    Log.Warn("Unir: as faces selecionadas não expõem a interface Face p/ criar a CopySurface automaticamente. " +
+                             "CAMINHO CONFIÁVEL: faça 'Superfície → Copiar' nas faces de queima (cria a superfície de CONSTRUÇÃO) e rode o botão de novo — ele usa a CopySurface existente sem depender da seleção crua.");
+                    return null;
+                }
+                object copy = col.Add(farr.Length, ref farr, Type.Missing, Type.Missing);
                 if (copy != null)
                 {
                     created = true;
@@ -752,22 +834,85 @@ namespace AutoEDM.Electrode
             return null;
         }
 
-        /// <summary>Arestas da superfície que o SE aceita ESTENDER (boundary/laminar, ValidEdge).</summary>
+        /// <summary>Arestas da superfície que o SE aceita ESTENDER (boundary/laminar, ValidEdge).
+        /// Um CopySurface pode expor as arestas de fontes diferentes (o próprio feature `.Edges`,
+        /// o `.Body.Edges`, ou por face) — tenta as fontes em ordem e usa a 1ª não-vazia,
+        /// logando qual funcionou (para o SPY não ser necessário no 1º run real).</summary>
         private static List<object> CollectExtendableEdges(dynamic surf, SolidEdgePart.ExtendSurfaces extCol)
+        {
+            foreach (var src in new[] { "Edges", "Body.Edges", "Faces[*].Edges" })
+            {
+                var raw = ReadEdges(surf, src);
+                if (raw.Count == 0) continue;
+                var valid = new List<object>();
+                foreach (var e in raw) { try { if (extCol.ValidEdge(e)) valid.Add(e); } catch { } }
+                Log.Info($"Unir: arestas via '{src}': {raw.Count} lida(s), {valid.Count} extensível(is) (ValidEdge).");
+                if (valid.Count > 0) return valid;
+            }
+            Log.Warn("Unir: nenhuma fonte de arestas da superfície deu arestas extensíveis (inspecione a CopySurface pelo SPY).");
+            return new List<object>();
+        }
+
+        /// <summary>Lê as arestas cruas da superfície por uma das fontes possíveis (best-effort).</summary>
+        private static List<object> ReadEdges(dynamic surf, string source)
         {
             var edges = new List<object>();
             try
             {
-                dynamic ec = surf.Edges; // coleção de arestas da CopySurface
-                int n = 0; try { n = (int)ec.Count; } catch { }
-                for (int i = 1; i <= n; i++)
+                if (source == "Edges") AddFromCollection(surf.Edges, edges);
+                else if (source == "Body.Edges") AddFromCollection(surf.Body.Edges, edges);
+                else // por face
                 {
-                    object e; try { e = ec.Item(i); } catch { continue; }
-                    try { if (extCol.ValidEdge(e)) edges.Add(e); } catch { }
+                    dynamic faces = surf.Faces; int nf = 0; try { nf = (int)faces.Count; } catch { }
+                    for (int i = 1; i <= nf; i++)
+                    { try { AddFromCollection(faces.Item(i).Edges, edges); } catch { } }
                 }
             }
-            catch (Exception ex) { Log.Warn("Unir: leitura de arestas da superfície falhou — " + ex.GetBaseException().Message); }
+            catch { /* fonte indisponível nesse tipo de superfície — tenta a próxima */ }
             return edges;
+        }
+
+        private static void AddFromCollection(dynamic ec, List<object> into)
+        {
+            int n = 0; try { n = (int)ec.Count; } catch { }
+            for (int i = 1; i <= n; i++) { try { into.Add(ec.Item(i)); } catch { } }
+        }
+
+        // ---- Arrays TIPADOS p/ os SAFEARRAY(IDispatch) das APIs de superfície/booleana ----
+        // As `Add*` recebem `ref Array` cujo SAFEARRAY é de um tipo COM específico (Face/Edge/
+        // Body). Passar object[] gera SAFEARRAY(VARIANT) → "não foi possível converter
+        // argumento N" (Log 2026-07-15). O array TEM de ter o tipo de elemento do interop.
+
+        private static System.Array ToTypedFaceArray(List<object> faces)
+        {
+            var list = new List<SolidEdgeGeometry.Face>(faces.Count);
+            int fail = 0;
+            foreach (var f in faces) { try { list.Add((SolidEdgeGeometry.Face)f); } catch { fail++; } }
+            if (fail > 0) Log.Warn($"Unir: {fail}/{faces.Count} face(s) não expõem a interface Face (E_NOINTERFACE) — ignoradas.");
+            return list.ToArray();
+        }
+
+        private static System.Array ToTypedEdgeArray(List<object> edges)
+        {
+            var list = new List<SolidEdgeGeometry.Edge>(edges.Count);
+            int fail = 0;
+            foreach (var e in edges) { try { list.Add((SolidEdgeGeometry.Edge)e); } catch { fail++; } }
+            if (fail > 0) Log.Warn($"Unir: {fail}/{edges.Count} aresta(s) não expõem a interface Edge (E_NOINTERFACE) — ignoradas.");
+            return list.ToArray();
+        }
+
+        private static System.Array ToTypedBodyArray(object body)
+        {
+            try { return new SolidEdgeGeometry.Body[] { (SolidEdgeGeometry.Body)body }; }
+            catch (Exception e) { Log.Warn("Unir: corpo não expõe a interface Body (E_NOINTERFACE) — " + e.GetBaseException().Message); return new SolidEdgeGeometry.Body[0]; }
+        }
+
+        /// <summary>O corpo (Body) de uma superfície de construção p/ o auto-trim — usa
+        /// <c>surf.Body</c> se existir; senão o próprio <paramref name="surf"/>.</summary>
+        private static object SurfBodyOf(dynamic surf)
+        {
+            try { object b = surf.Body; if (b != null) return b; } catch { }
+            return (object)surf;
         }
 
         private static int ModelsCount(dynamic partDoc)

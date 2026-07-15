@@ -34,7 +34,11 @@
     <group name="Peça">
       <button id="5" size="large" label="Bloco s/ superfícies"
               screentip="Bloco sobre superfícies (ambiente de PEÇA)"
-              supertip="Na PEÇA aberta (com as faces de queima já copiadas manualmente): cria o bloco no material mais próximo, estende as superfícies até o bloco, fecha-as e une ao bloco. Janela com parâmetros e Preview."
+              supertip="Na PEÇA aberta: cria o bloco no material mais próximo, com a FAIXA de medição (chanfro de orientação) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. O trabalho de superfície ficou no botão 'Unir superfícies'."
+              imageId="1" showLabel="true" />
+      <button id="7" size="large" label="Unir superfícies"
+              screentip="Engrossar a queima e unir ao bloco (ambiente de PEÇA)"
+              supertip="ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — engrossa a superfície de queima para cima até dentro do bloco e une num sólido único. Separado do bloco para não interferir na fixação."
               imageId="1" showLabel="true" />
     </group>
     <group name="Diagnóstico">
