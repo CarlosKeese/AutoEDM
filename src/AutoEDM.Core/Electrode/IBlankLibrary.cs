@@ -108,9 +108,43 @@ namespace AutoEDM.Electrode
             v.ToString("0.##", CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// Uma FORMA DE USAR uma barra do catálogo, resolvendo a "medida variável" que o Carlos
+    /// pediu (Log 2026-07-14): a barra tem SEÇÃO fixa e COMPRIMENTO livre (corte até ~500mm).
+    /// Dois modos:
+    ///  • EM PÉ (<see cref="LaidDown"/>=false): a seção vira a pegada (bloco = seção), a
+    ///    altura é LIVRE (o comprimento de corte, escolhido pelo usuário).
+    ///  • DEITADO (<see cref="LaidDown"/>=true): o CORTE vira uma medida da pegada, a outra
+    ///    medida da pegada = uma dimensão da seção, e a ALTURA = a OUTRA dimensão da seção
+    ///    (ex.: QUAD 19 cortado a 24 → pegada 19×24, altura 19). <see cref="TotalHeightMm"/>
+    ///    é essa altura imposta (contém a faixa de medição + o bloco).
+    /// </summary>
+    public sealed class BlankChoice
+    {
+        public BlankSpec Source;
+        public bool LaidDown;
+        public bool Round;
+        /// <summary>Seção do bloco no plano (mm), já orientada à pegada (X = lado longo da pegada).</summary>
+        public double BlockXmm, BlockYmm;
+        /// <summary>Altura TOTAL imposta (deitado = dimensão de seção). Null = livre (em pé; usa o parâmetro do usuário).</summary>
+        public double? TotalHeightMm;
+        /// <summary>Comprimento de corte da barra (a medida variável), mm. 0 = sem corte (em pé).</summary>
+        public double CutLengthMm;
+        public string Label;
+        public string Material => Source?.Material;
+        public string Describe() => Label;
+    }
+
     /// <summary>Escolhe um blank padrão que comporta a pegada da queima + margem.</summary>
     public interface IBlankLibrary
     {
+        /// <summary>
+        /// Formas de usar as barras do catálogo p/ uma pegada, incluindo o CORTE (medida
+        /// variável): candidatos EM PÉ e DEITADO, do mais compacto ao maior. Alimenta o
+        /// pop-up "escolher a base" no fluxo "bloco sobre superfícies". Lista vazia se nada servir.
+        /// </summary>
+        IReadOnlyList<BlankChoice> BlankChoices(BoundingBox footprint, string material, double barMaxMm, double bandHeightMm);
+
         /// <summary>
         /// Menor blank (por área de seção) que comporta (pegada + 2·margem) e é
         /// compatível com o material pedido. Null se nada servir.
@@ -152,6 +186,69 @@ namespace AutoEDM.Electrode
 
         public BlankSpec SelectBlank(BoundingBox burnBox, double marginPerSide, string material)
             => EligibleBlanks(burnBox, marginPerSide, material).FirstOrDefault();
+
+        public IReadOnlyList<BlankChoice> BlankChoices(BoundingBox footprint, string material, double barMaxMm = 500.0, double bandHeightMm = 5.0)
+        {
+            double fLong = Math.Max(footprint.SizeX, footprint.SizeY);
+            double fShort = Math.Min(footprint.SizeX, footprint.SizeY);
+            bool xIsLong = footprint.SizeX >= footprint.SizeY;
+            double minBlank = bandHeightMm + 3.0; // altura mínima útil (faixa + um bloco fino)
+            var list = new List<BlankChoice>();
+
+            foreach (var b in _catalog.Where(x => IsMaterialCompatible(x, material)))
+            {
+                // (1) EM PÉ: a seção cobre a pegada (nas 2 orientações do Fits). Bloco = seção; altura LIVRE.
+                if (b.Fits(fLong, fShort))
+                {
+                    double longDim, shortDim; bool round = false;
+                    switch (b.Shape)
+                    {
+                        case BlankShape.Round: longDim = shortDim = b.DimA; round = true; break;
+                        case BlankShape.Rectangular:
+                            longDim = Math.Max(b.DimA, b.DimB ?? b.DimA);
+                            shortDim = Math.Min(b.DimA, b.DimB ?? b.DimA); break;
+                        default: longDim = shortDim = b.DimA; break;
+                    }
+                    list.Add(new BlankChoice
+                    {
+                        Source = b, LaidDown = false, Round = round,
+                        BlockXmm = xIsLong ? longDim : shortDim,
+                        BlockYmm = xIsLong ? shortDim : longDim,
+                        TotalHeightMm = null, CutLengthMm = 0,
+                        Label = $"{b.Name} em pé — altura livre (cód {b.Code})"
+                    });
+                }
+
+                // (2) DEITADO: só barras retangulares/quadradas (redondo não deita p/ corte).
+                if (b.Shape == BlankShape.Round) continue;
+                double A = b.DimA, B = b.DimB ?? b.DimA;
+                foreach (var pair in new[] { new[] { A, B }, new[] { B, A } })
+                {
+                    double secDim = pair[0], vertDim = pair[1]; // secDim fica no plano; vertDim = altura
+                    if (vertDim < minBlank) continue;
+                    if (fShort > secDim + 1e-6 || fLong > barMaxMm + 1e-6) continue;
+
+                    double cut = Math.Ceiling(fLong);       // corte = lado longo da pegada (mm inteiro)
+                    if (cut <= secDim) continue;             // não é corte útil (a seção já cobriria → é "em pé")
+
+                    list.Add(new BlankChoice
+                    {
+                        Source = b, LaidDown = true, Round = false,
+                        BlockXmm = xIsLong ? cut : secDim,
+                        BlockYmm = xIsLong ? secDim : cut,
+                        TotalHeightMm = vertDim, CutLengthMm = cut,
+                        Label = $"{b.Name} deitado — corte {cut:0} → {secDim:0}×{cut:0}, altura {vertDim:0} (cód {b.Code})"
+                    });
+                }
+            }
+
+            return list
+                .GroupBy(c => $"{c.Source.Code}|{c.LaidDown}|{c.BlockXmm:0.#}x{c.BlockYmm:0.#}")
+                .Select(g => g.First())
+                .OrderBy(c => c.BlockXmm * c.BlockYmm)           // mais COMPACTO primeiro (menos material)
+                .ThenBy(c => c.TotalHeightMm ?? double.MaxValue) // desempate: menor altura imposta
+                .ToList();
+        }
 
         public IReadOnlyList<BlankSpec> EligibleBlanks(BoundingBox burnBox, double marginPerSide, string material)
         {

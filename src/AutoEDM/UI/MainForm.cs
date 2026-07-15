@@ -381,8 +381,9 @@ namespace AutoEDM.UI
                 }
                 Log.Info("Bloco sobre superfícies (peça ativa, opções default; 1ª vez também loga o PROBE das APIs de superfície)...");
                 var res = new SurfaceBlockBuilder().Build(doc, new BlockOverSurfacesOptions());
-                Log.Info($"Concluído: bloco={res.BlockCreated}, superfícies unidas={res.SurfacesUnited}, " +
-                         $"fixação={res.FixationApplied}, features criadas={res.CreatedFeatures.Count}. Revise no SE.");
+                Log.Info($"Concluído: bloco={res.BlockCreated}, faixa={res.BandCreated}, offset={res.SurfacesOffset}, " +
+                         $"unidas={res.SurfacesUnited}, ordenado={res.SwitchedToOrdered}, fixação={res.FixationApplied}, " +
+                         $"features criadas={res.CreatedFeatures.Count}. Revise no SE.");
             });
 
         /// <summary>

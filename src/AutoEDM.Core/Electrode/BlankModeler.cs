@@ -156,6 +156,90 @@ namespace AutoEDM.Electrode
             return ext;
         }
 
+        /// <summary>
+        /// FAIXA DE MEDIÇÃO (anatomia real, [[electrode-anatomy]]): um degrau um pouco
+        /// MENOR que o blank, <paramref name="bandHeightMm"/> mm de altura (default 5),
+        /// logo ABAIXO do bloco (topo da faixa = base do bloco), com um CHANFRO de
+        /// orientação 1×45° no canto X+ Y− para o operador medir/orientar o eletrodo.
+        ///
+        /// O chanfro é desenhado DIRETO no perfil 2D (corta o canto X+ Y− com uma linha a
+        /// 45°) e extrudado — MUITO mais robusto que a feature de Chamfer 3D, que exigiria
+        /// achar a aresta vertical certa (frágil por COM). Mesma receita validada de
+        /// sketch+extrusão (<see cref="CreateBox"/>). Extrusão +Z (side=2) a partir de um
+        /// plano na base da faixa; funde com o bloco (protrusão). Devolve o handle.
+        ///
+        /// NUNCA lança: a faixa é secundária ao bloco.
+        /// </summary>
+        public static dynamic AddMeasurementBand(dynamic partDoc,
+            double blockXmm, double blockYmm, double bandTopZmm,
+            double bandHeightMm = 5.0, double marginMm = 0.5, double chamferLegMm = 3.0,
+            double centerXmm = 0.0, double centerYmm = 0.0)
+        {
+            object ext = null;
+            try
+            {
+                double bandBaseZmm = bandTopZmm - bandHeightMm;
+                double hx = (blockXmm / 2.0 - marginMm) / 1000.0; // meia-seção (m)
+                double hy = (blockYmm / 2.0 - marginMm) / 1000.0;
+                double cx = centerXmm / 1000.0, cy = centerYmm / 1000.0;
+                double h = bandHeightMm / 1000.0;
+
+                // Perna do chanfro limitada a ~40% do menor lado (não engolir a seção).
+                double leg = chamferLegMm / 1000.0;
+                double maxLeg = Math.Min(2 * hx, 2 * hy) * 0.4;
+                if (leg > maxLeg) leg = maxLeg;
+                if (leg < 1e-5 || hx <= 0 || hy <= 0)
+                {
+                    Log.Warn($"Faixa de medição: seção {blockXmm - 2 * marginMm:0.0}×{blockYmm - 2 * marginMm:0.0} pequena demais — pulada.");
+                    return null;
+                }
+
+                dynamic plane = partDoc.RefPlanes.Item(1);
+                bool lifted = false;
+                if (Math.Abs(bandBaseZmm) > 1e-6)
+                {
+                    try
+                    {
+                        plane = partDoc.RefPlanes.AddParallelByDistance(
+                            partDoc.RefPlanes.Item(1), bandBaseZmm / 1000.0, 2,
+                            Type.Missing, Type.Missing, Type.Missing);
+                        lifted = true;
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Warn($"Plano da faixa (Z={bandBaseZmm:0.0}mm) falhou: {e.GetBaseException().Message}");
+                        plane = partDoc.RefPlanes.Item(1);
+                    }
+                }
+
+                Log.Info($"Faixa de medição: {blockXmm - 2 * marginMm:0.0}×{blockYmm - 2 * marginMm:0.0}×{bandHeightMm:0.0} mm " +
+                         $"(margem {marginMm:0.0}/lado), chanfro 45° {leg * 1000:0.0}mm no canto X+ Y−, base Z={bandBaseZmm:0.0}, topo Z={bandTopZmm:0.0}.");
+
+                dynamic profileSet = partDoc.ProfileSets.Add();
+                dynamic profile = profileSet.Profiles.Add(plane);
+                dynamic lines = profile.Lines2d;
+                // Retângulo centrado com o canto X+ Y− (cx+hx, cy−hy) cortado a 45°.
+                lines.AddBy2Points(cx - hx,       cy - hy,       cx + hx - leg, cy - hy);        // base (até o chanfro)
+                lines.AddBy2Points(cx + hx - leg, cy - hy,       cx + hx,       cy - hy + leg);  // chanfro 45° (canto X+ Y−)
+                lines.AddBy2Points(cx + hx,       cy - hy + leg, cx + hx,       cy + hy);        // lado direito (X+)
+                lines.AddBy2Points(cx + hx,       cy + hy,       cx - hx,       cy + hy);        // topo (Y+)
+                lines.AddBy2Points(cx - hx,       cy + hy,       cx - hx,       cy - hy);        // lado esquerdo (X−)
+                profile.End(1);
+
+                var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)profile };
+                ext = RetryStaleCom(() =>
+                    ((object)partDoc.Models).GetType().InvokeMember("AddFiniteExtrudedProtrusion",
+                        BindingFlags.InvokeMethod, null, partDoc.Models,
+                        new object[] { 1, arr, 2, h }), "Faixa de medição (extrusão)");
+
+                try { profileSet.Delete(); } catch (Exception e) { Log.Warn($"ProfileSet.Delete() (faixa): {e.GetBaseException().Message}"); }
+                if (lifted) { try { plane.Visible = false; } catch { } }
+                Log.Info(FeatureFailed(ext) ? "  Faixa: feature com Status FALHA." : "  Faixa de medição criada ✓.");
+            }
+            catch (Exception ex) { Log.Warn($"Faixa de medição falhou (bloco preservado): {ex.GetBaseException().Message}"); }
+            return ext;
+        }
+
         private static string SafeName(dynamic o) { try { return (string)o.Name; } catch { return "?"; } }
 
         /// <summary>
@@ -267,18 +351,7 @@ namespace AutoEDM.Electrode
                 FindTopPlanarFace(model, out double bzMin, out double bzMax);
                 Log.Info($"  Bloco Z ∈ [{bzMin:0.0}, {bzMax:0.0}] mm (esperado [{baseLiftMm:0.0}, {baseLiftMm + holderHmm:0.0}]: origem na superfície de QUEIMA, bloco levantado {baseLiftMm:0.0}mm).");
 
-                dynamic topPlane;
-                try
-                {
-                    // Assinatura real (6 params): AddParallelByDistance(ParentPlane, Distance,
-                    // NormalSide, [opt]Pivot, [opt]pivotorigin, [opt]Local). NormalSide=2
-                    // (igRight, +normal) — validado no Log 48 (furos saíram no topo do bloco).
-                    // Offset = topo do bloco = baseLift + holderH (o bloco foi levantado).
-                    topPlane = partDoc.RefPlanes.AddParallelByDistance(
-                        partDoc.RefPlanes.Item(1), (baseLiftMm + holderHmm) / 1000.0, 2,
-                        Type.Missing, Type.Missing, Type.Missing);
-                }
-                catch (Exception e) { Log.Warn($"Plano de topo (AddParallelByDistance) falhou: {e.GetBaseException().Message}"); return created; }
+                double topZmm = baseLiftMm + holderHmm; // topo do bloco (cada furo cria seu plano)
 
                 // Orientação dos 2×Ø4: ao longo do MAIOR lado SE couber (borda >= fixEdge);
                 // senão (bloco pequeno, ex. QUAD 19) na DIAGONAL a 45°, que aproveita mais
@@ -305,30 +378,31 @@ namespace AutoEDM.Electrode
                 Log.Info($"Furos (ModelingMode={mode}): M6 Ø{fix.CenterTapDrillDiameter:0.#}×{fix.CenterHoleDepth:0.#} (broca de rosca) + " +
                          $"2×Ø{fix.DowelDiameter:0.#}×{fix.DowelDepth:0.#} @ {fix.DowelCenterDistance:0.#} ({layout}); bloco {blockXmm:0.0}×{blockYmm:0.0}.");
 
-                // Cria TODOS os HoleData ANTES de qualquer furo. O 0x80010114 estourava no
-                // HoleDataCollection.Add do Ø4 logo APÓS o AddSync do M6 — o proxy da peça
-                // fica momentaneamente desconectado enquanto o modelo regenera. Criando os
-                // dois HoleData com o modelo ainda estável, esse ponto de falha some.
-                // (33 = igRegularHole; M6 é a broca de rosca Ø5 simples — rosca só no probe.)
-                object m6 = partDoc.HoleDataCollection.Add(33, fix.CenterTapDrillDiameter / 1000.0);
-                object hd4 = partDoc.HoleDataCollection.Add(33, fix.DowelDiameter / 1000.0);
+                // RAIZ dos furos (log 2026-07-15): o `Holes.AddSync` do M6 DESCONECTA o proxy
+                // da peça (RPC_E_DISCONNECTED 0x80010108) — nem retry nem DelayCompute salvam
+                // (o objeto morre; bloco/faixa por AddFiniteExtrudedProtrusion NÃO desconectam).
+                // SOLUÇÃO: cada furo RE-ADQUIRE o documento FRESCO de Application.ActiveDocument
+                // (o Application sobrevive) e cria plano/HoleData/perfil próprios. Assim a
+                // desconexão do furo anterior não contamina o próximo.
+                dynamic app = null; try { app = partDoc.Application; } catch { }
+                if (app == null) { Log.Warn("  Fixação: sem Application para re-adquirir o doc por furo — abortando furos."); return created; }
 
-                // M6 central + 2×Ø4 (perfis SEPARADOS — 1 furo por AddSync). Cada furo
-                // re-obtém a coleção Holes (invalida após regeneração) e re-tenta em
-                // 0x80010114 — ver HoleAt/RetryStaleCom. Os furos são deslocados pelo
-                // centro do bloco (centerX/Y), = centro da pegada no fluxo de superfícies.
-                created.Add(HoleAt(partDoc, mode, topPlane, centerXmm + 0.0, centerYmm + 0.0, m6, fix.CenterHoleDepth, "M6 (Ø5)"));
-                created.Add(HoleAt(partDoc, mode, topPlane, centerXmm + d1x, centerYmm + d1y, hd4, fix.DowelDepth, "Ø4 #1"));
-                created.Add(HoleAt(partDoc, mode, topPlane, centerXmm + d2x, centerYmm + d2y, hd4, fix.DowelDepth, "Ø4 #2"));
+                LogBodiesDiag(partDoc); // diagnóstico: quantos corpos (surface copiada + bloco?)
+
+                created.Add(HoleAt(app, topZmm, fix.CenterTapDrillDiameter, fix.CenterHoleDepth, centerXmm + 0.0, centerYmm + 0.0, "M6 (Ø5)"));
+                created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d1x, centerYmm + d1y, "Ø4 #1"));
+                created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d2x, centerYmm + d2y, "Ø4 #2"));
                 created.RemoveAll(f => f == null);
 
-                try { topPlane.Visible = false; } catch { } // plano de construção fica, só invisível
-
-                // Verificação numérica: onde os furos REALMENTE caíram (model fresco).
-                VerifyHoles(partDoc.Models.Item(1),
-                    new[] { centerXmm + 0.0, centerXmm + d1x, centerXmm + d2x }, new[] { centerYmm + 0.0, centerYmm + d1y, centerYmm + d2y },
-                    new[] { fix.CenterTapDrillDiameter, fix.DowelDiameter, fix.DowelDiameter },
-                    new[] { "M6 (Ø5)", "Ø4 #1", "Ø4 #2" });
+                // Verificação numérica: onde os furos REALMENTE caíram (doc fresco).
+                try
+                {
+                    VerifyHoles((dynamic)app.ActiveDocument.Models.Item(1),
+                        new[] { centerXmm + 0.0, centerXmm + d1x, centerXmm + d2x }, new[] { centerYmm + 0.0, centerYmm + d1y, centerYmm + d2y },
+                        new[] { fix.CenterTapDrillDiameter, fix.DowelDiameter, fix.DowelDiameter },
+                        new[] { "M6 (Ø5)", "Ø4 #1", "Ø4 #2" });
+                }
+                catch (Exception e) { Log.Warn("  [verif] falhou: " + e.GetBaseException().Message); }
             }
             catch (Exception ex)
             {
@@ -410,40 +484,43 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
-        /// Um furo cego no ponto (mm) do plano/face, cortando p/ dentro da base (side=1,
-        /// –normal). Loga a coordenada e o Status da feature (pega falha silenciosa —
-        /// SE não lança em furo que falha, só marca igFeatureFailed). Apaga o esboço.
+        /// Um furo cego. RE-ADQUIRE o documento FRESCO de <c>app.ActiveDocument</c> e cria
+        /// plano/HoleData/perfil próprios — porque o <c>AddSync</c> do furo ANTERIOR desconecta
+        /// o proxy da peça (RPC_E_DISCONNECTED). Corta side=1 (–normal, p/ dentro). Loga a
+        /// coordenada e o Status. Apaga o esboço. Não lança (furo é secundário ao bloco).
         /// </summary>
-        private static object HoleAt(dynamic partDoc, int mode, dynamic plane,
-            double cxMm, double cyMm, object holeData, double depthMm, string label)
+        private static object HoleAt(dynamic app, double planeZmm, double diaMm, double depthMm,
+            double cxMm, double cyMm, string label)
         {
             object hole = null;
             dynamic ps = null;
             try
             {
-                // ProfileSets.Add() é a PRIMEIRA chamada COM após o AddSync do furo
-                // anterior — o modelo ainda está regenerando e o proxy da peça fica
-                // stale (0x80010114). Antes ela ficava FORA do try e a exceção escapava
-                // p/ o catch de AddFixationHoles, abortando os furos restantes (Log 50/57/58:
-                // M6 ok e os 2×Ø4 morriam). Agora vai com retry, dentro do try.
-                ps = RetryStaleCom(() => (object)partDoc.ProfileSets.Add(), $"ProfileSet (furo {label})");
+                dynamic doc = app.ActiveDocument; // RCW novo — sobrevive à desconexão do furo anterior
+                int mode = 1; try { mode = (int)doc.ModelingMode; } catch { }
+
+                dynamic plane = doc.RefPlanes.AddParallelByDistance(
+                    doc.RefPlanes.Item(1), planeZmm / 1000.0, 2, Type.Missing, Type.Missing, Type.Missing);
+                object holeData = doc.HoleDataCollection.Add(33, diaMm / 1000.0); // 33 = igRegularHole
+
+                ps = doc.ProfileSets.Add();
                 dynamic prof = ps.Profiles.Add(plane);
                 prof.Holes2d.Add(cxMm / 1000.0, cyMm / 1000.0);
                 prof.End(1);
+
                 double depthM = depthMm / 1000.0;
-                // A coleção Holes é RE-OBTIDA dentro do retry: após um AddSync o modelo
-                // regenera e a referência antiga (model.Holes) pode desconectar (0x80010114).
-                hole = RetryStaleCom(() =>
+                dynamic holes = doc.Models.Item(1).Holes;
+                if (mode == 2)
+                    hole = (object)holes.AddFinite(prof, 1, depthM, holeData);
+                else
                 {
-                    dynamic holes = partDoc.Models.Item(1).Holes; // ref fresca a cada tentativa
-                    if (mode == 2)
-                        return (object)holes.AddFinite(prof, 1, depthM, holeData);
                     var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)prof };
-                    return (object)holes.AddSync(1, arr, 1, 13, (object)depthM, holeData); // side=1 (–normal), 13 = igFinite
-                }, $"Furo {label}");
-                bool failed = FeatureFailed(hole);
-                if (failed) Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — feature com Status FALHA.");
-                else        Log.Info($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — ok.");
+                    hole = (object)holes.AddSync(1, arr, 1, 13, (object)depthM, holeData); // side=1 (–normal), 13 = igFinite
+                }
+
+                try { plane.Visible = false; } catch { }
+                if (FeatureFailed(hole)) Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — feature com Status FALHA.");
+                else                     Log.Info($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — ok.");
             }
             catch (Exception e) { Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm falhou: {e.GetBaseException().Message}"); }
             finally { if (ps != null) { try { ps.Delete(); } catch { } } }
@@ -451,25 +528,87 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
+        /// Diagnóstico: lista os corpos (Models) da peça com nome/tipo/ativo — para entender a
+        /// desconexão ao furar (a peça "bloco sobre superfícies" tem a SUPERFÍCIE copiada + o
+        /// bloco sólido; furar o corpo errado, ou com o corpo inativo, pode desconectar).
+        /// </summary>
+        private static void LogBodiesDiag(dynamic partDoc)
+        {
+            try
+            {
+                dynamic models = partDoc.Models;
+                int n = 0; try { n = (int)models.Count; } catch { }
+                Log.Info($"  [corpos] Models.Count = {n}");
+                for (int i = 1; i <= n; i++)
+                {
+                    try
+                    {
+                        dynamic m = models.Item(i);
+                        string bn = "?"; int bt = -1; bool active = false;
+                        try { bn = (string)m.BodyName; } catch { }
+                        try { bt = (int)m.BodyType; } catch { }
+                        try { active = (bool)m.IsBodyActive; } catch { }
+                        Log.Info($"  [corpos]   Model[{i}]: Body='{bn}', BodyType={bt}, IsBodyActive={active}");
+                    }
+                    catch (Exception e) { Log.Info($"  [corpos]   Model[{i}]: {e.GetBaseException().Message}"); }
+                }
+            }
+            catch (Exception e) { Log.Info("  [corpos] indisponível: " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>
         /// Uma chamada COM logo após um Feature.Add (AddSync/AddFinite) pode falhar
         /// transitoriamente com 0x80010114 ("O objeto solicitado não existe") enquanto o
         /// modelo ainda está regenerando — visto no Log 50 mesmo com o M6 tendo sido criado
         /// SEM erro (a causa não é exclusiva de furo roscado com E_FAIL, como se pensava
-        /// nos Logs 46/47). Tenta de novo 1x após um respiro antes de propagar.
+        /// nos Logs 46/47). Uma ÚNICA re-tentativa de 250ms às vezes não bastava (Log de
+        /// 2026-07-14: M6 ok e o 1º Ø4 morria); agora tenta VÁRIAS vezes com backoff
+        /// crescente (o modelo pode levar >250ms para reconectar o proxy) antes de propagar.
         /// </summary>
+        private static readonly int[] StaleBackoffMs = { 200, 400, 800, 1500 };
+
         private static T RetryStaleCom<T>(Func<T> action, string what)
         {
-            try { return action(); }
-            catch (Exception ex) when (IsStaleComError(ex))
+            for (int attempt = 0; ; attempt++)
             {
-                Log.Warn($"  {what}: 0x80010114 (modelo ainda regenerando) — nova tentativa em 250ms...");
-                System.Threading.Thread.Sleep(250);
-                return action();
+                try { return action(); }
+                catch (Exception ex) when (IsStaleComError(ex) && attempt < StaleBackoffMs.Length)
+                {
+                    int ms = StaleBackoffMs[attempt];
+                    Log.Warn($"  {what}: 0x80010114 (modelo regenerando) — tentativa {attempt + 2}/{StaleBackoffMs.Length + 1} em {ms}ms...");
+                    System.Threading.Thread.Sleep(ms);
+                }
             }
         }
 
         private static bool IsStaleComError(Exception ex)
             => ex.GetBaseException() is COMException ce && unchecked((uint)ce.ErrorCode) == 0x80010114u;
+
+        /// <summary>
+        /// Liga/desliga <c>Application.DelayCompute</c> — suspende a regeneração do modelo
+        /// entre operações (evita o proxy da peça ficar stale/0x80010114 após um Feature.Add).
+        /// Ao desligar, chama <c>DoIdle()</c> para forçar a regeneração pendente. Devolve true
+        /// se o estado foi aplicado (para o chamador saber se precisa restaurar no finally).
+        /// Reusado no Cleanup do preview (deletar features sem regenerar entre elas).
+        /// </summary>
+        internal static bool SetDelayCompute(dynamic app, bool on)
+        {
+            if (app == null) return false;
+            try
+            {
+                app.DelayCompute = on;
+                if (!on) { try { app.DoIdle(); } catch { } }
+                Log.Info(on
+                    ? "  DelayCompute=true (suspende regeneração — evita proxy stale entre operações)."
+                    : "  DelayCompute=false (regeneração retomada + DoIdle).");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.Warn($"  DelayCompute({on}) indisponível: {e.GetBaseException().Message}");
+                return false;
+            }
+        }
 
         /// <summary>true se a feature reporta igFeatureFailed (1216476311). SE não lança em
         /// feature que falha — só marca .Status; sem Status legível assume ok.</summary>

@@ -22,6 +22,7 @@ namespace AutoEDM.AddIn
         private const int CmdAnalisarZ = 3;      // Analisar eletrodos por Z
         private const int CmdSpecSheet = 4;      // Ficha (spec-sheet)
         private const int CmdBlocoSuperficies = 5; // Bloco sobre superfícies (ambiente de PEÇA)
+        private const int CmdInspecionar = 6;       // SPY: dumpa o objeto COM selecionado
 
         public ElectrodeRibbon() : base()
         {
@@ -37,6 +38,7 @@ namespace AutoEDM.AddIn
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
                 case CmdBlocoSuperficies: CriarBlocoSobreSuperficies(); break;
+                case CmdInspecionar: InspecionarSelecao(); break;
             }
         }
 
@@ -142,13 +144,56 @@ namespace AutoEDM.AddIn
                 Log.Info("===== BLOCO SOBRE SUPERFÍCIES (add-in) =====");
                 // Garante o log de arquivo do add-in; o Core loga cada passo + o probe.
                 var builder = new SurfaceBlockBuilder();
-                using (var form = new BlockOverSurfacesForm(builder, (object)doc))
+                using (var form = new BlockOverSurfacesForm(builder, (object)app, (object)doc))
                 {
                     form.ShowDialog();
                 }
                 Log.Info("===== FIM (BLOCO SOBRE SUPERFÍCIES) =====");
             }
             catch (Exception ex) { Fail("criar o bloco sobre superfícies", ex); }
+        }
+
+        /// <summary>
+        /// SPY: dumpa o(s) objeto(s) COM selecionado(s) no SE (tipo + propriedades/valores,
+        /// recursivo 1 nível) para o log. Serve para descobrir a API REAL sem adivinhar —
+        /// ex.: crie um furo (ou uma superfície copiada/offsetada/costurada) DO SEU JEITO no
+        /// SE, selecione a feature e clique aqui: o log revela a coleção/método/propriedades
+        /// para reproduzir por COM. Funciona em qualquer documento (peça/montagem).
+        /// </summary>
+        private void InspecionarSelecao()
+        {
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
+            {
+                Log.Info("===== INSPECIONAR SELEÇÃO (SPY) =====");
+                dynamic doc = app.ActiveDocument;
+                if (doc == null) { MessageBox.Show("Nenhum documento ativo.", "AutoEDM"); return; }
+
+                dynamic ss = doc.SelectSet;
+                int n = 0; try { n = (int)ss.Count; } catch { }
+                if (n == 0)
+                {
+                    MessageBox.Show(
+                        "Nada selecionado. Selecione uma feature no SE (ex.: um furo, uma superfície copiada/offsetada) e clique de novo.\n\n" +
+                        "O dump vai para o log (%LOCALAPPDATA%\\AutoEDM\\logs).",
+                        "AutoEDM — Inspecionar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    Log.Info("Inspecionar: nada selecionado.");
+                    return;
+                }
+
+                Log.Info($"Inspecionando {n} objeto(s) selecionado(s) — veja [SPY] no log.");
+                for (int i = 1; i <= n; i++)
+                {
+                    object item; try { item = ss.Item(i); } catch { continue; }
+                    ComDiagnostics.DumpObject($"Seleção[{i}]", item, 1);
+                }
+                MessageBox.Show(
+                    $"{n} objeto(s) inspecionado(s). Veja o dump [SPY] no log:\n%LOCALAPPDATA%\\AutoEDM\\logs",
+                    "AutoEDM — Inspecionar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Log.Info("===== FIM (INSPECIONAR SELEÇÃO) =====");
+            }
+            catch (Exception ex) { Fail("inspecionar a seleção", ex); }
         }
 
         // -------------------------------------------------------------- infra

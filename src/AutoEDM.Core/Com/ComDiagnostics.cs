@@ -16,7 +16,7 @@ namespace AutoEDM.Com
     /// a documentação não está acessível e não sabemos o nome exato do membro
     /// (ex.: como ler a cor de uma Face no Solid Edge 2023).
     /// </summary>
-    internal static class ComDiagnostics
+    public static class ComDiagnostics
     {
         // IDispatch: só precisamos de GetTypeInfo (slot 4, após os 3 do IUnknown).
         [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown),
@@ -94,6 +94,43 @@ namespace AutoEDM.Com
         {
             var members = GetMemberNames(comObject);
             Log.Info($"[DIAG] {label} ({members.Count}): {string.Join(", ", members)}");
+        }
+
+        /// <summary>
+        /// "SPY" ao vivo: loga o TIPO e TODAS as propriedades (nome = VALOR) de um objeto COM,
+        /// recursando nos filhos que também são COM até <paramref name="maxDepth"/>. É a
+        /// versão genérica do <see cref="LogColorDiscovery"/> — a mesma ideia do Solid Edge
+        /// Spy (IDispatch→ITypeInfo), mas dirigida a UM objeto (ex.: uma feature de furo que o
+        /// usuário criou na mão), para descobrir a API real sem adivinhar. Best-effort: membros
+        /// que são MÉTODO (ou pedem args) são pulados; leituras que lançam são ignoradas.
+        /// </summary>
+        public static void DumpObject(string label, object comObject, int maxDepth = 1)
+        {
+            Log.Info($"[SPY] ===== {label} =====");
+            DumpObjectInner(comObject, maxDepth, 0);
+        }
+
+        private static void DumpObjectInner(object obj, int maxDepth, int depth)
+        {
+            string pad = new string(' ', 2 + depth * 2);
+            if (obj == null) { Log.Info($"[SPY]{pad}(null)"); return; }
+            if (!Marshal.IsComObject(obj)) { Log.Info($"[SPY]{pad}= {obj} ({obj.GetType().Name})"); return; }
+
+            var members = GetMemberNames(obj);
+            Log.Info($"[SPY]{pad}COM: {{ {string.Join(", ", members)} }}");
+            foreach (var m in members)
+            {
+                object val;
+                try { val = obj.GetType().InvokeMember(m, BindingFlags.GetProperty, null, obj, null); }
+                catch { continue; } // é método, ou pede argumentos — não é uma propriedade simples
+                if (val == null) { Log.Info($"[SPY]{pad}  {m} = null"); continue; }
+                if (Marshal.IsComObject(val))
+                {
+                    if (depth < maxDepth) { Log.Info($"[SPY]{pad}  {m} ->"); DumpObjectInner(val, maxDepth, depth + 2); }
+                    else Log.Info($"[SPY]{pad}  {m} -> (COM; profundidade máx.)");
+                }
+                else Log.Info($"[SPY]{pad}  {m} = {val} ({val.GetType().Name})");
+            }
         }
 
         /// <summary>

@@ -19,26 +19,39 @@ namespace AutoEDM.AddIn.UI
     public sealed class BlockOverSurfacesForm : Form
     {
         private readonly SurfaceBlockBuilder _builder;
-        private readonly dynamic _partDoc;
+        private readonly dynamic _app;      // Application do add-in — NUNCA desconecta
+        private readonly dynamic _partDoc;  // fallback
 
         private ComboBox _cboMaterial;
         private ComboBox _cboBase;
         private NumericUpDown _numGap;
         private NumericUpDown _numHeight;
         private CheckBox _chkFix;
+        private CheckBox _chkBand;
+        private CheckBox _chkOffset;
         private TextBox _txtSummary;
         private Button _btnPreview, _btnOk, _btnCancel;
+        private readonly ToolTip _tips = new ToolTip();
 
         private BlockOverSurfacesResult _preview; // geometria atual do preview (null = nada aplicado)
         private bool _loading;
 
-        public BlockOverSurfacesForm(SurfaceBlockBuilder builder, object partDoc)
+        public BlockOverSurfacesForm(SurfaceBlockBuilder builder, object app, object partDoc)
         {
             _builder = builder ?? new SurfaceBlockBuilder();
+            _app = app;
             _partDoc = partDoc;
             BuildUi();
             Load += (s, e) => FullRecompute();
             FormClosing += OnClosing;
+        }
+
+        /// <summary>Documento FRESCO a cada operação: os furos re-adquirem o doc e o AddSync
+        /// desconecta o proxy anterior, então guardar um único partDoc quebraria o 2º preview.</summary>
+        private dynamic Doc()
+        {
+            try { var d = _app?.ActiveDocument; if (d != null) return d; } catch { }
+            return _partDoc;
         }
 
         // ------------------------------------------------------------------ UI
@@ -49,7 +62,7 @@ namespace AutoEDM.AddIn.UI
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false; MinimizeBox = false;
-            ClientSize = new Size(440, 340);
+            ClientSize = new Size(440, 420);
             Font = new Font("Segoe UI", 9f);
 
             int lx = 14, cx = 150, cw = 270, y = 16, dy = 34;
@@ -63,14 +76,16 @@ namespace AutoEDM.AddIn.UI
             y += dy;
 
             AddLabel("Base (blank):", lx, y + 3);
-            _cboBase = new ComboBox { Left = cx, Top = y, Width = cw, DropDownStyle = ComboBoxStyle.DropDownList };
+            _cboBase = new ComboBox { Left = cx, Top = y, Width = cw, DropDownWidth = 420, DropDownStyle = ComboBoxStyle.DropDownList };
+            _tips.SetToolTip(_cboBase, "Barra do catálogo. 'Em pé' = seção vira a pegada, altura livre. 'Deitado' = corte da barra vira uma medida da pegada, altura = a seção (medida variável).");
             _cboBase.SelectedIndexChanged += (s, e) => { if (!_loading) UpdateSummary(); };
             Controls.Add(_cboBase);
             y += dy;
 
-            AddLabel("Gap bloco↔superfície (mm):", lx, y + 3);
+            AddLabel("Afastamento (mm):", lx, y + 3);
             _numGap = new NumericUpDown { Left = cx, Top = y, Width = 90, DecimalPlaces = 1, Increment = 0.5M, Minimum = 0, Maximum = 100, Value = 1M };
             _numGap.ValueChanged += (s, e) => { if (!_loading) UpdateSummary(); };
+            _tips.SetToolTip(_numGap, "Afastamento vertical entre a base do bloco e o topo das superfícies de queima (mm).");
             Controls.Add(_numGap);
             y += dy;
 
@@ -82,6 +97,18 @@ namespace AutoEDM.AddIn.UI
 
             _chkFix = new CheckBox { Left = cx, Top = y, Width = cw, Text = "Aplicar fixação (furos / eixo)", Checked = true };
             Controls.Add(_chkFix);
+            y += dy;
+
+            _chkBand = new CheckBox { Left = cx, Top = y, Width = cw, Text = "Faixa de medição (5 mm + chanfro)", Checked = true };
+            _tips.SetToolTip(_chkBand, "Degrau de medição um pouco menor que o bloco, 5 mm de altura, com chanfro 1×45° no canto X+ Y− (orientação). Fica ENTRE o afastamento e o bloco (o bloco parte do topo da faixa).");
+            _chkBand.CheckedChanged += (s, e) => { if (!_loading) UpdateSummary(); };
+            Controls.Add(_chkBand);
+            y += dy;
+
+            _chkOffset = new CheckBox { Left = cx, Top = y, Width = cw, Text = "Offset por cor (folga de faísca)", Checked = true };
+            _tips.SetToolTip(_chkOffset, "Aplica a folga de faísca nas faces de queima conforme a cor (Ra→folga: 0,8→0,05; 1,6→0,10; 3,2→0,20; 6,3→0,30 mm). O eletrodo encolhe.");
+            _chkOffset.CheckedChanged += (s, e) => { if (!_loading) UpdateSummary(); };
+            Controls.Add(_chkOffset);
             y += dy;
 
             _txtSummary = new TextBox
@@ -117,10 +144,12 @@ namespace AutoEDM.AddIn.UI
             return new BlockOverSurfacesOptions
             {
                 Material = _cboMaterial.SelectedItem?.ToString() ?? "Cobre",
-                ChosenBlank = _cboBase.SelectedItem is BlankItem bi ? bi.Blank : null,
+                ChosenBlank = _cboBase.SelectedItem is BlankItem bi ? bi.Blank : null, // null = auto
                 GapMm = (double)_numGap.Value,
                 BlockHeightMm = (double)_numHeight.Value,
                 ApplyFixation = _chkFix.Checked,
+                AddMeasurementBand = _chkBand.Checked,
+                ApplyColorOffset = _chkOffset.Checked,
             };
         }
 
@@ -129,7 +158,7 @@ namespace AutoEDM.AddIn.UI
         {
             try
             {
-                var plan = _builder.Plan(_partDoc, OptionsFromUi());
+                var plan = _builder.Plan(Doc(), OptionsFromUi());
                 RebuildBlankCombo(plan);
                 _txtSummary.Text = plan.Summary();
                 _btnPreview.Enabled = _btnOk.Enabled = plan.SurfacesFound;
@@ -142,7 +171,7 @@ namespace AutoEDM.AddIn.UI
         {
             try
             {
-                var plan = _builder.Plan(_partDoc, OptionsFromUi());
+                var plan = _builder.Plan(Doc(), OptionsFromUi());
                 _txtSummary.Text = plan.Summary();
             }
             catch (Exception ex) { ShowError("atualizar o resumo", ex); }
@@ -153,18 +182,18 @@ namespace AutoEDM.AddIn.UI
             _loading = true;
             _cboBase.Items.Clear();
             _cboBase.Items.Add(new BlankItem(null,
-                plan.EligibleBlanks.Count > 0 ? $"Auto — mais compacto ({plan.EligibleBlanks[0].Name})" : "Auto (nenhum blank serve)"));
+                plan.EligibleBlanks.Count > 0 ? $"Auto — mais compacto ({plan.EligibleBlanks[0].Describe()})" : "Auto (nenhuma barra serve — comprar material)"));
             foreach (var b in plan.EligibleBlanks) _cboBase.Items.Add(new BlankItem(b, b.Describe()));
             _cboBase.SelectedIndex = 0;
             _loading = false;
         }
 
-        /// <summary>Item do combo de blanks (Tag = BlankSpec; null = auto).</summary>
+        /// <summary>Item do combo de blanks (Tag = BlankChoice em pé/deitado; null = auto).</summary>
         private sealed class BlankItem
         {
-            public readonly BlankSpec Blank;
+            public readonly BlankChoice Blank;
             private readonly string _text;
-            public BlankItem(BlankSpec blank, string text) { Blank = blank; _text = text; }
+            public BlankItem(BlankChoice blank, string text) { Blank = blank; _text = text; }
             public override string ToString() => _text;
         }
 
@@ -176,7 +205,7 @@ namespace AutoEDM.AddIn.UI
             try
             {
                 CleanupPreview();                                   // apaga o preview anterior
-                _preview = _builder.Build(_partDoc, OptionsFromUi());
+                _preview = _builder.Build(Doc(), OptionsFromUi(), preview: true);
                 _txtSummary.Text = _preview.Plan.Summary() +
                     $"\r\n[preview: bloco={YesNo(_preview.BlockCreated)}, superfícies unidas={YesNo(_preview.SurfacesUnited)}, " +
                     $"fixação={YesNo(_preview.FixationApplied)} — confira no modelo]";
@@ -190,8 +219,11 @@ namespace AutoEDM.AddIn.UI
             SetBusy(true);
             try
             {
-                if (_preview == null)                               // OK sem preview: constrói agora
-                    _preview = _builder.Build(_partDoc, OptionsFromUi());
+                var opt = OptionsFromUi();
+                if (_preview == null)                               // OK sem preview: constrói agora (build final)
+                    _preview = _builder.Build(Doc(), opt, preview: false);
+                else                                                // preview já existe (síncrono): só finaliza p/ ordenado
+                    _builder.FinalizeToOrdered(Doc(), _preview, opt);
                 _preview = null;                                    // "solta" — não apagar no closing
                 DialogResult = DialogResult.OK;
                 Close();
@@ -202,7 +234,7 @@ namespace AutoEDM.AddIn.UI
         private void CleanupPreview()
         {
             if (_preview == null) return;
-            try { _builder.Cleanup(_preview); } catch (Exception ex) { Log.Warn("Cleanup do preview: " + ex.GetBaseException().Message); }
+            try { _builder.Cleanup(Doc(), _preview); } catch (Exception ex) { Log.Warn("Cleanup do preview: " + ex.GetBaseException().Message); }
             _preview = null;
         }
 

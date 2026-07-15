@@ -15,8 +15,11 @@ namespace AutoEDM.Electrode
         /// <summary>Material do eletrodo (filtra o catálogo de blanks). Default "Cobre".</summary>
         public string Material { get; set; } = "Cobre";
 
-        /// <summary>Blank escolhido no pop-up. Null = auto (o mais compacto que serve).</summary>
-        public BlankSpec ChosenBlank { get; set; }
+        /// <summary>Blank/uso escolhido no pop-up (em pé ou deitado c/ corte). Null = auto (o mais compacto).</summary>
+        public BlankChoice ChosenBlank { get; set; }
+
+        /// <summary>Comprimento máximo de corte da barra (mm) — a "medida variável". Default 500.</summary>
+        public double BarMaxLengthMm { get; set; } = 500.0;
 
         /// <summary>Espaço (mm) entre o TOPO das superfícies e a BASE do bloco — o controle
         /// "aumentar o espaço". A forma copiada sobe do fundo até tocar o bloco; o gap dá
@@ -31,6 +34,38 @@ namespace AutoEDM.Electrode
 
         /// <summary>Padrão de fixação (diâmetros/profundidades/eixo).</summary>
         public FixationPattern Fixation { get; set; } = new FixationPattern();
+
+        // -------- Faixa de medição (item 5, [[electrode-anatomy]]) --------
+
+        /// <summary>Criar a FAIXA DE MEDIÇÃO (degrau menor + chanfro de orientação) sob o bloco.</summary>
+        public bool AddMeasurementBand { get; set; } = true;
+
+        /// <summary>Altura da faixa de medição (mm). Anatomia real = 5 mm.</summary>
+        public double BandHeightMm { get; set; } = 5.0;
+
+        /// <summary>Quanto a faixa é menor que o bloco, POR LADO (mm) — "um pouco menor que o blank".</summary>
+        public double BandMarginMm { get; set; } = 0.5;
+
+        /// <summary>Perna do chanfro 1×45° de orientação no canto X+ Y− (mm).</summary>
+        public double ChamferLegMm { get; set; } = 3.0;
+
+        // -------- Offset de faísca por cor (item 7) --------
+
+        /// <summary>
+        /// Aplicar o OFFSET (folga de faísca) nas superfícies de queima conforme as CORES
+        /// (Ra→folga: 0,8→0,05; 1,6→0,10; 3,2→0,20; 6,3→0,30 mm) + <see cref="ExtraOffsetMm"/>.
+        /// O eletrodo é SUBDIMENSIONADO (offset para dentro). Ver [[real-edm-workflow]].
+        /// </summary>
+        public bool ApplyColorOffset { get; set; } = true;
+
+        /// <summary>Folga extra (mm) somada ao offset da tabela de Ra (ajuste manual). Default 0.</summary>
+        public double ExtraOffsetMm { get; set; } = 0.0;
+
+        /// <summary>
+        /// Após unir, ALTERNAR para modelamento ORDENADO (item 7) — deixa a feature de união
+        /// editável (o operador ajusta o offset/gap na árvore). 2 = igOrdered.
+        /// </summary>
+        public bool SwitchToOrdered { get; set; } = true;
     }
 
     /// <summary>Resultado do dimensionamento SEM modelar — alimenta o pop-up e o resumo ao vivo.</summary>
@@ -45,11 +80,16 @@ namespace AutoEDM.Electrode
         public double CenterXmm, CenterYmm;         // centro XY da pegada (o bloco é centrado aqui)
         public double SurfacesTopZmm, SurfacesBottomZmm;
 
-        public IReadOnlyList<BlankSpec> EligibleBlanks = new List<BlankSpec>();
-        public BlankSpec ChosenBlank;
+        public IReadOnlyList<BlankChoice> EligibleBlanks = new List<BlankChoice>();
+        public BlankChoice ChosenBlank;
         public bool RoundBlank;
         public double BlockXmm, BlockYmm, BlockHmm;
-        public double BlockBaseZmm;                 // topo das superfícies + gap
+        public double BandBaseZmm;                  // topo das superfícies + gap (base da FAIXA)
+        public double BlockBaseZmm;                 // base do BLOCO = faixa (base+altura) OU só o gap se sem faixa
+        public bool HasBand;                        // a faixa de medição entra no dimensionamento?
+
+        // Offset de faísca por cor (item 7) — o que será aplicado às superfícies de queima.
+        public readonly List<OffsetGroup> OffsetGroups = new List<OffsetGroup>();
 
         public readonly List<string> Warnings = new List<string>();
 
@@ -58,13 +98,39 @@ namespace AutoEDM.Electrode
         {
             if (!SurfacesFound) return "Nenhuma superfície encontrada. Selecione a superfície copiada e tente de novo.";
             string blk = ChosenBlank != null ? ChosenBlank.Describe() : "sem blank do catálogo (bloco = pegada / comprar material)";
+            string band = HasBand
+                ? $"Faixa: Z {BandBaseZmm:0.0}→{BlockBaseZmm:0.0} mm (5 mm, gap {(BandBaseZmm - SurfacesTopZmm):0.0} mm acima da superfície) + chanfro X+ Y−\r\n"
+                : "Faixa: (desligada)\r\n";
             string s =
                 $"Pegada: {FootprintXmm:0.0} × {FootprintYmm:0.0} mm  (fonte: {SurfaceSource})\r\n" +
                 $"Blank: {blk}\r\n" +
-                $"Bloco: {BlockXmm:0.0} × {BlockYmm:0.0} × {BlockHmm:0.0} mm\r\n" +
-                $"Base do bloco: Z = {BlockBaseZmm:0.0} mm (gap {(BlockBaseZmm - SurfacesTopZmm):0.0} mm acima do topo das superfícies)";
+                band +
+                $"Bloco: {BlockXmm:0.0} × {BlockYmm:0.0} × {BlockHmm:0.0} mm, parte de Z = {BlockBaseZmm:0.0} mm";
+            if (OffsetGroups.Count > 0)
+            {
+                s += "\r\nOffset (folga de faísca):";
+                foreach (var g in OffsetGroups) s += "\r\n  • " + g.Describe();
+            }
             if (Warnings.Count > 0) s += "\r\n⚠ " + string.Join("; ", Warnings);
             return s;
+        }
+    }
+
+    /// <summary>Um grupo de faces de queima da MESMA cor e o offset (folga, mm) a aplicar.</summary>
+    public sealed class OffsetGroup
+    {
+        public System.Drawing.Color Color;
+        public bool ColorMapped;      // a cor casou com o mapa Ra?
+        public double Ra;             // Ra alvo (µm), 0 se não mapeada
+        public double OffsetMm;       // folga total = tabela(Ra) + extra
+        public readonly List<object> Faces = new List<object>();
+
+        public string Describe()
+        {
+            string cor = $"RGB({Color.R},{Color.G},{Color.B})";
+            return ColorMapped
+                ? $"{cor} · Ra {Ra:0.#} · {Faces.Count} face(s) → offset {OffsetMm:0.###} mm"
+                : $"{cor} (não mapeada) · {Faces.Count} face(s) → offset {OffsetMm:0.###} mm";
         }
     }
 
@@ -72,9 +138,13 @@ namespace AutoEDM.Electrode
     public sealed class BlockOverSurfacesResult
     {
         public BlockOverSurfacesPlan Plan;
-        public bool BlockCreated, SurfacesUnited, FixationApplied;
+        public bool BlockCreated, BandCreated, SurfacesOffset, SurfacesUnited, FixationApplied, SwitchedToOrdered;
         /// <summary>Features criadas, na ordem de criação (o Cleanup apaga em ordem reversa).</summary>
         public readonly List<object> CreatedFeatures = new List<object>();
+        /// <summary>Contagens ANTES do build (o Cleanup apaga o que passou disso, via doc RE-ADQUIRIDO —
+        /// os handles morrem quando os furos desconectam a peça, então deletar por handle não basta).</summary>
+        public int ModelsBaseline = -1;
+        public int CopySurfacesBaseline = -1;
         public readonly List<string> Warnings = new List<string>();
     }
 
@@ -132,58 +202,119 @@ namespace AutoEDM.Electrode
             plan.SurfacesTopZmm = box.MaxZ;
             plan.SurfacesBottomZmm = box.MinZ;
 
-            // Blanks elegíveis (do mais compacto ao maior) p/ o pop-up.
+            // Formas de usar o blank — EM PÉ (altura livre) ou DEITADO (corte da barra vira a
+            // pegada, altura = seção). O pop-up escolhe; auto = o mais compacto.
             double footLong = Math.Max(box.SizeX, box.SizeY);
             double footShort = Math.Min(box.SizeX, box.SizeY);
-            var needBox = new BoundingBox { MaxX = footLong, MaxY = footShort };
-            plan.EligibleBlanks = _blanks.EligibleBlanks(needBox, 0.0, opt.Material);
 
-            BlankSpec blank = opt.ChosenBlank ?? plan.EligibleBlanks.FirstOrDefault();
-            plan.ChosenBlank = blank;
-            if (blank == null)
-                plan.Warnings.Add($"Pegada {footLong:0.0}×{footShort:0.0} mm excede a maior seção de '{opt.Material}' — comprar material (bloco cru = pegada).");
-
-            ComputeBlockDims(plan, blank, box);
-            plan.BlockHmm = opt.BlockHeightMm;
-            plan.BlockBaseZmm = box.MaxZ + opt.GapMm;
-            return plan;
-        }
-
-        private static void ComputeBlockDims(BlockOverSurfacesPlan plan, BlankSpec blank, BoundingBox box)
-        {
-            double footLong = Math.Max(box.SizeX, box.SizeY);
-            double footShort = Math.Min(box.SizeX, box.SizeY);
-            double blockLong, blockShort;
-            bool round = false;
-
-            if (blank == null)
+            // A FAIXA de medição (bloco − 2·margem) precisa CONTER as superfícies de queima
+            // (Carlos, 2026-07-15: "elas precisam estar dentro da faixa"). Então o blank é
+            // escolhido/dimensionado para a pegada + 2·margem da faixa — assim a faixa ≥ pegada.
+            double bandM = opt.AddMeasurementBand ? opt.BandMarginMm : 0.0;
+            BoundingBox needBox = new BoundingBox
             {
-                blockLong = footLong; blockShort = footShort; // sem catálogo: bloco cru = pegada
+                MinX = box.MinX - bandM, MaxX = box.MaxX + bandM,
+                MinY = box.MinY - bandM, MaxY = box.MaxY + bandM,
+                MinZ = box.MinZ, MaxZ = box.MaxZ
+            };
+            plan.EligibleBlanks = _blanks.BlankChoices(needBox, opt.Material, opt.BarMaxLengthMm, opt.BandHeightMm);
+
+            BlankChoice choice = opt.ChosenBlank ?? plan.EligibleBlanks.FirstOrDefault();
+            plan.ChosenBlank = choice;
+
+            if (choice == null)
+            {
+                plan.Warnings.Add($"Pegada {footLong:0.0}×{footShort:0.0} mm não cabe em nenhuma barra de '{opt.Material}' (nem cortada) — comprar material (bloco cru = pegada + faixa).");
+                plan.RoundBlank = false;
+                plan.BlockXmm = needBox.SizeX; // pegada + 2·margem da faixa (faixa contém a pegada)
+                plan.BlockYmm = needBox.SizeY;
+                plan.BlockHmm = opt.BlockHeightMm;
             }
             else
             {
-                switch (blank.Shape)
-                {
-                    case BlankShape.Round:
-                        blockLong = blockShort = blank.DimA; round = true; break;
-                    case BlankShape.Rectangular:
-                        blockLong = Math.Max(blank.DimA, blank.DimB ?? blank.DimA);
-                        blockShort = Math.Min(blank.DimA, blank.DimB ?? blank.DimA);
-                        break;
-                    default: // Square
-                        blockLong = blockShort = blank.DimA; break;
-                }
+                plan.RoundBlank = choice.Round;
+                plan.BlockXmm = choice.BlockXmm;
+                plan.BlockYmm = choice.BlockYmm;
+                // Altura: DEITADO impõe a altura da seção (contém faixa + bloco); EM PÉ = livre (param do usuário).
+                plan.BlockHmm = choice.TotalHeightMm.HasValue
+                    ? Math.Max(choice.TotalHeightMm.Value - (opt.AddMeasurementBand ? opt.BandHeightMm : 0.0), 3.0)
+                    : opt.BlockHeightMm;
             }
-            plan.RoundBlank = round;
-            bool xIsLong = box.SizeX >= box.SizeY; // orienta o lado maior do blank ao lado maior da pegada
-            plan.BlockXmm = xIsLong ? blockLong : blockShort;
-            plan.BlockYmm = xIsLong ? blockShort : blockLong;
+
+            // Empilhamento em Z (Carlos, Log 2026-07-14): topo das superfícies → AFASTAMENTO
+            // (gap) → FAIXA de medição (5 mm) → BLOCO (parte do topo da faixa). Sem faixa, o
+            // bloco parte direto do gap. A faixa é modelada a partir da base (gap acima da
+            // superfície); o bloco é levantado pela altura da faixa.
+            plan.HasBand = opt.AddMeasurementBand;
+            plan.BandBaseZmm = box.MaxZ + opt.GapMm;
+            plan.BlockBaseZmm = plan.BandBaseZmm + (plan.HasBand ? opt.BandHeightMm : 0.0);
+
+            // Offset de faísca por cor (item 7): agrupa as faces por cor e calcula a folga
+            // (tabela Ra + extra). Não modela — só dimensiona; alimenta o resumo e o Build.
+            if (opt.ApplyColorOffset)
+                ComputeOffsetGroups(plan, faces, (object)SafeApp(partDoc), opt.ExtraOffsetMm);
+
+            return plan;
+        }
+
+        private static object SafeApp(dynamic partDoc)
+        {
+            try { return partDoc.Application; } catch { return null; }
+        }
+
+        /// <summary>
+        /// Agrupa as faces de queima por COR e calcula a folga (offset para dentro, mm) de
+        /// cada grupo = tabela(Ra) + <paramref name="extraMm"/>. Cor→Ra por
+        /// <see cref="RaColorMap"/>; Ra→folga por <see cref="RaOffsetTablePolicy"/>. Faces
+        /// sem cor mapeada recebem só o extra (e um aviso). Eletrodo ENCOLHE (offset p/ dentro).
+        /// </summary>
+        private static void ComputeOffsetGroups(BlockOverSurfacesPlan plan, List<object> faces, object application, double extraMm)
+        {
+            var reader = new FaceStyleColorReader();
+            var map = new RaColorMap();
+            var policy = new RaOffsetTablePolicy();
+            var byColor = new Dictionary<int, OffsetGroup>();
+
+            foreach (var f in faces)
+            {
+                System.Drawing.Color color; string src;
+                bool gotColor = reader.TryReadColor(f, application, out color, out src);
+                if (!gotColor) color = System.Drawing.Color.Empty;
+
+                int key = color.ToArgb();
+                if (!byColor.TryGetValue(key, out OffsetGroup g))
+                {
+                    g = new OffsetGroup { Color = color };
+                    if (gotColor && map.TryGetRa(color, out double ra, out _))
+                    {
+                        g.ColorMapped = true; g.Ra = ra;
+                        g.OffsetMm = policy.GetInwardOffsetMm(new Model.ElectrodePass("", ra), plan.ChosenBlank?.Material ?? "Cobre") + extraMm;
+                    }
+                    else
+                    {
+                        g.ColorMapped = false; g.OffsetMm = extraMm; // sem Ra: só o extra
+                    }
+                    byColor[key] = g;
+                }
+                g.Faces.Add(f);
+            }
+
+            foreach (var g in byColor.Values.OrderByDescending(v => v.Faces.Count))
+                plan.OffsetGroups.Add(g);
+
+            if (plan.OffsetGroups.Any(g => !g.ColorMapped && g.Faces.Count > 0))
+                plan.Warnings.Add("há faces de queima sem cor mapeada — offset dessas = só a folga extra (confira a cor).");
         }
 
         // ================================================================ BUILD
 
-        /// <summary>Modela: bloco + estende/fecha/une as superfícies + fixação. Devolve os handles p/ Preview.</summary>
-        public BlockOverSurfacesResult Build(dynamic partDoc, BlockOverSurfacesOptions opt)
+        /// <summary>
+        /// Modela: bloco + faixa + offset/estende/une as superfícies + fixação. Devolve os
+        /// handles p/ Preview. <paramref name="preview"/>=true mantém a peça em SÍNCRONO (para
+        /// re-preview/Cancel deletarem fácil); a troca para ORDENADO (item 7) só ocorre no
+        /// build FINAL (OK) — ver <see cref="FinalizeToOrdered"/>.
+        /// </summary>
+        public BlockOverSurfacesResult Build(dynamic partDoc, BlockOverSurfacesOptions opt, bool preview = false)
         {
             opt = opt ?? new BlockOverSurfacesOptions();
             var result = new BlockOverSurfacesResult();
@@ -199,6 +330,10 @@ namespace AutoEDM.Electrode
                      $"centro ({plan.CenterXmm:0.0},{plan.CenterYmm:0.0}), topo Z={plan.SurfacesTopZmm:0.0}; " +
                      $"blank {(plan.ChosenBlank?.Describe() ?? "(cru=pegada)")}; " +
                      $"bloco {plan.BlockXmm:0.0}×{plan.BlockYmm:0.0}×{plan.BlockHmm:0.0}, base Z={plan.BlockBaseZmm:0.0} (gap {opt.GapMm:0.0}).");
+
+            // Baselines p/ o Cleanup (apaga o que passar disto, via doc re-adquirido).
+            result.ModelsBaseline = ModelsCount(partDoc);
+            result.CopySurfacesBaseline = CopySurfacesCount(partDoc);
 
             // (1) BLOCO — base do bloco = topo das superfícies + gap (lift a partir da origem).
             try
@@ -216,17 +351,34 @@ namespace AutoEDM.Electrode
                 return result; // sem bloco não há o que estender/unir
             }
 
-            // (2) ESTENDER + FECHAR + UNIR as superfícies ao bloco.
+            // Agora que existe um sólido (o bloco), sonda as operações de UNIR/estender que
+            // só aparecem no Model (Replace Face, booleana, Thicken) — 1x, para ligar o
+            // passo definitivo de "unir superfícies ao bloco" no próximo run.
+            ProbeModelApi(partDoc);
+
+            // (1b) FAIXA DE MEDIÇÃO (item 5): degrau menor + chanfro de orientação, sob o
+            // bloco (topo da faixa = base do bloco). Funde com o bloco (protrusão).
+            if (opt.AddMeasurementBand)
+            {
+                try
+                {
+                    object band = BlankModeler.AddMeasurementBand(partDoc, plan.BlockXmm, plan.BlockYmm,
+                        plan.BlockBaseZmm, opt.BandHeightMm, opt.BandMarginMm, opt.ChamferLegMm,
+                        plan.CenterXmm, plan.CenterYmm);
+                    if (band != null) { result.CreatedFeatures.Add(band); result.BandCreated = true; }
+                }
+                catch (Exception ex) { Log.Warn("Faixa de medição (bloco preservado): " + ex.GetBaseException().Message); }
+            }
+
+            // (2) ESTENDER a superfície de queima até o bloco → costurar em sólido → UNIR
+            // (itens 3/4, Path B do Carlos). Assinaturas reais do interop; guardado.
             try
             {
-                var surfItems = CollectSurfaceItems(partDoc);
-                var created = TryCloseAndUnite(partDoc, surfItems, plan);
-                result.CreatedFeatures.AddRange(created);
-                result.SurfacesUnited = created.Count > 0;
+                TryExtendStitchUnite(partDoc, plan, opt, result);
             }
             catch (Exception ex)
             {
-                Log.Warn("Estender/fechar/unir superfícies (bloco preservado): " + ex.GetBaseException().Message);
+                Log.Warn("Estender/costurar/unir superfícies (bloco preservado): " + ex.GetBaseException().Message);
             }
 
             // (3) FIXAÇÃO (Carlos: incluir).
@@ -254,28 +406,69 @@ namespace AutoEDM.Electrode
                 catch (Exception ex) { Log.Warn("Fixação (bloco preservado): " + ex.GetBaseException().Message); }
             }
 
-            Log.Info($"Concluído: bloco={result.BlockCreated}, superfícies unidas={result.SurfacesUnited}, " +
-                     $"fixação={result.FixationApplied}. Features criadas: {result.CreatedFeatures.Count}.");
+            // (4) ALTERNAR PARA ORDENADO (item 7) — só no build FINAL (OK); no preview a peça
+            // fica em síncrono para o re-preview/Cancel deletarem fácil.
+            if (!preview) FinalizeToOrdered(partDoc, result, opt);
+
+            Log.Info($"Concluído: bloco={result.BlockCreated}, faixa={result.BandCreated}, offset={result.SurfacesOffset}, " +
+                     $"unidas={result.SurfacesUnited}, ordenado={result.SwitchedToOrdered}, fixação={result.FixationApplied}. " +
+                     $"Features criadas: {result.CreatedFeatures.Count}.");
             return result;
         }
 
         // ============================================================== CLEANUP
 
-        /// <summary>Apaga (ordem reversa) as features criadas por um Build — usado no re-preview e no Cancel.</summary>
-        public void Cleanup(BlockOverSurfacesResult result)
+        /// <summary>
+        /// Apaga a geometria de um preview — usado no re-preview e no Cancel. Os handles das
+        /// features criadas antes dos furos ficam DESCONECTADOS (os furos re-adquirem o doc e
+        /// o AddSync desconecta o proxy anterior), então deletar por handle NÃO basta. Solução:
+        /// RE-ADQUIRE o documento fresco de Application.ActiveDocument e apaga tudo que passou
+        /// das baselines (Models = bloco+faixa+furos; CopySurfaces = superfície criada), em
+        /// ordem reversa, com o doc vivo.
+        /// </summary>
+        public void Cleanup(dynamic partDoc, BlockOverSurfacesResult result)
         {
-            if (result?.CreatedFeatures == null || result.CreatedFeatures.Count == 0) return;
+            if (result == null) return;
+
+            dynamic doc = null;
+            try { doc = partDoc?.Application?.ActiveDocument; } catch { }
+            if (doc == null) doc = partDoc;
+            if (doc == null) { result.CreatedFeatures.Clear(); return; }
+
             int ok = 0, fail = 0;
-            for (int i = result.CreatedFeatures.Count - 1; i >= 0; i--)
-            {
-                object f = result.CreatedFeatures[i];
-                if (f == null) continue;
-                try { Retry(() => { ((dynamic)f).Delete(); return true; }, "Delete feature"); ok++; }
-                catch (Exception ex) { fail++; Log.Warn("Cleanup: não removeu uma feature: " + ex.GetBaseException().Message); }
-            }
+            ok += DeleteBeyond(SafeCollection(() => doc.Models), result.ModelsBaseline, "Model (sólido)", ref fail);
+            ok += DeleteBeyond(SafeCollection(() => doc.Constructions.CopySurfaces), result.CopySurfacesBaseline, "CopySurface", ref fail);
+
             result.CreatedFeatures.Clear();
-            result.BlockCreated = result.SurfacesUnited = result.FixationApplied = false;
-            Log.Info($"Preview limpo: {ok} feature(s) removida(s)" + (fail > 0 ? $", {fail} falha(s)" : "") + ".");
+            result.BlockCreated = result.BandCreated = result.SurfacesOffset =
+                result.SurfacesUnited = result.FixationApplied = result.SwitchedToOrdered = false;
+            Log.Info($"Preview limpo (doc re-adquirido): {ok} feature(s) removida(s)" + (fail > 0 ? $", {fail} falha(s)" : "") + ".");
+        }
+
+        private static object SafeCollection(Func<object> get) { try { return get(); } catch { return null; } }
+
+        /// <summary>Apaga (ordem reversa) os itens da coleção COM com índice &gt; baseline.</summary>
+        private static int DeleteBeyond(object collection, int baseline, string label, ref int fail)
+        {
+            if (collection == null || baseline < 0) return 0;
+            int ok = 0;
+            try
+            {
+                dynamic c = collection;
+                int n = 0; try { n = (int)c.Count; } catch { }
+                for (int i = n; i > baseline; i--)
+                {
+                    try { c.Item(i).Delete(); ok++; }
+                    catch (Exception e) { fail++; Log.Warn($"Cleanup: {label}[{i}] não removido — {e.GetBaseException().Message}"); }
+                }
+            }
+            catch { }
+            return ok;
+        }
+
+        private static int CopySurfacesCount(dynamic partDoc)
+        {
+            try { return (int)partDoc.Constructions.CopySurfaces.Count; } catch { return 0; }
         }
 
         // ============================================================ superfícies
@@ -400,37 +593,186 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
-        /// Estende as superfícies até o bloco, fecha-as e une ao bloco. As assinaturas
-        /// exatas dessas operações de superfície ainda serão confirmadas pelo PROBE da 1ª
-        /// execução; por ora tenta a hipótese 1 (StitchSurfaces do <see cref="ModelingHelpers"/>)
-        /// e loga o resultado — o bloco é preservado se falhar. Devolve as features criadas.
+        /// Item 7 (OFFSET por cor) + itens 3/4 (ESTENDER/FECHAR/UNIR ao bloco).
+        /// (a) offseta cada grupo de cor pela folga de faísca (para DENTRO) via
+        ///     <c>OffsetSurfaces.Add</c> (assinatura confirmada); (b) costura as superfícies
+        ///     via <c>StitchSurfaces.Add</c> (confirmada). O passo DEFINITIVO de "unir ao
+        ///     bloco" (estender até o bloco: Replace Face vs Thicken+booleana) ainda sai do
+        ///     PROBE — é tentado guardado e logado; o bloco/faixa sobrevivem se falhar.
+        /// Devolve as features criadas + flags de offset/união.
         /// </summary>
-        private static List<object> TryCloseAndUnite(dynamic partDoc, List<object> surfItems, BlockOverSurfacesPlan plan)
+        // Path B (Carlos, 2026-07-15): ESTENDER a superfície de queima até o bloco →
+        // COSTURAR+CURAR em sólido (AddByAutoTrim) → UNIR (booleana) ao bloco. Assinaturas
+        // REAIS obtidas por reflexão do interop (SolidEdgePart). As coleções vêm por IDispatch
+        // dinâmico e são CASTADAS ao tipo do interop para o marshaling correto do `ref Array`.
+        // Cada passo é guardado e MUITO logado (inputs + resultado) — o bloco/faixa sobrevivem.
+        // Popula 'result' direto (tipo concreto): retornar tupla nomeada de método com arg
+        // dynamic perde os nomes em runtime (bug de 2026-07-14).
+        private static void TryExtendStitchUnite(
+            dynamic partDoc, BlockOverSurfacesPlan plan, BlockOverSurfacesOptions opt, BlockOverSurfacesResult result)
         {
-            var created = new List<object>();
-            if (surfItems == null || surfItems.Count == 0)
-            {
-                Log.Warn("Estender/fechar/unir: nenhuma superfície-item para costurar.");
-                return created;
-            }
+            dynamic blockModel;
+            try { blockModel = partDoc.Models.Item(1); }
+            catch (Exception e) { Log.Warn("Unir: sem sólido do bloco — " + e.GetBaseException().Message); return; }
 
-            Log.Info($"Estender/fechar/unir {surfItems.Count} superfície(s) até o bloco (base Z={plan.BlockBaseZmm:0.0}). " +
-                     "Assinaturas definitivas dependem do PROBE — tentando hipótese StitchSurfaces.");
+            // Face INFERIOR do bloco = alvo da extensão da superfície.
+            object bottomFace = FindExtremePlanarFace(blockModel, false, out double blockBottomZmm);
+            if (bottomFace == null) { Log.Warn("Unir: não achei a face inferior do bloco (alvo da extensão)."); return; }
+            Log.Info($"Unir: face inferior do bloco em Z≈{blockBottomZmm:0.0}mm (alvo).");
+
+            // Superfície de queima: usa a CopySurface existente OU cria uma das faces selecionadas.
+            dynamic surf = GetBurnCopySurface(partDoc, out string surfSrc, out bool surfCreated);
+            if (surf == null)
+            {
+                Log.Warn("Unir: sem superfície de queima (nem CopySurface, nem faces selecionadas). Selecione as faces de queima e rode de novo.");
+                return;
+            }
+            if (surfCreated) result.CreatedFeatures.Add(surf);
+            Log.Info($"Unir: superfície de queima = {surfSrc}.");
+
+            // Offset de faísca (item 7): o que SERÁ aplicado (na feature de união, em ordenado).
+            foreach (var g in plan.OffsetGroups) Log.Info($"  (offset planejado) {g.Describe()}");
+
+            // Coleções tipadas (marshaling do ref Array). Via IDispatch dinâmico + cast.
+            SolidEdgePart.ExtendSurfaces extCol;
+            SolidEdgePart.IntersectSurfaces intCol;
+            SolidEdgePart.Unions uniCol;
             try
             {
-                dynamic constructions = partDoc.Constructions;
-                object stitch = ModelingHelpers.StitchSurfaces(constructions, surfItems.ToArray(), true, 0.0001);
-                if (stitch != null)
+                extCol = (SolidEdgePart.ExtendSurfaces)blockModel.ExtendSurfaces;
+                intCol = (SolidEdgePart.IntersectSurfaces)blockModel.IntersectSurfaces;
+                uniCol = (SolidEdgePart.Unions)blockModel.Unions;
+            }
+            catch (Exception e) { Log.Warn("Unir: coleções ExtendSurfaces/IntersectSurfaces/Unions indisponíveis no Model — " + e.GetBaseException().Message); return; }
+
+            var edges = CollectExtendableEdges(surf, extCol);
+            Log.Info($"Unir: {edges.Count} aresta(s) extensível(is) (ValidEdge) na superfície.");
+            if (edges.Count == 0) { Log.Warn("Unir: nenhuma aresta extensível — abortando (inspecione a superfície pelo SPY)."); return; }
+
+            int modelsBefore = ModelsCount(partDoc);
+
+            // (1) ESTENDER as bordas da superfície até a face inferior do bloco (TargetSurface).
+            try
+            {
+                System.Array edgeArr = edges.ToArray();
+                double distM = Math.Max(blockBottomZmm - plan.SurfacesTopZmm + 5.0, 5.0) / 1000.0; // generoso; o alvo manda
+                object ext = extCol.Add1(edges.Count, ref edgeArr, distM,
+                    SolidEdgePart.ExtendSurfaceExtentTypeConstants.igESLinear, bottomFace);
+                if (ext != null) { result.CreatedFeatures.Add(ext); Log.Info("Unir: (1) ExtendSurfaces.Add1 OK — superfície estendida até o bloco."); }
+            }
+            catch (Exception e) { Log.Warn("Unir: (1) ExtendSurfaces.Add1 falhou — " + e.GetBaseException().Message); }
+
+            // (2) COSTURAR+CURAR a superfície em um SÓLIDO (auto-trim + stitch + heal).
+            try
+            {
+                System.Array surfs = new object[] { surf };
+                intCol.AddByAutoTrim(1, ref surfs, false, true, true, 0.0001);
+                result.SurfacesUnited = true;
+                Log.Info("Unir: (2) IntersectSurfaces.AddByAutoTrim OK — superfície fechada/curada em sólido.");
+            }
+            catch (Exception e) { Log.Warn("Unir: (2) AddByAutoTrim falhou — " + e.GetBaseException().Message); }
+
+            int modelsAfter = ModelsCount(partDoc);
+            Log.Info($"Unir: corpos antes={modelsBefore}, depois={modelsAfter} (corpo novo = superfície virou sólido).");
+
+            // (3) UNIR (booleana) o sólido da superfície ao bloco — só se surgiu um corpo novo.
+            if (modelsAfter > modelsBefore)
+            {
+                try
                 {
-                    created.Add(stitch);
-                    Log.Info("StitchSurfaces: OK (confirmar visualmente se fechou/uniu ao bloco).");
+                    System.Array targets = new object[] { blockModel.Body };
+                    System.Array tools = new object[] { partDoc.Models.Item(modelsAfter).Body };
+                    uniCol.Add(1, ref targets, 1, ref tools,
+                        SolidEdgePart.SETargetDesignBodyOption.igCreateSingleDesignBodyOnNonManifoldOption,
+                        SolidEdgePart.SETargetConstructionBodyOption.igCreateSingleConstructionGeneralBodyOnNonManifoldOption);
+                    Log.Info("Unir: (3) Unions.Add OK — superfície unida ao bloco (sólido único).");
+                }
+                catch (Exception e) { Log.Warn("Unir: (3) Unions.Add falhou — " + e.GetBaseException().Message); }
+            }
+            else Log.Info("Unir: (3) sem corpo novo separado — AddByAutoTrim já uniu ao bloco, ou não gerou sólido (confira no modelo).");
+        }
+
+        /// <summary>Menor/maior face PLANAR do corpo (topo ou fundo) + seu Z (mm).</summary>
+        private static object FindExtremePlanarFace(dynamic model, bool wantTop, out double zmm)
+        {
+            zmm = 0; object best = null;
+            double bestZ = wantTop ? double.NegativeInfinity : double.PositiveInfinity;
+            try
+            {
+                dynamic planar = model.Body.Faces[6]; // 6 = igQueryPlane
+                int n = 0; try { n = (int)planar.Count; } catch { }
+                for (int i = 1; i <= n; i++)
+                {
+                    object f; try { f = planar.Item(i); } catch { continue; }
+                    if (!FaceGeometry.TryGetRangeMm(f, out double[] mn, out double[] mx)) continue;
+                    if (Math.Abs(mx[2] - mn[2]) > 0.01) continue; // face não-horizontal
+                    double z = wantTop ? mx[2] : mn[2];
+                    if (wantTop ? z > bestZ : z < bestZ) { bestZ = z; best = f; zmm = z; }
                 }
             }
-            catch (Exception ex)
+            catch (Exception e) { Log.Warn("Unir: FindExtremePlanarFace — " + e.GetBaseException().Message); }
+            return best;
+        }
+
+        /// <summary>
+        /// A superfície de queima como CopySurface. Se a peça já tem uma, usa-a; SENÃO CRIA
+        /// uma a partir das faces de queima SELECIONADAS (o Carlos seleciona as faces e clica —
+        /// não precisa fazer Surface→Copy à mão). <paramref name="created"/>=true quando a
+        /// criamos (o chamador rastreia p/ o Cleanup).
+        /// </summary>
+        private static dynamic GetBurnCopySurface(dynamic partDoc, out string src, out bool created)
+        {
+            src = null; created = false;
+
+            // (1) Já existe uma CopySurface na peça?
+            try
             {
-                Log.Warn("StitchSurfaces (hipótese 1) falhou — ver PROBE p/ a API correta: " + ex.GetBaseException().Message);
+                dynamic cs = partDoc.Constructions.CopySurfaces;
+                int n = 0; try { n = (int)cs.Count; } catch { }
+                if (n > 0) { src = $"CopySurface existente (de {n})"; return cs.Item(1); }
             }
-            return created;
+            catch { }
+
+            // (2) Senão, CRIA uma CopySurface das faces de queima selecionadas.
+            var faces = CollectSurfaceFaces(partDoc, out string fsrc);
+            if (faces.Count == 0) return null;
+            try
+            {
+                var col = (SolidEdgePart.CopySurfaces)partDoc.Constructions.CopySurfaces;
+                System.Array farr = faces.ToArray();
+                object copy = col.Add(faces.Count, ref farr, Type.Missing, Type.Missing);
+                if (copy != null)
+                {
+                    created = true;
+                    src = $"CopySurface criada de {faces.Count} face(s) ({fsrc})";
+                    return copy;
+                }
+            }
+            catch (Exception e) { Log.Warn("Unir: criar CopySurface das faces selecionadas falhou — " + e.GetBaseException().Message); }
+            return null;
+        }
+
+        /// <summary>Arestas da superfície que o SE aceita ESTENDER (boundary/laminar, ValidEdge).</summary>
+        private static List<object> CollectExtendableEdges(dynamic surf, SolidEdgePart.ExtendSurfaces extCol)
+        {
+            var edges = new List<object>();
+            try
+            {
+                dynamic ec = surf.Edges; // coleção de arestas da CopySurface
+                int n = 0; try { n = (int)ec.Count; } catch { }
+                for (int i = 1; i <= n; i++)
+                {
+                    object e; try { e = ec.Item(i); } catch { continue; }
+                    try { if (extCol.ValidEdge(e)) edges.Add(e); } catch { }
+                }
+            }
+            catch (Exception ex) { Log.Warn("Unir: leitura de arestas da superfície falhou — " + ex.GetBaseException().Message); }
+            return edges;
+        }
+
+        private static int ModelsCount(dynamic partDoc)
+        {
+            try { return (int)partDoc.Models.Count; } catch { return 0; }
         }
 
         // ================================================================ PROBE
@@ -451,6 +793,33 @@ namespace AutoEDM.Electrode
                 ProbeSub((object)partDoc.Constructions, "Constructions", name);
         }
 
+        private static bool _modelProbed;
+
+        /// <summary>
+        /// Sonda (1x) o Model (sólido) recém-criado procurando as operações de UNIR as
+        /// superfícies ao bloco: Replace Face, booleana (Combine/Unite/Subtract), Thicken.
+        /// Roda DEPOIS do bloco (Model.Item(1) já existe). É o que faltava para ligar o
+        /// passo definitivo dos itens 3/4 (estender/fechar/unir) sem adivinhar assinatura.
+        /// </summary>
+        private static void ProbeModelApi(dynamic partDoc)
+        {
+            if (_modelProbed) return;
+            _modelProbed = true;
+            try
+            {
+                object model = (object)partDoc.Models.Item(1);
+                ComDiagnostics.LogMembers("Model (unir superfícies)", model);
+                // Nomes REAIS confirmados pelo SPY (log 2026-07-15): as operações de estender/
+                // unir/booleana vivem no MODEL/Body, não em Constructions.
+                foreach (var name in new[] { "Unions", "Subtracts", "Intersects", "ExtendSurfaces",
+                                             "TrimSurfaces", "IntersectSurfaces", "RedefineFaces",
+                                             "ReplaceBody", "HoleGeometries" })
+                    ProbeSub(model, "Model", name);
+                ComDiagnostics.LogSignatures((object)partDoc.Models, "AddThickenFeature");
+            }
+            catch (Exception e) { Log.Info("[PROBE] Model (sem sólido ainda?): " + e.GetBaseException().Message); }
+        }
+
         private static void ProbeSub(object owner, string ownerName, string subCollection)
         {
             try
@@ -463,16 +832,39 @@ namespace AutoEDM.Electrode
             catch { /* sub-coleção inexistente nesta versão do SE — ok */ }
         }
 
+        // ================================================================ ordenado
+
+        /// <summary>
+        /// Troca a peça para modelagem ORDENADA (item 7) — deixa a feature de união editável
+        /// na árvore para o operador ajustar o offset/gap. Só no build FINAL (OK). Nunca aborta.
+        /// </summary>
+        public void FinalizeToOrdered(dynamic partDoc, BlockOverSurfacesResult result, BlockOverSurfacesOptions opt)
+        {
+            if (opt == null || !opt.SwitchToOrdered) return;
+            if (result != null && !(result.SurfacesUnited || result.SurfacesOffset)) return; // nada de superfície criado
+            try
+            {
+                partDoc.ModelingMode = 2; // igOrdered
+                if (result != null) result.SwitchedToOrdered = true;
+                Log.Info("Modelagem alternada para ORDENADO (feature de união editável para ajuste de offset/gap).");
+            }
+            catch (Exception ex) { Log.Warn("Alternar para ordenado falhou (modelo preservado): " + ex.GetBaseException().Message); }
+        }
+
         // ================================================================ infra
+
+        private static readonly int[] StaleBackoffMs = { 200, 400, 800, 1500 };
 
         private static T Retry<T>(Func<T> action, string what)
         {
-            try { return action(); }
-            catch (Exception ex) when (IsStale(ex))
+            for (int attempt = 0; ; attempt++)
             {
-                Log.Warn($"  {what}: 0x80010114 (modelo regenerando) — nova tentativa em 250ms...");
-                System.Threading.Thread.Sleep(250);
-                return action();
+                try { return action(); }
+                catch (Exception ex) when (IsStale(ex) && attempt < StaleBackoffMs.Length)
+                {
+                    Log.Warn($"  {what}: 0x80010114 (modelo regenerando) — tentativa {attempt + 2}/{StaleBackoffMs.Length + 1} em {StaleBackoffMs[attempt]}ms...");
+                    System.Threading.Thread.Sleep(StaleBackoffMs[attempt]);
+                }
             }
         }
 

@@ -37,5 +37,11 @@
               supertip="Na PEÇA aberta (com as faces de queima já copiadas manualmente): cria o bloco no material mais próximo, estende as superfícies até o bloco, fecha-as e une ao bloco. Janela com parâmetros e Preview."
               imageId="1" showLabel="true" />
     </group>
+    <group name="Diagnóstico">
+      <button id="6" size="large" label="Inspecionar seleção"
+              screentip="SPY: dumpa o objeto COM selecionado"
+              supertip="Selecione uma feature no SE (ex.: um furo ou uma superfície que você criou na mão) e clique: o log mostra o TIPO e todas as propriedades/valores do objeto COM — para descobrir a API real (furo síncrono, offset/stitch/unir) sem adivinhar."
+              imageId="3" showLabel="true" />
+    </group>
   </tab>
 </ribbon>
