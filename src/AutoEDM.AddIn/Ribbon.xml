@@ -46,6 +46,14 @@
               screentip="SPY: dumpa o objeto COM selecionado"
               supertip="Selecione uma feature no SE (ex.: um furo ou uma superfície que você criou na mão) e clique: o log mostra o TIPO e todas as propriedades/valores do objeto COM — para descobrir a API real (furo síncrono, offset/stitch/unir) sem adivinhar."
               imageId="3" showLabel="true" />
+      <button id="8" size="large" label="Iniciar leitura de ação manual"
+              screentip="Gravador: snapshot ANTES da sua ação manual"
+              supertip="Clique ANTES de fazer a ação à mão no SE. Tira uma foto das features/superfícies existentes. Depois de criar 'Limite'/costura/estender/mover, clique em 'Gravar log da leitura' para o AutoEDM dumpar exatamente o que você criou."
+              imageId="3" showLabel="true" />
+      <button id="9" size="large" label="Gravar log da leitura"
+              screentip="Gravador: diff + dump das features novas"
+              supertip="Clique DEPOIS de fazer a ação manual. Compara com o snapshot inicial e grava no log (linhas [REC]/[SPY]) o tipo e as propriedades das features que você criou — para eu reproduzir por COM."
+              imageId="3" showLabel="true" />
     </group>
   </tab>
 </ribbon>

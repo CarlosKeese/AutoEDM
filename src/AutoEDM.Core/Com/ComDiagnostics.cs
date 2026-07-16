@@ -126,11 +126,152 @@ namespace AutoEDM.Com
                 if (val == null) { Log.Info($"[SPY]{pad}  {m} = null"); continue; }
                 if (Marshal.IsComObject(val))
                 {
-                    if (depth < maxDepth) { Log.Info($"[SPY]{pad}  {m} ->"); DumpObjectInner(val, maxDepth, depth + 2); }
-                    else Log.Info($"[SPY]{pad}  {m} -> (COM; profundidade máx.)");
+                    // Não recursa em membros de NAVEGAÇÃO (poluem com a árvore inteira do SE) —
+                    // só o objeto em si + seus filhos DIRETOS úteis interessam.
+                    bool noise = m == "Application" || m == "Parent" || m == "Document" ||
+                                 m == "Documents" || m == "ActiveDocument";
+                    if (depth < maxDepth && !noise) { Log.Info($"[SPY]{pad}  {m} ->"); DumpObjectInner(val, maxDepth, depth + 2); }
+                    else Log.Info($"[SPY]{pad}  {m} -> (COM{(noise ? "; navegação" : "; profundidade máx.")})");
                 }
                 else Log.Info($"[SPY]{pad}  {m} = {val} ({val.GetType().Name})");
             }
+        }
+
+        // ===================== Gravador de ação manual (Carlos) ======================
+        // "Iniciar leitura" snapshota os NOMES dos itens de TODAS as coleções de Constructions e
+        // do Model (enumeração GENÉRICA via IDispatch — não uma lista fixa, que perdia a coleção
+        // onde a feature caía, Log 2026-07-16 "nada mudou"); "Gravar log" diffa por nome e dumpa
+        // [SPY] as NOVAS. Nomes (não contagens) porque a costura CONSOME as "Limite" (count cai).
+
+        /// <summary>Todas as coleções (com .Count) de Constructions + Model 1 + Models, por rótulo.
+        /// Enumeração GENÉRICA via IDispatch — pega qualquer coleção sem lista fixa.</summary>
+        private static Dictionary<string, object> CollectionsMap(object doc)
+        {
+            var map = new Dictionary<string, object>();
+            dynamic d = doc;
+            try { AddCollectionMembers((object)d.Constructions, "Constructions", map); } catch { }
+            try { AddCollectionMembers((object)d.Models.Item(1), "Model", map); } catch { }
+            try { map["Models(corpos)"] = (object)d.Models; } catch { }
+            // Árvore do PathFinder (features síncronas E ordenadas aparecem aqui) + esboços.
+            try { map["DesignEdgebarFeatures"] = (object)d.DesignEdgebarFeatures; } catch { }
+            try { map["Sketches"] = (object)d.Sketches; } catch { }
+            try { map["ProfileSets"] = (object)d.ProfileSets; } catch { }
+            return map;
+        }
+
+        /// <summary>Adiciona ao mapa todo membro-PROPRIEDADE do objeto que é uma COLEÇÃO (tem .Count).</summary>
+        private static void AddCollectionMembers(object owner, string prefix, Dictionary<string, object> map)
+        {
+            if (owner == null) return;
+            foreach (var m in GetMemberNames(owner))
+            {
+                object val;
+                try { val = owner.GetType().InvokeMember(m, BindingFlags.GetProperty, null, owner, null); }
+                catch { continue; }                              // é método, ou pede argumentos
+                if (val == null || !Marshal.IsComObject(val)) continue;
+                try { int _ = (int)((dynamic)val).Count; }       // só coleções têm .Count
+                catch { continue; }
+                map[$"{prefix}.{m}"] = val;
+            }
+        }
+
+        /// <summary>Snapshot dos NOMES dos itens de cada coleção + o ModelingMode (início da leitura).</summary>
+        public static Dictionary<string, List<string>> SnapshotInventory(object doc)
+        {
+            var snap = new Dictionary<string, List<string>>();
+            dynamic d = doc;
+            try { snap["__ModelingMode"] = new List<string> { ((int)d.ModelingMode).ToString() }; } catch { }
+            foreach (var kv in CollectionsMap(doc)) snap[kv.Key] = ItemNames((dynamic)kv.Value);
+            Log.Info($"[REC] Leitura INICIADA — snapshot de {Math.Max(0, snap.Count - 1)} coleção(ões). Faça o processo COMPLETO e clique 'Gravar log da leitura'.");
+            LogDocIdentity(doc, "(início)");
+            LogInventory("[REC] (início) não-vazias:", snap);
+            return snap;
+        }
+
+        /// <summary>Diffa por NOME contra o snapshot e DUMPA (SPY) as features NOVAS; nomeia as removidas.</summary>
+        public static void DumpNewSince(object doc, Dictionary<string, List<string>> baseline)
+        {
+            if (baseline == null) { Log.Warn("[REC] Sem snapshot inicial — clique 'Iniciar leitura de ação manual' antes de fazer a ação."); return; }
+            dynamic d = doc;
+            Log.Info("[REC] ===== GRAVAR LOG DA LEITURA (diff por nome) =====");
+            LogDocIdentity(doc, "(fim)");
+            try { int m = (int)d.ModelingMode; string m0 = baseline.TryGetValue("__ModelingMode", out var l) && l.Count > 0 ? l[0] : null; if (m0 != null && m0 != m.ToString()) Log.Info($"[REC] ModelingMode mudou: {m0} -> {m}."); } catch { }
+
+            var nowMap = CollectionsMap(doc);
+            var nowSnap = new Dictionary<string, List<string>>();
+            foreach (var kv in nowMap) nowSnap[kv.Key] = ItemNames((dynamic)kv.Value);
+
+            int changed = 0;
+            // coleções presentes AGORA (adições/consumos) + as que sumiram por completo.
+            var keys = new HashSet<string>(nowMap.Keys);
+            foreach (var k in baseline.Keys) if (k != "__ModelingMode") keys.Add(k);
+            foreach (var key in keys)
+            {
+                var nowNames = nowSnap.TryGetValue(key, out var nn) ? nn : new List<string>();
+                var baseNames = baseline.TryGetValue(key, out var bn) ? bn : new List<string>();
+                var added = nowNames.Where(x => !baseNames.Contains(x)).ToList();
+                var removed = baseNames.Where(x => !nowNames.Contains(x)).ToList();
+                if (added.Count == 0 && removed.Count == 0) continue;
+                changed++;
+                Log.Info($"[REC] {key}: +{added.Count} nova(s)" + (added.Count > 0 ? $" [{string.Join(", ", added)}]" : "") +
+                         (removed.Count > 0 ? $"  −{removed.Count} removida(s) [{string.Join(", ", removed)}]" : ""));
+                if (added.Count == 0 || !nowMap.TryGetValue(key, out var colObj)) continue;
+                dynamic col = colObj; int c = 0; try { c = (int)col.Count; } catch { }
+                for (int i = 1; i <= c; i++)
+                {
+                    object it; try { it = col.Item(i); } catch { continue; }
+                    string nm = ItemName(it, i);
+                    if (added.Contains(nm)) DumpObject($"[REC] {key} '{nm}'", it, 1);
+                }
+            }
+            if (changed == 0)
+            {
+                LogInventory("[REC] (fim) não-vazias:", nowSnap);
+                Log.Info("[REC] Nada mudou nas coleções observadas. Se você criou features, elas caíram FORA das coleções varridas — compare os inventários (início vs fim) acima e me diga o nome da feature no PathFinder.");
+            }
+            else Log.Info($"[REC] Fim da leitura — {changed} coleção(ões) mudaram (veja [REC]/[SPY] acima).");
+        }
+
+        private static List<string> ItemNames(dynamic col)
+        {
+            var names = new List<string>();
+            int c = 0; try { c = (int)col.Count; } catch { }
+            for (int i = 1; i <= c; i++)
+            {
+                object it; try { it = col.Item(i); } catch { names.Add($"#{i}"); continue; }
+                names.Add(ItemName(it, i));
+            }
+            return names;
+        }
+
+        private static string ItemName(object item, int idx)
+        {
+            try { string n = (string)((dynamic)item).Name; if (!string.IsNullOrEmpty(n)) return n; } catch { }
+            try { string n = (string)((dynamic)item).DisplayName; if (!string.IsNullOrEmpty(n)) return n; } catch { }
+            return $"#{idx}";
+        }
+
+        /// <summary>Loga QUAL documento o gravador está lendo (nome/tipo/corpos/construções) — para
+        /// flagrar quando o `ActiveDocument` não é a peça que o usuário está editando.</summary>
+        private static void LogDocIdentity(object doc, string when)
+        {
+            dynamic d = doc;
+            string name = "?"; int type = -1, mode = -1, models = -1, consTotal = -1;
+            try { name = (string)d.Name; } catch { }
+            try { type = (int)d.Type; } catch { }
+            try { mode = (int)d.ModelingMode; } catch { }
+            try { models = (int)d.Models.Count; } catch { }
+            try { consTotal = (int)d.Constructions.Count; } catch { }
+            Log.Info($"[REC] {when} documento='{name}' Type={type} (1=peça) ModelingMode={mode} Models.Count={models} Constructions.Count={consTotal}");
+        }
+
+        /// <summary>Loga (compacto) as coleções NÃO-vazias do snapshot — p/ comparar início vs fim.</summary>
+        private static void LogInventory(string prefix, Dictionary<string, List<string>> snap)
+        {
+            var parts = snap.Where(k => k.Key != "__ModelingMode" && k.Value != null && k.Value.Count > 0)
+                            .OrderBy(k => k.Key).Select(k => $"{k.Key}={k.Value.Count}");
+            string s = string.Join(", ", parts);
+            Log.Info(prefix + " " + (string.IsNullOrEmpty(s) ? "(todas vazias)" : s));
         }
 
         /// <summary>

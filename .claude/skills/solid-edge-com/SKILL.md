@@ -140,6 +140,43 @@ boolean/extend family). Depth-1 shows child-collection **names** (they log as "C
 max-depth") — bump depth or reflect the interop to get their `Add` signatures. Wire it to a
 ribbon button ("Inspect selection") for a zero-friction discovery loop.
 
+- **Skip the navigation members when recursing** (`Application`, `Parent`, `Document`,
+  `Documents`, `ActiveDocument`) — otherwise depth≥1 dumps the entire SE application object
+  (~250 noise lines per selection). Skipping them keeps the dump to the object's own props +
+  useful direct children.
+- **Dumping ONE feature reveals the WHOLE feature tree for free.** Because `.Parent`/model
+  back-references chain through every feature, a depth-1 dump of a single selected feature logs
+  each sibling feature's `Name`/`DisplayName`/`EdgebarName`/`Type` — so selecting the *last*
+  feature the human made and dumping it gives you the entire manual recipe in creation order
+  (each feature's real interop `Name` and numeric `Type`), not just the one you clicked.
+- **Manual-action recorder** (better than per-feature selection when the user does many steps):
+  snapshot the **item NAMES** of every collection under `Constructions` + `Models.Item(1)` +
+  `DesignEdgebarFeatures` (enumerate them **generically** — walk `GetMemberNames`, keep members
+  whose value has a `.Count`; a fixed list misses where the feature lands), let the human do the
+  work, snapshot again, and diff **by name** (not count — stitching CONSUMES input surfaces, so
+  counts drop; names catch adds AND removes). Log the doc identity (`Name/Type/Models.Count`)
+  each snapshot — an empty diff usually means `ActiveDocument` wasn't the part being edited.
+
+**The EDM "close the burn surface and join it to the block" manual recipe (SE 2023 PT, decoded
+by SPY 2026-07-16).** The human's steps and the exact features they create (feature `Name` /
+`Type`), to reproduce via COM:
+1. **Close the X,Y side gaps** — "Conserto da Superfície" / edgebar "Vinculado" (`Surface Patch_1`,
+   Type 145703112, sync). A boundary/patch surface over each open loop — likely
+   `Constructions.SurfaceByBoundaries.Add(nEdges, ref Array edges, nExclude, exclude, Tangent)`.
+2. **Stitch** — "Costurar" (`StitchedSurface_1`, Type −396962225, sync) —
+   `Constructions.StitchSurfaces.Add(nSurf, ref Array surfaces, Heal, Tolerance)`.
+3. **Extend the rim in Z** up to the block — "Estender Superfície" (`Extend Surface_1`,
+   Type −1575914081, sync). (A real feature even though `Model.ExtendSurfaces` isn't reachable by
+   late-binding — find its true collection.)
+4. **Move the top face onto the block** — "Afastar/Deslocar Face" (`Offset_1`, Type 1180468550,
+   **ordered**) = `Model.FaceMoves.Add(...)` moving the face **to a KEYPOINT** on the block
+   (`FaceOffsetType=1`, `AlongOrReverseVector=20`, `AlongOrReverseDirectionToKeyPoint=44`,
+   `DistanceFromKeyPoint=0`). The alternative to steps 3–4 is one `RedefineFaces`/thicken.
+
+To find WHICH open edges bound each X,Y gap, note `edge.Faces.Count` is **not readable by late
+binding** here (returns nothing) — get boundary edges another way (per-face `Loops`, or the
+surface's laminar-edge query) rather than counting adjacent faces.
+
 ## Confirmed facts (SE 2023, v223.00.13.05) — verify against the dump for other versions
 
 - **Connect**: `SolidEdge.Application` ProgID; assembly `Document.Type == 3` (`.asm`).
@@ -336,6 +373,20 @@ arg1 is the NEW part's path, arg2 the template — but still does **not** grant 
 `AddFiniteExtrudedProtrusion`, …) and **`AddSync*`**. On a synchronous part an ordered
 method *creates the geometry* but the feature **does not appear in the PathFinder** — use
 `AddSync`/`AddSyncEx` so it's a real synchronous feature. Branch on `ModelingMode`.
+
+- **Some ordered features have NO sync variant and are a SILENT NO-OP on a sync part**
+  (solved 2026-07-15). `Models.AddThickenFeature` (surface→solid thicken) has no
+  `AddThickenFeatureSync`; called on a synchronous part it **returns a non-null Model but
+  creates no body** (`Models.Count` unchanged, no exception, no `.Status` error — it just
+  does nothing). This looks exactly like "ordered and synchronous are mixing" to the user.
+  Extruded protrusions happen to auto-convert to sync features; thicken/boolean-heavy ones
+  don't. **Fix: for such an op, switch `partDoc.ModelingMode = 2` (ordered) first**, run it,
+  and leave it — a **synchronous body with ordered finishing features on top is the normal SE
+  model** (the "Ordered" section under "Synchronous" in PathFinder). Detect success by a **new
+  body OR the target body's face count increasing** (an ordered thicken may merge straight into
+  the existing design body rather than spawn a separate one — then no `Unions.Add` is needed).
+  Verify a feature really applied with **`ModelingMode` logged + before/after body face counts**,
+  not just `Models.Count` and a non-null return.
 
 **Sketches from `ProfileSets` are ORDERED — delete them from code.** `ProfileSets.Add()`
 makes an **ordered** profile even inside a synchronous part; once a synchronous feature

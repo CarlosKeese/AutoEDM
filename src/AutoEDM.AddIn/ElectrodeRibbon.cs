@@ -24,6 +24,11 @@ namespace AutoEDM.AddIn
         private const int CmdBlocoSuperficies = 5; // Bloco sobre superfícies (ambiente de PEÇA)
         private const int CmdInspecionar = 6;       // SPY: dumpa o objeto COM selecionado
         private const int CmdUnirSuperficies = 7;   // Engrossar a queima e unir ao bloco (ISOLADO)
+        private const int CmdIniciarLeitura = 8;    // Gravador: snapshot inicial (ação manual)
+        private const int CmdGravarLeitura = 9;     // Gravador: diff + dump das features novas
+
+        /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
+        private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
 
         public ElectrodeRibbon() : base()
         {
@@ -41,6 +46,8 @@ namespace AutoEDM.AddIn
                 case CmdBlocoSuperficies: CriarBlocoSobreSuperficies(); break;
                 case CmdUnirSuperficies: UnirSuperficies(); break;
                 case CmdInspecionar: InspecionarSelecao(); break;
+                case CmdIniciarLeitura: IniciarLeitura(); break;
+                case CmdGravarLeitura: GravarLeitura(); break;
             }
         }
 
@@ -178,6 +185,59 @@ namespace AutoEDM.AddIn
                 Log.Info("===== FIM (UNIR SUPERFÍCIES) =====");
             }
             catch (Exception ex) { Fail("unir as superfícies", ex); }
+        }
+
+        /// <summary>
+        /// GRAVADOR (Carlos, 2026-07-16) — passo 1: tira o snapshot das contagens das coleções
+        /// (superfícies de construção + features do Model) do documento ativo. O usuário clica,
+        /// faz a ação manual no SE (criar "Limite", costurar, estender/mover…) e depois clica em
+        /// "Gravar log da leitura". Assim o AutoEDM dumpa exatamente as features que ele criou.
+        /// </summary>
+        private void IniciarLeitura()
+        {
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
+            {
+                Log.Info("===== INICIAR LEITURA DE AÇÃO MANUAL =====");
+                dynamic doc = app.ActiveDocument;
+                if (doc == null) { MessageBox.Show("Nenhum documento ativo.", "AutoEDM"); return; }
+                _recBaseline = ComDiagnostics.SnapshotInventory((object)doc);
+                MessageBox.Show(
+                    "Gravação INICIADA.\n\nAgora faça a ação manual no Solid Edge (ex.: criar a superfície 'Limite', costurar, estender/mover a face até o bloco).\n\n" +
+                    "Quando terminar, clique em \"Gravar log da leitura\".",
+                    "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) { Fail("iniciar a leitura de ação manual", ex); }
+        }
+
+        /// <summary>
+        /// GRAVADOR — passo 2: diffa contra o snapshot do "Iniciar leitura" e dumpa (SPY) as
+        /// features NOVAS de cada coleção que cresceu — revela a coleção/tipo/propriedades das
+        /// features que o usuário criou à mão, para reproduzir por COM.
+        /// </summary>
+        private void GravarLeitura()
+        {
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
+            {
+                Log.Info("===== GRAVAR LOG DA LEITURA =====");
+                if (_recBaseline == null)
+                {
+                    MessageBox.Show("Clique primeiro em \"Iniciar leitura de ação manual\", faça a ação, e só então grave.", "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                dynamic doc = app.ActiveDocument;
+                if (doc == null) { MessageBox.Show("Nenhum documento ativo.", "AutoEDM"); return; }
+                ComDiagnostics.DumpNewSince((object)doc, _recBaseline);
+                _recBaseline = null; // consome o snapshot (evita diff contra estado velho)
+                MessageBox.Show(
+                    "Leitura gravada no log (procure as linhas [REC] e [SPY]):\n%LOCALAPPDATA%\\AutoEDM\\logs\n\nMe mande esse log.",
+                    "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Log.Info("===== FIM (GRAVAR LOG DA LEITURA) =====");
+            }
+            catch (Exception ex) { Fail("gravar o log da leitura", ex); }
         }
 
         /// <summary>

@@ -33,7 +33,7 @@ namespace AutoEDM.AddIn
             SolidEdgeFramework.AddIn AddInInstance)
         {
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 6; // incrementar ao mudar a ribbon (v6 = + Unir superfícies [isolado])
+            AddInEx.GuiVersion = 7; // incrementar ao mudar a ribbon (v7 = + Gravador de ação manual)
 
             Current = this;
             App = application;

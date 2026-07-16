@@ -86,7 +86,8 @@ namespace AutoEDM.Electrode
 
         public BoundingBox Footprint;
         public double FootprintXmm, FootprintYmm;
-        public double CenterXmm, CenterYmm;         // centro XY da pegada (o bloco é centrado aqui)
+        public double FootprintCenterXmm, FootprintCenterYmm; // centro XY da PEGADA (pode estar deslocado da origem)
+        public double CenterXmm, CenterYmm;         // centro do BLOCO/faixa/fixação = ORIGEM (0,0), p/ fixação/zero-máquina
         public double SurfacesTopZmm, SurfacesBottomZmm;
 
         public IReadOnlyList<BlankChoice> EligibleBlanks = new List<BlankChoice>();
@@ -206,8 +207,13 @@ namespace AutoEDM.Electrode
             plan.Footprint = box;
             plan.FootprintXmm = box.SizeX;
             plan.FootprintYmm = box.SizeY;
-            plan.CenterXmm = (box.MinX + box.MaxX) / 2.0;
-            plan.CenterYmm = (box.MinY + box.MaxY) / 2.0;
+            plan.FootprintCenterXmm = (box.MinX + box.MaxX) / 2.0; // centro da PEGADA (pode estar deslocado)
+            plan.FootprintCenterYmm = (box.MinY + box.MaxY) / 2.0;
+            // O bloco/faixa/fixação são CENTRADOS NA ORIGEM da peça (0,0) — a referência de
+            // fixação / zero-máquina (Carlos, 2026-07-16: bloco fora do centro em X,Y gera
+            // problema de fabricação), NÃO no centro da pegada.
+            plan.CenterXmm = 0.0;
+            plan.CenterYmm = 0.0;
             plan.SurfacesTopZmm = box.MaxZ;
             plan.SurfacesBottomZmm = box.MinZ;
 
@@ -224,10 +230,15 @@ namespace AutoEDM.Electrode
             // da faixa → bloco ⩾ pegada + 2·sobremetal e faixa ⩾ pegada.
             double bandM = opt.AddMeasurementBand ? opt.BandMarginMm : 0.0;
             double growPerSide = Math.Max(opt.BlockOversizeMm, bandM);
+            // needBox CENTRADO NA ORIGEM cobrindo a pegada: meia-largura = distância da origem à
+            // borda MAIS LONGE da pegada + crescimento. Assim o bloco centrado em (0,0) contém a
+            // queima mesmo deslocada da origem (Carlos, 2026-07-16). Pegada centrada → igual ao antigo.
+            double halfX = Math.Max(Math.Abs(box.MinX), Math.Abs(box.MaxX)) + growPerSide;
+            double halfY = Math.Max(Math.Abs(box.MinY), Math.Abs(box.MaxY)) + growPerSide;
             BoundingBox needBox = new BoundingBox
             {
-                MinX = box.MinX - growPerSide, MaxX = box.MaxX + growPerSide,
-                MinY = box.MinY - growPerSide, MaxY = box.MaxY + growPerSide,
+                MinX = -halfX, MaxX = halfX,
+                MinY = -halfY, MaxY = halfY,
                 MinZ = box.MinZ, MaxZ = box.MaxZ
             };
             plan.EligibleBlanks = _blanks.BlankChoices(needBox, opt.Material, opt.BarMaxLengthMm, opt.BandHeightMm);
@@ -339,10 +350,10 @@ namespace AutoEDM.Electrode
             foreach (var w in plan.Warnings) { Log.Warn(w); result.Warnings.Add(w); }
             if (!plan.SurfacesFound) return result;
 
-            Log.Info($"Bloco sobre superfícies: pegada {plan.FootprintXmm:0.0}×{plan.FootprintYmm:0.0} mm @ " +
-                     $"centro ({plan.CenterXmm:0.0},{plan.CenterYmm:0.0}), topo Z={plan.SurfacesTopZmm:0.0}; " +
+            Log.Info($"Bloco sobre superfícies: pegada {plan.FootprintXmm:0.0}×{plan.FootprintYmm:0.0} mm, centro da pegada " +
+                     $"({plan.FootprintCenterXmm:0.0},{plan.FootprintCenterYmm:0.0}), topo Z={plan.SurfacesTopZmm:0.0}; " +
                      $"blank {(plan.ChosenBlank?.Describe() ?? "(cru=pegada)")}; " +
-                     $"bloco {plan.BlockXmm:0.0}×{plan.BlockYmm:0.0}×{plan.BlockHmm:0.0}, base Z={plan.BlockBaseZmm:0.0} " +
+                     $"bloco {plan.BlockXmm:0.0}×{plan.BlockYmm:0.0}×{plan.BlockHmm:0.0} CENTRADO NA ORIGEM (0,0), base Z={plan.BlockBaseZmm:0.0} " +
                      $"(gap {opt.GapMm:0.0}, sobremetal {opt.BlockOversizeMm:0.0}/lado).");
 
             // Baselines p/ o Cleanup (apaga o que passar disto, via doc re-adquirido).
@@ -637,17 +648,17 @@ namespace AutoEDM.Electrode
             else Log.Warn("Unir superfícies: sem faces de queima — selecione as faces na peça (ou tenha uma CopySurface).");
             result.Plan.BlockHmm = opt.BlockHeightMm;
 
+            int mode0 = 1; try { mode0 = (int)partDoc.ModelingMode; } catch { }
+            Log.Info($"Unir superfícies: ModelingMode = {mode0} (1=síncrono, 2=ordenado). Passo atual = DIAGNÓSTICO das arestas abertas (read-only, não altera a peça).");
+
             TryExtendStitchUnite(partDoc, result.Plan, opt, result);
             return result;
         }
 
-        // Path B (Carlos, 2026-07-15): ESTENDER a superfície de queima até o bloco →
-        // COSTURAR+CURAR em sólido (AddByAutoTrim) → UNIR (booleana) ao bloco. Assinaturas
-        // REAIS obtidas por reflexão do interop (SolidEdgePart). As coleções vêm por IDispatch
-        // dinâmico e são CASTADAS ao tipo do interop para o marshaling correto do `ref Array`.
-        // Cada passo é guardado e MUITO logado (inputs + resultado) — o bloco/faixa sobrevivem.
-        // Popula 'result' direto (tipo concreto): retornar tupla nomeada de método com arg
-        // dynamic perde os nomes em runtime (bug de 2026-07-14).
+        // Processo de superfície (Carlos, 2026-07-16): fechar em X,Y → costurar → estender/mover
+        // em Z até o bloco → unir. NÃO usa espessamento. Este método faz o PASSO 1 (diagnóstico
+        // de arestas abertas); os passos 2–4 entram com os args confirmados pelo SPY das features
+        // manuais (SurfaceByBoundaries/StitchSurfaces/FaceMoves/ExtrudedSurfaces.AddFromTo).
         private static void TryExtendStitchUnite(
             dynamic partDoc, BlockOverSurfacesPlan plan, BlockOverSurfacesOptions opt, BlockOverSurfacesResult result)
         {
@@ -673,89 +684,121 @@ namespace AutoEDM.Electrode
             // Offset de faísca (item 7): o que SERÁ aplicado (na feature de união, em ordenado).
             foreach (var g in plan.OffsetGroups) Log.Info($"  (offset planejado) {g.Describe()}");
 
-            // O Model REAL não expõe ExtendSurfaces/IntersectSurfaces (probe 2026-07-15 — só
-            // TrimExtendCollection/Intersects/Unions/Subtracts/RedefineFaces/Thickens). Caminho
-            // robusto com o que EXISTE: ENGROSSAR (Models.AddThickenFeature) a superfície de queima
-            // PARA CIMA — vira um sólido com a FORMA da queima no fundo, subindo até DENTRO do bloco
-            // — e UNIR (Unions.Add) ao bloco → um sólido único (bloco/faixa em cima + forma embaixo).
-            // (corte a fio: "copia a superfície, estende até a base" — [[real-edm-workflow]].)
+            // PROCESSO CORRETO (Carlos, 2026-07-16): NÃO usar espessamento (Thicken) — ele engrossa
+            // p/ fora, não é o eletrodo. O método real: (1) VERIFICAR se a superfície está FECHADA
+            // em X,Y; (2) fechar os vãos laterais com superfície "Limite" (SurfaceByBoundaries);
+            // (3) COSTURAR (StitchSurfaces); (4) ESTENDER/mover em Z até o bloco; (5) unir ao bloco.
+            // 1º PASSO IMPLEMENTADO = DIAGNÓSTICO das arestas ABERTAS (não-costuradas) — as que
+            // pertencem a UMA só face. É a ferramenta "Exibir Arestas Não-Costuradas": diz se está
+            // fechada em X,Y e onde estão os vãos a fechar. Os passos 2–4 entram assim que o SPY das
+            // suas features manuais (Limite/costura/estender) confirmar os argumentos.
+            DiagnoseOpenEdges(surf, blockBottomZmm, result);
+        }
 
-            var burnFaces = new List<object>();
-            AddFacesFrom((object)surf, burnFaces);
-            if (ToTypedFaceArray(burnFaces).Length == 0) { Log.Warn("Unir: a superfície de queima não deu faces p/ engrossar."); return; }
+        /// <summary>
+        /// Passo 1 do processo de superfície (Carlos): reporta as arestas ABERTAS (não-costuradas)
+        /// da superfície de queima — as que pertencem a UMA só face (fronteira/laminar). Classifica
+        /// em VERTICAIS (Z varia = vãos laterais X,Y a fechar com "Limite") e HORIZONTAIS (rim de
+        /// topo/fundo). Equivale a "Exibir Arestas Não-Costuradas". Não modela — só diagnostica.
+        /// </summary>
+        private static void DiagnoseOpenEdges(dynamic surf, double blockBottomZmm, BlockOverSurfacesResult result)
+        {
+            // A CopySurface não expõe `.Body` (Log 2026-07-16). Pego as FACES (surf.Faces[1], que
+            // já funciona) e, de cada face, suas arestas. Uma aresta de FRONTEIRA (aberta) pertence
+            // a UMA só face, então aparece UMA vez ao varrer as faces (sem dupla contagem); as
+            // internas (costuradas, 2 faces) aparecem 2× mas são filtradas por EdgeFaceCount!=1.
+            var faces = new List<object>();
+            AddFacesFrom((object)surf, faces);
+            if (faces.Count == 0) { Log.Warn("Unir: a superfície de queima não deu faces p/ analisar as arestas."); return; }
 
-            // Overshoot: do topo da queima até bem DENTRO do bloco — garante interseção p/ a união
-            // fundir os corpos. O SENTIDO da normal é desconhecido, então tenta os 2 lados e usa o
-            // que sobe até o bloco (o corpo do lado errado é limpo pela baseline no re-preview).
-            double thickenMm = (blockBottomZmm - plan.SurfacesTopZmm) + Math.Max(plan.BlockHmm, opt.BandHeightMm);
-            double thickenM = Math.Max(thickenMm, 3.0) / 1000.0;
-
-            int before = ModelsCount(partDoc);
-            bool thickened = false;
-            foreach (int side in new[] { 1, 2 }) // FeaturePropertyConstants: lados da normal (igRight/igLeft)
+            const double zTol = 0.05; // mm — abaixo disso a aresta é "horizontal"
+            int visits = 0, open = 0, vertical = 0, horizontal = 0, unknownFaceCount = 0, shown = 0;
+            double vTopZ = double.NegativeInfinity, vBotZ = double.PositiveInfinity;
+            foreach (var f in faces)
             {
-                try
+                dynamic fedges; try { fedges = ((dynamic)f).Edges; } catch { continue; }
+                int ne = 0; try { ne = (int)fedges.Count; } catch { }
+                for (int i = 1; i <= ne; i++)
                 {
-                    // Array TIPADO FRESCO por tentativa: reusar o mesmo array (com `ref`) corrompia
-                    // a 2ª chamada ("converter argumento 0", Log 2026-07-15). `Faces` é [in] no
-                    // probe → passa por VALOR (sem ref).
-                    System.Array fa = ToTypedFaceArray(burnFaces);
-                    object th = partDoc.Models.AddThickenFeature(side, thickenM, fa.Length, fa);
-                    int after = ModelsCount(partDoc);
-                    double maxZ = NewBodyMaxZmm(partDoc, before);
-                    Log.Info($"Unir: AddThickenFeature(lado={side}, {thickenMm:0.0}mm, {fa.Length} face) → retorno={(th != null ? "ok" : "null")}, corpos {before}->{after}, topo do novo ≈ {maxZ:0.0}mm (precisa ≥ {blockBottomZmm:0.0}).");
-                    if (after > before && maxZ >= blockBottomZmm - 0.5)
-                    {
-                        if (th != null) result.CreatedFeatures.Add(th);
-                        thickened = true; break;
-                    }
-                    if (after > before) { TryDeleteFeature(th); } // engrossou p/ o lado errado — desfaz
+                    object e; try { e = fedges.Item(i); } catch { continue; }
+                    visits++;
+                    int nf = EdgeFaceCount(e);
+                    if (nf < 0) { unknownFaceCount++; continue; }
+                    if (nf != 1) continue;                       // costurada (2+ faces) — não é fronteira
+                    open++;
+                    if (!FaceGeometry.TryGetRangeMm(e, out double[] mn, out double[] mx)) continue;
+                    bool isVert = (mx[2] - mn[2]) > zTol;
+                    if (isVert) { vertical++; vTopZ = Math.Max(vTopZ, mx[2]); vBotZ = Math.Min(vBotZ, mn[2]); }
+                    else horizontal++;
+                    if (shown++ < 40) Log.Info($"  aresta aberta: Z {mn[2]:0.0}→{mx[2]:0.0} mm ({(isVert ? "VERTICAL (vão lateral X,Y)" : "horizontal (rim)")}).");
                 }
-                catch (Exception e) { Log.Warn($"Unir: AddThickenFeature(lado={side}) falhou — {e.GetBaseException().Message}"); }
             }
-            if (!thickened) { Log.Warn("Unir: não consegui engrossar a superfície até o bloco. Provável: as faces da CopySurface não são engrossáveis por esse caminho — inspecione a superfície pelo SPY (vamos iterar neste botão isolado)."); return; }
 
-            // UNIR (booleana) o corpo engrossado ao bloco. Model.Unions.Add existe (probe).
-            try
+            Log.Info($"Unir (diagnóstico de fechamento): {faces.Count} face(s), {visits} aresta(s) visitada(s), {open} ABERTA(s) — {horizontal} horizontal(is) (rim topo/fundo), {vertical} vertical(is) (vãos laterais X,Y a fechar)." +
+                     (unknownFaceCount > 0 ? $" ({unknownFaceCount} sem contagem de faces)" : ""));
+
+            if (open == 0)
             {
-                var uniCol = (SolidEdgePart.Unions)blockModel.Unions;
-                int newCount = ModelsCount(partDoc);
-                System.Array targets = ToTypedBodyArray((object)blockModel.Body);
-                System.Array tools = ToTypedBodyArray((object)partDoc.Models.Item(newCount).Body);
-                if (targets.Length == 1 && tools.Length == 1)
-                {
-                    uniCol.Add(1, ref targets, 1, ref tools,
-                        SolidEdgePart.SETargetDesignBodyOption.igCreateSingleDesignBodyOnNonManifoldOption,
-                        SolidEdgePart.SETargetConstructionBodyOption.igCreateSingleConstructionGeneralBodyOnNonManifoldOption);
-                    result.SurfacesUnited = true;
-                    Log.Info($"Unir: Unions.Add OK — forma engrossada unida ao bloco (corpos agora = {ModelsCount(partDoc)}).");
-                }
-                else Log.Warn("Unir: bloco ou corpo engrossado não expôs Body p/ unir (E_NOINTERFACE).");
+                Log.Info($"Unir: superfície SEM arestas abertas — já FECHADA em X,Y. Próximo passo: estender/mover o topo em Z até o bloco (Z≈{blockBottomZmm:0.0}mm) e unir.");
+                result.Warnings.Add("Superfície já fechada em X,Y — falta só estender/mover em Z até o bloco (a implementar).");
             }
-            catch (Exception e) { Log.Warn("Unir: Unions.Add falhou — " + e.GetBaseException().Message); }
+            else if (vertical == 0)
+            {
+                Log.Info($"Unir: só arestas abertas HORIZONTAIS (rim) — a superfície é uma casca aberta em cima/baixo, fechada nas laterais. Próximo: estender o rim em Z até o bloco (Z≈{blockBottomZmm:0.0}) e costurar.");
+                result.Warnings.Add($"Superfície fechada nas laterais; {horizontal} rim(s) horizontais. Falta estender/costurar em Z (a implementar).");
+            }
+            else
+            {
+                Log.Info($"Unir: há {vertical} aresta(s) VERTICAL(is) aberta(s) (Z {vBotZ:0.0}→{vTopZ:0.0}) = VÃOS laterais em X,Y. Próximo: fechar cada vão com SurfaceByBoundaries ('Limite'), costurar, e então estender/mover em Z até o bloco.");
+                result.Warnings.Add($"Superfície ABERTA nas laterais: {vertical} vão(s) X,Y a fechar com 'Limite' (ver log). Depois costurar + estender Z.");
+            }
         }
 
         /// <summary>Maior Z (mm) entre os corpos criados ALÉM da baseline (topo do corpo novo).</summary>
         private static double NewBodyMaxZmm(dynamic partDoc, int baselineCount)
+            => NewBodyExtremeZmm(partDoc, baselineCount, wantMax: true);
+
+        /// <summary>Menor Z (mm) entre os corpos criados ALÉM da baseline (fundo do corpo novo).</summary>
+        private static double NewBodyMinZmm(dynamic partDoc, int baselineCount)
+            => NewBodyExtremeZmm(partDoc, baselineCount, wantMax: false);
+
+        private static double NewBodyExtremeZmm(dynamic partDoc, int baselineCount, bool wantMax)
         {
-            double maxZ = double.NegativeInfinity;
+            double best = wantMax ? double.NegativeInfinity : double.PositiveInfinity;
             try
             {
                 int n = ModelsCount(partDoc);
                 for (int i = baselineCount + 1; i <= n; i++)
                 {
                     dynamic m; try { m = partDoc.Models.Item(i); } catch { continue; }
-                    dynamic faces; try { faces = m.Body.Faces[1]; } catch { continue; }
-                    int fn = 0; try { fn = (int)faces.Count; } catch { }
-                    for (int j = 1; j <= fn; j++)
-                    {
-                        object f; try { f = faces.Item(j); } catch { continue; }
-                        if (FaceGeometry.TryGetRangeMm(f, out double[] mn, out double[] mx)) maxZ = Math.Max(maxZ, mx[2]);
-                    }
+                    double z = wantMax ? BodyMaxZmm(m) : BodyMinZmm(m);
+                    best = wantMax ? Math.Max(best, z) : Math.Min(best, z);
                 }
             }
             catch { }
-            return maxZ;
+            return best;
+        }
+
+        /// <summary>Maior/menor Z (mm) do corpo de um Model (varre as faces).</summary>
+        private static double BodyMaxZmm(dynamic model) => BodyExtremeZmm(model, wantMax: true);
+        private static double BodyMinZmm(dynamic model) => BodyExtremeZmm(model, wantMax: false);
+
+        private static double BodyExtremeZmm(dynamic model, bool wantMax)
+        {
+            double best = wantMax ? double.NegativeInfinity : double.PositiveInfinity;
+            try
+            {
+                dynamic faces = model.Body.Faces[1];
+                int fn = 0; try { fn = (int)faces.Count; } catch { }
+                for (int j = 1; j <= fn; j++)
+                {
+                    object f; try { f = faces.Item(j); } catch { continue; }
+                    if (FaceGeometry.TryGetRangeMm(f, out double[] mn, out double[] mx))
+                        best = wantMax ? Math.Max(best, mx[2]) : Math.Min(best, mn[2]);
+                }
+            }
+            catch { }
+            return best;
         }
 
         /// <summary>Apaga uma feature recém-criada (best-effort) — p/ desfazer o engrosso do lado errado.</summary>
@@ -763,6 +806,28 @@ namespace AutoEDM.Electrode
         {
             if (feature == null) return;
             try { ((dynamic)feature).Delete(); } catch { }
+        }
+
+        /// <summary>Nº de faces do corpo de um Model (p/ detectar se o engrosso fundiu nele).</summary>
+        private static int BodyFaceCount(dynamic model)
+        {
+            try { dynamic faces = model.Body.Faces[1]; return (int)faces.Count; } catch { return -1; }
+        }
+
+        /// <summary>Nº de faces adjacentes a uma aresta: 1 = fronteira (aberta/não-costurada); 2 = costurada.</summary>
+        private static int EdgeFaceCount(object edge)
+        {
+            try { dynamic e = edge; dynamic f = e.Faces; return (int)f.Count; } catch { }
+            try { dynamic e = edge; dynamic f = e.Faces[1]; return (int)f.Count; } catch { }
+            return -1;
+        }
+
+        /// <summary>Texto do Status de uma feature (se existir) — igFeatureOK=0x4877F5D6.</summary>
+        private static string FeatureStatusText(object feature)
+        {
+            if (feature == null) return "null";
+            try { uint s = unchecked((uint)(int)((dynamic)feature).Status); return s == 0x4877F5D6u ? "OK" : $"0x{s:X8}"; }
+            catch { return "n/a"; }
         }
 
         /// <summary>Menor/maior face PLANAR do corpo (topo ou fundo) + seu Z (mm).</summary>
