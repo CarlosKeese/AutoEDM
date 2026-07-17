@@ -626,13 +626,15 @@ namespace AutoEDM.Electrode
             if (surfCreated) result.CreatedFeatures.Add(surf);
             Log.Info($"Unir: superfície de queima = {surfSrc}.");
 
-            // PROCESSO CORRETO (Carlos, 2026-07-16): NÃO usar espessamento (Thicken) — ele engrossa
-            // p/ fora, não é o eletrodo. O método real: (1) VERIFICAR se a superfície está FECHADA
-            // em X,Y; (2) fechar os vãos laterais com superfície "Limite" (SurfaceByBoundaries),
-            // manual por enquanto; (3) unir ao bloco. O "estender em Z" (item antigo) NÃO é mais
-            // necessário: "Criar Base" agora usa GapMm=0 (Carlos, 2026-07-17), então o topo da
-            // superfície JÁ toca a base do bloco — só falta fechar os vãos X,Y (se houver) e unir.
-            bool readyToUnite = DiagnoseOpenEdges(surf, blockBottomZmm, result);
+            // PROCESSO CORRETO (Carlos, 2026-07-16, refinado 2026-07-17 com um teste manual dele):
+            // (1) VERIFICAR se a superfície está FECHADA em X,Y (vãos VERTICAIS — ainda manual,
+            // "Limite" na peça); (2) fechar o RIM horizontal (topo/fundo) com um patch "Limite" —
+            // achado no teste manual: encostar no bloco (GapMm=0) NÃO conta como fechado para o
+            // Stitch, precisa de uma superfície de verdade cobrindo o rim; (3) COSTURAR
+            // (superfície + patch do rim); (4) UNIR ao bloco. Stitch/União só funcionam em
+            // modelagem ORDENADA (Carlos: "quando aplico no síncrono não acontece nada") — troca
+            // ANTES de tentar qualquer um dos dois, não só para o GAP.
+            bool readyToUnite = DiagnoseOpenEdges(surf, blockBottomZmm, result, out List<object> rimEdges);
             if (!readyToUnite) return;
 
             if (opt.UniteChoice == null)
@@ -641,17 +643,26 @@ namespace AutoEDM.Electrode
                 return;
             }
 
-            // Cor ANTES de unir — pinta a CopySurface enquanto as faces ainda são referências
-            // frescas (o União pode invalidar as antigas e criar faces novas no corpo mesclado).
+            // Cor ANTES de costurar/unir — pinta a CopySurface enquanto as faces ainda são
+            // referências frescas (Stitch/União podem invalidar as antigas e criar faces novas).
             TryPaintSurface(surf, opt.UniteChoice.Color);
 
-            // Guarda as faces de queima ANTES de unir — tenta reusar essas MESMAS referências
-            // no offset pós-união; se o União as invalidar, o log abaixo mostra exatamente isso
-            // (regra do projeto: nunca adivinhar 2x sem um log real no meio).
+            // Guarda as faces de queima ANTES de costurar/unir — tenta reusar essas MESMAS
+            // referências no offset pós-união; se ficarem obsoletas, o log mostra exatamente isso.
             var burnFaces = new List<object>();
             AddFacesFrom((object)surf, burnFaces);
 
-            object unionFeature = TryUniteToBlock(blockModel, surf);
+            int mode = 1; try { mode = (int)partDoc.ModelingMode; } catch { }
+            if (mode != 2)
+            {
+                try { partDoc.ModelingMode = 2; mode = 2; result.SwitchedToOrdered = true; Log.Info("Unir: alternado para ORDENADO (Stitch/União/FaceOffsets só existem lá)."); }
+                catch (Exception e) { Log.Warn("Unir: alternar p/ Ordenado falhou — abortando (Stitch/União não funcionam em síncrono): " + e.GetBaseException().Message); return; }
+            }
+
+            object rimPatch = TryPatchRim(partDoc, rimEdges);
+            if (rimPatch != null) result.CreatedFeatures.Add(rimPatch);
+
+            object unionFeature = TryUniteToBlock(partDoc, blockModel, surf, rimPatch);
             if (unionFeature == null)
             {
                 Log.Warn("Unir: União falhou — GAP não aplicado (bloco/faixa/furos preservados, nada foi perdido).");
@@ -660,50 +671,111 @@ namespace AutoEDM.Electrode
             result.CreatedFeatures.Add(unionFeature);
             result.SurfacesUnited = true;
 
-            // GAP (offset de faísca) DEPOIS de unir, no sólido já mesclado — precisa de
-            // modelagem ORDENADA (Model.FaceOffsets só existe lá; Constructions.OffsetSurfaces,
-            // que funciona em síncrono, foi DESCARTADO porque o GAP não fica editável depois —
-            // Carlos, 2026-07-17). Feature fica na árvore p/ reajuste manual futuro.
-            int mode = 1; try { mode = (int)partDoc.ModelingMode; } catch { }
-            if (mode != 2)
-            {
-                try { partDoc.ModelingMode = 2; mode = 2; result.SwitchedToOrdered = true; Log.Info("Unir: alternado para ORDENADO (necessário p/ Model.FaceOffsets)."); }
-                catch (Exception e) { Log.Warn("Unir: alternar p/ Ordenado falhou — GAP não será aplicado: " + e.GetBaseException().Message); }
-            }
-            if (mode == 2)
-            {
-                object offsetFeature = TryApplyGapOffset(burnFaces, opt.UniteChoice.GapMm, blockModel);
-                if (offsetFeature != null) { result.CreatedFeatures.Add(offsetFeature); result.SurfacesOffset = true; }
-            }
+            // GAP (offset de faísca) DEPOIS de unir, no sólido já mesclado. Feature fica na árvore
+            // p/ reajuste manual futuro (Model.FaceOffsets, não Constructions.OffsetSurfaces —
+            // Carlos, 2026-07-17: síncrono não permite reeditar o GAP depois).
+            object offsetFeature = TryApplyGapOffset(burnFaces, opt.UniteChoice.GapMm, blockModel);
+            if (offsetFeature != null) { result.CreatedFeatures.Add(offsetFeature); result.SurfacesOffset = true; }
         }
 
         /// <summary>
-        /// Une a superfície de queima (CopySurface) ao SÓLIDO do bloco — `Model.Unions.Add`
-        /// (assinatura + enums confirmados 2026-07-17 pelo dump COMPLETO da typelib, nunca
-        /// exercitados ao vivo ainda: 1º disparo real). Opção 0 nos dois enums =
-        /// "múltiplos corpos se não-manifold" (não falha a operação). NUNCA lança — se falhar,
-        /// bloco/faixa/furos ficam intactos e o log/LogMembers dá o material p/ corrigir.
+        /// Une a superfície de queima ao SÓLIDO do bloco — `Model.Unions.Add` (assinatura + enums
+        /// confirmados no dump da typelib). NUNCA lança — se falhar, bloco/faixa/furos ficam
+        /// intactos e o log dá o material p/ corrigir.
+        ///
+        /// CORREÇÃO #1 2026-07-17 (1º teste real): o TARGET (bloco) é `SolidEdgeGeometry.Body`
+        /// (`blockModel.Body`) — funciona. A FERRAMENTA (`surf`, uma CopySurface crua) NÃO
+        /// implementa `SolidEdgeGeometry.Body` (E_NOINTERFACE).
+        ///
+        /// CORREÇÃO #2 (2º teste real): usar a CopySurface crua como ferramenta faz o CAST passar
+        /// mas `Unions.Add` rejeita — E_FAIL em síncrono, E_INVALIDARG em ordenado.
+        ///
+        /// CORREÇÃO #3 (3º teste — Carlos fez o processo MANUAL p/ conferir, log 17:11): o motivo
+        /// não era o cast nem os enums (o `Union_1` real leu `TargetDesignBodyOption=0` e
+        /// `TargetConstructionBodyOption=0` — exatamente o que já estava tentando). O que faltava:
+        /// **encostar no bloco (GapMm=0) não conta como "fechado" para o Stitch** — sem uma
+        /// superfície cobrindo o RIM aberto, a costura fica uma casca aberta e o União rejeita.
+        /// Carlos confirmou manualmente: cria um patch "Limite" (`SurfaceByBoundaries`) sobre o
+        /// rim → costura (superfície + patch) → só ENTÃO o União aceita. Ver <see cref="TryPatchRim"/>
+        /// (chamado pelo chamador, `rimPatch` aqui). Confirmado também: Stitch/União só rodam em
+        /// modelagem ORDENADA (`Union_1.ModelingModeType=2`; síncrono não faz nada).
         /// </summary>
-        private static object TryUniteToBlock(dynamic blockModel, dynamic surf)
+        private static object TryUniteToBlock(dynamic partDoc, dynamic blockModel, dynamic surf, object rimPatch)
         {
             try
             {
-                object blockBody = blockModel.Body;
-                object surfBody = SurfBodyOf(surf);
-                System.Array targets = ToTypedBodyArray(blockBody);
-                System.Array tools = ToTypedBodyArray(surfBody);
-                if (targets.Length == 0 || tools.Length == 0)
+                System.Array targets;
+                try { targets = new SolidEdgeGeometry.Body[] { (SolidEdgeGeometry.Body)blockModel.Body }; }
+                catch (Exception e)
                 {
-                    Log.Warn("Unir: bloco ou superfície não expõem a interface Body — união pulada.");
+                    Log.Warn("Unir: bloco não expõe a interface Body (E_NOINTERFACE) — " + e.GetBaseException().Message);
                     return null;
                 }
 
+                // COSTURA a superfície de queima + o patch do rim (se houve um) — igual ao processo
+                // manual confirmado pelo Carlos: só a superfície crua (sem o patch) deixa uma casca
+                // aberta e o União rejeita (E_FAIL/E_INVALIDARG).
+                dynamic stitched;
+                try
+                {
+                    var stitchCol = (SolidEdgePart.StitchSurfaces)partDoc.Constructions.StitchSurfaces;
+                    System.Array surfArr = rimPatch != null
+                        ? new object[] { surf, rimPatch }
+                        : (System.Array)(new SolidEdgePart.CopySurface[] { (SolidEdgePart.CopySurface)surf });
+                    stitched = stitchCol.Add(surfArr.Length, ref surfArr, true, Type.Missing);
+                    Log.Info($"Unir: superfície COSTURADA (StitchSurfaces.Add, {surfArr.Length} peça(s){(rimPatch != null ? " incl. patch do rim" : "")}) antes do União.");
+                }
+                catch (Exception e)
+                {
+                    Log.Warn("Unir: StitchSurfaces.Add falhou — " + e.GetBaseException().Message);
+                    try { ComDiagnostics.LogMembers("Constructions.StitchSurfaces", (object)partDoc.Constructions.StitchSurfaces); } catch { }
+                    return null;
+                }
+
+                System.Array tools = null;
+                string toolKind = null;
+                try { tools = new SolidEdgeGeometry.Body[] { (SolidEdgeGeometry.Body)stitched.Body }; toolKind = "StitchSurface.Body"; }
+                catch
+                {
+                    try { tools = new SolidEdgeGeometry.Body[] { (SolidEdgeGeometry.Body)stitched }; toolKind = "StitchSurface as Body"; }
+                    catch
+                    {
+                        try { tools = new SolidEdgePart.StitchSurface[] { (SolidEdgePart.StitchSurface)stitched }; toolKind = "StitchSurface"; }
+                        catch (Exception e)
+                        {
+                            Log.Warn("Unir: StitchSurface não expõe Body nem se converte — " + e.GetBaseException().Message);
+                            try { ComDiagnostics.LogMembers("StitchSurface", (object)stitched); } catch { }
+                            return null;
+                        }
+                    }
+                }
+                Log.Info($"Unir: ferramenta do União = {toolKind}.");
+
                 var unions = (SolidEdgePart.Unions)blockModel.Unions;
-                object union = unions.Add(1, ref targets, 1, ref tools,
-                    SolidEdgePart.SETargetDesignBodyOption.igCreateMultipleDesignBodiesOnNonManifoldOption,
-                    SolidEdgePart.SETargetConstructionBodyOption.igCreateMultipleConstructionBodiesOnNonManifoldOption);
-                Log.Info($"Unir: superfície UNIDA ao bloco — Status {FeatureStatusText(union)}.");
-                return union;
+                object union = null;
+                Exception lastEx = null;
+                // (0,0) = igCreateMultiple…OnNonManifoldOption nos dois — CONFIRMADO 2026-07-17 pela
+                // leitura de volta de um Union_1 real feito pelo Carlos na UI (mesmos valores).
+                foreach (var combo in new[]
+                {
+                    (Design: SolidEdgePart.SETargetDesignBodyOption.igCreateMultipleDesignBodiesOnNonManifoldOption,
+                     Constr: SolidEdgePart.SETargetConstructionBodyOption.igCreateMultipleConstructionBodiesOnNonManifoldOption),
+                    (Design: SolidEdgePart.SETargetDesignBodyOption.igCreateSingleDesignBodyOnNonManifoldOption,
+                     Constr: SolidEdgePart.SETargetConstructionBodyOption.igCreateSingleConstructionGeneralBodyOnNonManifoldOption),
+                })
+                {
+                    try
+                    {
+                        System.Array t2 = (System.Array)targets.Clone();
+                        System.Array l2 = (System.Array)tools.Clone();
+                        union = unions.Add(1, ref t2, 1, ref l2, combo.Design, combo.Constr);
+                        Log.Info($"Unir: superfície UNIDA ao bloco (enums {combo.Design}/{combo.Constr}) — Status {FeatureStatusText(union)}.");
+                        return union;
+                    }
+                    catch (Exception e) { lastEx = e; Log.Warn($"Unir: Unions.Add ({combo.Design}/{combo.Constr}) falhou — " + e.GetBaseException().Message); }
+                }
+                if (lastEx != null) try { ComDiagnostics.LogSignatures((object)unions, "Add"); } catch { }
+                return null;
             }
             catch (Exception e)
             {
@@ -799,12 +871,21 @@ namespace AutoEDM.Electrode
         /// Passo 1 do processo de superfície (Carlos): reporta as arestas ABERTAS (não-costuradas)
         /// da superfície de queima — as que pertencem a UMA só face (fronteira/laminar). Classifica
         /// em VERTICAIS (Z varia = vãos laterais X,Y a fechar com "Limite") e HORIZONTAIS (rim de
-        /// topo/fundo). Equivale a "Exibir Arestas Não-Costuradas". Não modela. Devolve TRUE se não
-        /// há vãos VERTICAIS (X,Y) — pronta p/ unir: com "Criar Base" em GapMm=0 (2026-07-17), o
-        /// rim horizontal já toca a base do bloco, então não precisa mais "estender em Z".
+        /// topo/fundo, devolvidas em <paramref name="horizontalOpenEdges"/>). Equivale a "Exibir
+        /// Arestas Não-Costuradas". Não modela. Devolve TRUE se não há vãos VERTICAIS (X,Y).
+        ///
+        /// Achado 2026-07-17 (Carlos fez o processo manual p/ conferir): mesmo com o rim
+        /// horizontal ENCOSTANDO no bloco (GapMm=0), o Stitch NÃO trata esse contato como
+        /// "fechado" — ele só costura SUPERFÍCIES que você entrega a ele. Sem uma superfície
+        /// "Limite" cobrindo o rim, o resultado fica uma casca ABERTA e o União rejeita
+        /// (E_INVALIDARG). Por isso o rim horizontal (mesmo sem vão VERTICAL) precisa virar um
+        /// patch via `SurfaceByBoundaries.Add` antes de costurar — ver <see cref="TryPatchRim"/>.
         /// </summary>
-        private static bool DiagnoseOpenEdges(dynamic surf, double blockBottomZmm, BlockOverSurfacesResult result)
+        private static bool DiagnoseOpenEdges(dynamic surf, double blockBottomZmm, BlockOverSurfacesResult result,
+            out List<object> horizontalOpenEdges)
         {
+            horizontalOpenEdges = new List<object>();
+
             // A CopySurface não expõe `.Body` (Log 2026-07-16). Pego as FACES (surf.Faces[1], que
             // já funciona) e, de cada face, suas arestas. Uma aresta de FRONTEIRA (aberta) pertence
             // a UMA só face, então aparece UMA vez ao varrer as faces (sem dupla contagem); as
@@ -814,7 +895,7 @@ namespace AutoEDM.Electrode
             if (faces.Count == 0) { Log.Warn("Unir: a superfície de queima não deu faces p/ analisar as arestas."); return false; }
 
             const double zTol = 0.05; // mm — abaixo disso a aresta é "horizontal"
-            int visits = 0, open = 0, vertical = 0, horizontal = 0, unknownFaceCount = 0, shown = 0;
+            int visits = 0, open = 0, vertical = 0, unknownFaceCount = 0, shown = 0;
             double vTopZ = double.NegativeInfinity, vBotZ = double.PositiveInfinity;
             foreach (var f in faces)
             {
@@ -831,12 +912,12 @@ namespace AutoEDM.Electrode
                     if (!FaceGeometry.TryGetRangeMm(e, out double[] mn, out double[] mx)) continue;
                     bool isVert = (mx[2] - mn[2]) > zTol;
                     if (isVert) { vertical++; vTopZ = Math.Max(vTopZ, mx[2]); vBotZ = Math.Min(vBotZ, mn[2]); }
-                    else horizontal++;
+                    else horizontalOpenEdges.Add(e);
                     if (shown++ < 40) Log.Info($"  aresta aberta: Z {mn[2]:0.0}→{mx[2]:0.0} mm ({(isVert ? "VERTICAL (vão lateral X,Y)" : "horizontal (rim)")}).");
                 }
             }
 
-            Log.Info($"Unir (diagnóstico de fechamento): {faces.Count} face(s), {visits} aresta(s) visitada(s), {open} ABERTA(s) — {horizontal} horizontal(is) (rim topo/fundo), {vertical} vertical(is) (vãos laterais X,Y a fechar)." +
+            Log.Info($"Unir (diagnóstico de fechamento): {faces.Count} face(s), {visits} aresta(s) visitada(s), {open} ABERTA(s) — {horizontalOpenEdges.Count} horizontal(is) (rim topo/fundo), {vertical} vertical(is) (vãos laterais X,Y a fechar)." +
                      (unknownFaceCount > 0 ? $" ({unknownFaceCount} sem contagem de faces)" : ""));
 
             if (vertical == 0)
@@ -848,6 +929,32 @@ namespace AutoEDM.Electrode
             Log.Info($"Unir: há {vertical} aresta(s) VERTICAL(is) aberta(s) (Z {vBotZ:0.0}→{vTopZ:0.0}) = VÃOS laterais em X,Y. Feche cada vão com 'Limite' (SurfaceByBoundaries) na peça e rode de novo.");
             result.Warnings.Add($"Superfície ABERTA nas laterais: {vertical} vão(s) X,Y a fechar com 'Limite' (ver log) antes de unir.");
             return false;
+        }
+
+        /// <summary>
+        /// Fecha o rim HORIZONTAL aberto (topo/fundo da superfície de queima) com uma superfície
+        /// "Limite" (`Constructions.SurfaceByBoundaries.Add`) — achado 2026-07-17: sem isso o
+        /// Stitch não considera a superfície fechada mesmo com o rim encostando no bloco (o
+        /// contato físico não conta como costura). NUNCA lança — se falhar, devolve null e o
+        /// chamador tenta costurar só a superfície original (comportamento antigo).
+        /// </summary>
+        private static object TryPatchRim(dynamic partDoc, List<object> horizontalOpenEdges)
+        {
+            if (horizontalOpenEdges == null || horizontalOpenEdges.Count == 0) return null;
+            try
+            {
+                var byB = (SolidEdgePart.SurfaceByBoundaries)partDoc.Constructions.SurfaceByBoundaries;
+                System.Array edgeArr = ToTypedEdgeArray(horizontalOpenEdges);
+                if (edgeArr.Length == 0) { Log.Warn("Unir (patch do rim): arestas não tipáveis como Edge — pulado."); return null; }
+                object patch = byB.Add(edgeArr.Length, ref edgeArr, Type.Missing, Type.Missing, Type.Missing);
+                Log.Info($"Unir: rim fechado com patch 'Limite' ({edgeArr.Length} aresta(s)).");
+                return patch;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Unir (patch do rim): SurfaceByBoundaries.Add falhou — " + e.GetBaseException().Message);
+                return null;
+            }
         }
 
         /// <summary>Maior Z (mm) entre os corpos criados ALÉM da baseline (topo do corpo novo).</summary>

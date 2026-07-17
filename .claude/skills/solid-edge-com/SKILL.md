@@ -213,6 +213,34 @@ by SPY 2026-07-16).** The human's steps and the exact features they create (feat
    Gravador) will show a false "nothing changed" for those specific actions even though the
    model visibly did change. If a diff shows no new feature but the geometry clearly changed,
    suspect a non-feature action before assuming the recorder missed something.
+
+   **CONFIRMED live 2026-07-17 (AutoEDM, human did the manual sequence specifically to verify
+   this): touching/coincident geometry does NOT count as "closed" for `StitchSurfaces` — even
+   when the open surface's rim is exactly coplanar with (touching) the target solid's face, you
+   still need an actual patch surface spanning that rim before Stitch will treat the shape as a
+   closed shell.** `Constructions.SurfaceByBoundaries.Add` over the open rim edges, THEN
+   `StitchSurfaces.Add` over **both** the original surface and the new patch (2-element tool
+   array), THEN `Model.Unions.Add` on the stitched result — skipping the patch and feeding
+   `Unions.Add` the raw un-patched surface (even with 0 "open" edges by an edge-adjacency count)
+   throws **`E_FAIL` (0x80004005) in synchronous modeling, `E_INVALIDARG` (0x80070057) in
+   ordered** — a reliable diagnostic signature for "the tool isn't a genuinely closed body" that
+   isn't obviously about the enum arguments (which can be completely correct and still get this
+   error). **Both `StitchSurfaces` and `Unions` only do anything in ORDERED modeling** — a
+   synchronous-mode attempt silently no-ops (confirmed by a human clicking the same UI commands
+   in both modes: nothing happens in sync, the same click stitches/unites in ordered) — switch
+   `ModelingMode = 2` before either, not just before `FaceOffsets`.
+   `Unions.Add`'s `TargetDesignBodyOption`/`TargetConstructionBodyOption` — reading back a real
+   `Union` feature confirmed **both `0`** (`igCreateMultiple…OnNonManifoldOption`) for a normal
+   single-target/single-tool merge; the `2`/`1` "Single…" variants mentioned in the enum are for
+   forcing non-manifold results into one body, not needed for the common case.
+   Neither the `StitchSurface` nor the `Union` result exposes a `.Body` property in its live
+   member list — when you need a `SolidEdgeGeometry.Body`-typed array element from one (e.g. to
+   feed as a Union tool), try `.Body` first, then a direct cast of the object itself (it may
+   implement `Body` as a secondary QueryInterface-able interface not listed in the default
+   dispinterface — same "reflection/dump lies about secondary interfaces" pattern as
+   `ChamferReferenceFace` elsewhere in this skill), then fall back to the object's own concrete
+   interop type (`SolidEdgePart.StitchSurface`) as the array element — `Unions.Add`'s array
+   params are generic `SAFEARRAY(IDispatch)`, so they don't strictly require `Body` specifically.
 4. **Offset the burn surface by GAP** — "Afastar/Deslocar Face" (`Offset_N`, Type 1180468550,
    **ordered** — `ModelingMode` flips 1→2 right before this step). **CORRECTED 2026-07-17 (was
    wrongly attributed to `Model.FaceMoves` on 2026-07-16 — the Gravador's per-collection diff now
@@ -362,7 +390,7 @@ the live object** (`ComDiagnostics.LogMembers`/`DumpObject`) before you build on
 | Op | Real call |
 |---|---|
 | Thicken a surface's faces into a solid | `partDoc.Models.AddThickenFeature(Side FeaturePropertyConstants, offset double, nFaces int, Faces SAFEARRAY(IDispatch)) → Model` |
-| Boolean unite bodies | `Model.Unions.Add(nTargets, TargetArray SAFEARRAY(IDispatch), nTools, ToolsArray SAFEARRAY(IDispatch), SETargetDesignBodyOption, SETargetConstructionBodyOption)` (igCreateSingleDesignBodyOnNonManifold=2, igCreateSingleConstructionGeneralBody=1; both enums also have a `0` = igCreateMultiple…OnNonManifoldOption — safer default, doesn't fail the op on a non-manifold result). Target/tool array elements are `SolidEdgeGeometry.Body` (a `Body`, not a `Model` — get it via `model.Body`), typed as `SolidEdgeGeometry.Body[]`. **`Unions` IS in the stale PIA** (unlike `FaceOffsets.AddEx`, below) — `(SolidEdgePart.Unions)model.Unions` compiles, and tlbimp generated its SAFEARRAY params as `ref Array` (not a plain array) — pass `ref targets, ref tools`. |
+| Boolean unite bodies | `Model.Unions.Add(nTargets, TargetArray SAFEARRAY(IDispatch), nTools, ToolsArray SAFEARRAY(IDispatch), SETargetDesignBodyOption, SETargetConstructionBodyOption)` (igCreateSingleDesignBodyOnNonManifold=2, igCreateSingleConstructionGeneralBody=1; both enums also have a `0` = igCreateMultiple…OnNonManifoldOption — safer default, doesn't fail the op on a non-manifold result). **`Unions` IS in the stale PIA** (unlike `FaceOffsets.AddEx`, below) — `(SolidEdgePart.Unions)model.Unions` compiles, and tlbimp generated its SAFEARRAY params as `ref Array` (not a plain array) — pass `ref targets, ref tools`. **Array element type is NOT one-size-fits-all — cast each side to what it actually IS, not to a generic `Body`:** a solid Model's target casts fine to `SolidEdgeGeometry.Body[]` (`model.Body`), but a **`CopySurface` tool does NOT implement `SolidEdgeGeometry.Body`** — casting it throws `E_NOINTERFACE` on IID `{09FCA073-DFBF-11D0-A275-080036C5ED02}` (confirmed live, 2026-07-17). A `CopySurface` is already a valid `IDispatch`; type its array element as `SolidEdgePart.CopySurface[]` instead (`new SolidEdgePart.CopySurface[] { (SolidEdgePart.CopySurface)surf }`) — `Unions.Add`'s `SAFEARRAY(IDispatch)` doesn't care that target/tool are different concrete interop types, it just needs each element to genuinely implement *some* real COM interface, not `object`. |
 | Boolean subtract (also a hole workaround) | `Model.Subtracts.Add(nTargets, TargetArray, nTools, ToolsArray, DirectionArray SAFEARRAY(SESubtractDirection), targetOpt, constrOpt)` |
 | Boolean intersect | `Model.Intersects.Add(nTargets, TargetArray, nTools, ToolsArray, targetOpt, constrOpt)` |
 | Redefine/replace solid faces with a surface | `Model.RedefineFaces.Add(nFaces, [in,out] FacesArray, nEdges, [in,out] NonLaminarEdgesArray, [in,out] TangencyTypeArray, FaceMerge SurfaceByBoundaryPatchTopology, ReplaceFacesOnSolidBody bool) → RedefineFace` |
