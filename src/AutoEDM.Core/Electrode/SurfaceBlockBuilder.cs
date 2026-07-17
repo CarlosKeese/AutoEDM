@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -9,7 +10,7 @@ using AutoEDM.Selection;
 
 namespace AutoEDM.Electrode
 {
-    /// <summary>Parâmetros do botão "Bloco sobre superfícies" (ambiente de PEÇA).</summary>
+    /// <summary>Parâmetros do botão "Criar Base" (ambiente de PEÇA).</summary>
     public sealed class BlockOverSurfacesOptions
     {
         /// <summary>Material do eletrodo (filtra o catálogo de blanks). Default "Cobre".</summary>
@@ -22,9 +23,12 @@ namespace AutoEDM.Electrode
         public double BarMaxLengthMm { get; set; } = 500.0;
 
         /// <summary>Espaço (mm) entre o TOPO das superfícies e a BASE do bloco — o controle
-        /// "aumentar o espaço". A forma copiada sobe do fundo até tocar o bloco; o gap dá
-        /// folga entre a ponta da forma e o bloco. Default 1 mm (pedido do Carlos).</summary>
-        public double GapMm { get; set; } = 1.0;
+        /// "aumentar o espaço". Default 0 (Carlos, 2026-07-17): esse espaço só fazia sentido
+        /// como folga para o "Unir superfícies" ESTENDER a superfície até o bloco; enquanto
+        /// esse estender não é automatizado, deixar espaço só cria um vão solto — melhor a
+        /// base tocar direto no topo da superfície (gap 0), pronta p/ unir sem precisar
+        /// estender.</summary>
+        public double GapMm { get; set; } = 0.0;
 
         /// <summary>Altura do bloco/holder (mm).</summary>
         public double BlockHeightMm { get; set; } = 15.0;
@@ -55,26 +59,26 @@ namespace AutoEDM.Electrode
         /// <summary>Quanto a faixa é menor que o bloco, POR LADO (mm) — "um pouco menor que o blank".</summary>
         public double BandMarginMm { get; set; } = 0.5;
 
-        /// <summary>Perna do chanfro 1×45° de orientação no canto X+ Y− (mm).</summary>
+        /// <summary>Perna do chanfro 1×45° de orientação no canto X+ Y− (blank QUAD/RET); no
+        /// blank REDONDO, a mesma medida vira a profundidade do FLAT de orientação em Y−
+        /// (Carlos, 2026-07-17: a faixa redonda precisa de uma face chata voltada para Y−,
+        /// em vez do canto chanfrado — não faz sentido chanfrar um canto que não existe).</summary>
         public double ChamferLegMm { get; set; } = 3.0;
-
-        // -------- Offset de faísca por cor (item 7) --------
-
-        /// <summary>
-        /// Aplicar o OFFSET (folga de faísca) nas superfícies de queima conforme as CORES
-        /// (Ra→folga: 0,8→0,05; 1,6→0,10; 3,2→0,20; 6,3→0,30 mm) + <see cref="ExtraOffsetMm"/>.
-        /// O eletrodo é SUBDIMENSIONADO (offset para dentro). Ver [[real-edm-workflow]].
-        /// </summary>
-        public bool ApplyColorOffset { get; set; } = true;
-
-        /// <summary>Folga extra (mm) somada ao offset da tabela de Ra (ajuste manual). Default 0.</summary>
-        public double ExtraOffsetMm { get; set; } = 0.0;
 
         /// <summary>
         /// Após unir, ALTERNAR para modelamento ORDENADO (item 7) — deixa a feature de união
         /// editável (o operador ajusta o offset/gap na árvore). 2 = igOrdered.
         /// </summary>
         public bool SwitchToOrdered { get; set; } = true;
+
+        /// <summary>
+        /// GAP/Ra/cor escolhidos na lista suspensa do "Unir superfícies" (Carlos, 2026-07-17).
+        /// Null = só diagnostica as arestas abertas (comportamento antigo, sem aplicar nada).
+        /// Com valor: aplica o offset via <c>Model.FaceOffsets</c> (ORDENADO, editável depois —
+        /// NÃO <c>Constructions.OffsetSurfaces</c> em síncrono, que não permite reeditar o GAP)
+        /// e tenta pintar a superfície com a cor do Ra escolhido, então une ao bloco.
+        /// </summary>
+        public RaGapPresets.Choice UniteChoice { get; set; }
     }
 
     /// <summary>Resultado do dimensionamento SEM modelar — alimenta o pop-up e o resumo ao vivo.</summary>
@@ -98,9 +102,6 @@ namespace AutoEDM.Electrode
         public double BlockBaseZmm;                 // base do BLOCO = faixa (base+altura) OU só o gap se sem faixa
         public bool HasBand;                        // a faixa de medição entra no dimensionamento?
 
-        // Offset de faísca por cor (item 7) — o que será aplicado às superfícies de queima.
-        public readonly List<OffsetGroup> OffsetGroups = new List<OffsetGroup>();
-
         public readonly List<string> Warnings = new List<string>();
 
         /// <summary>Texto de 1 parágrafo p/ o rótulo da janela.</summary>
@@ -108,39 +109,17 @@ namespace AutoEDM.Electrode
         {
             if (!SurfacesFound) return "Nenhuma superfície encontrada. Selecione a superfície copiada e tente de novo.";
             string blk = ChosenBlank != null ? ChosenBlank.Describe() : "sem blank do catálogo (bloco = pegada / comprar material)";
+            string orientKey = RoundBlank ? "flat em Y−" : "chanfro X+ Y−";
             string band = HasBand
-                ? $"Faixa: Z {BandBaseZmm:0.0}→{BlockBaseZmm:0.0} mm (5 mm, gap {(BandBaseZmm - SurfacesTopZmm):0.0} mm acima da superfície) + chanfro X+ Y−\r\n"
+                ? $"Faixa: Z {BandBaseZmm:0.0}→{BlockBaseZmm:0.0} mm (5 mm, gap {(BandBaseZmm - SurfacesTopZmm):0.0} mm acima da superfície) + {orientKey}\r\n"
                 : "Faixa: (desligada)\r\n";
             string s =
                 $"Pegada: {FootprintXmm:0.0} × {FootprintYmm:0.0} mm  (fonte: {SurfaceSource})\r\n" +
                 $"Blank: {blk}\r\n" +
                 band +
                 $"Bloco: {BlockXmm:0.0} × {BlockYmm:0.0} × {BlockHmm:0.0} mm, parte de Z = {BlockBaseZmm:0.0} mm";
-            if (OffsetGroups.Count > 0)
-            {
-                s += "\r\nOffset (folga de faísca):";
-                foreach (var g in OffsetGroups) s += "\r\n  • " + g.Describe();
-            }
             if (Warnings.Count > 0) s += "\r\n⚠ " + string.Join("; ", Warnings);
             return s;
-        }
-    }
-
-    /// <summary>Um grupo de faces de queima da MESMA cor e o offset (folga, mm) a aplicar.</summary>
-    public sealed class OffsetGroup
-    {
-        public System.Drawing.Color Color;
-        public bool ColorMapped;      // a cor casou com o mapa Ra?
-        public double Ra;             // Ra alvo (µm), 0 se não mapeada
-        public double OffsetMm;       // folga total = tabela(Ra) + extra
-        public readonly List<object> Faces = new List<object>();
-
-        public string Describe()
-        {
-            string cor = $"RGB({Color.R},{Color.G},{Color.B})";
-            return ColorMapped
-                ? $"{cor} · Ra {Ra:0.#} · {Faces.Count} face(s) → offset {OffsetMm:0.###} mm"
-                : $"{cor} (não mapeada) · {Faces.Count} face(s) → offset {OffsetMm:0.###} mm";
         }
     }
 
@@ -203,6 +182,20 @@ namespace AutoEDM.Electrode
             {
                 plan.Warnings.Add("Não foi possível ler a bounding box das superfícies.");
                 return plan;
+            }
+
+            // Rede de segurança (achado 2026-07-17): o bbox por-FACE perde qualquer face cuja
+            // leitura de range falhe por completo (visto numa face curva sem Vertices) — isso
+            // subestimou o topo real de uma superfície com calota/nariz arredondado, e a faixa de
+            // medição saiu cortando 0,2mm DENTRO da geometria. O bbox do CORPO inteiro
+            // (Body.GetRange) não depende de nenhuma face individual, então expande (nunca
+            // encolhe) o bbox por-face com o range de cada item de superfície.
+            foreach (var item in CollectSurfaceItems(partDoc))
+            {
+                if (!FaceGeometry.TryGetBodyRangeMm(item, out double[] bmin, out double[] bmax)) continue;
+                if (bmin[0] < box.MinX) box.MinX = bmin[0]; if (bmax[0] > box.MaxX) box.MaxX = bmax[0];
+                if (bmin[1] < box.MinY) box.MinY = bmin[1]; if (bmax[1] > box.MaxY) box.MaxY = bmax[1];
+                if (bmin[2] < box.MinZ) box.MinZ = bmin[2]; if (bmax[2] > box.MaxZ) box.MaxZ = bmax[2];
             }
             plan.Footprint = box;
             plan.FootprintXmm = box.SizeX;
@@ -273,61 +266,7 @@ namespace AutoEDM.Electrode
             plan.BandBaseZmm = box.MaxZ + opt.GapMm;
             plan.BlockBaseZmm = plan.BandBaseZmm + (plan.HasBand ? opt.BandHeightMm : 0.0);
 
-            // Offset de faísca por cor (item 7): agrupa as faces por cor e calcula a folga
-            // (tabela Ra + extra). Não modela — só dimensiona; alimenta o resumo e o Build.
-            if (opt.ApplyColorOffset)
-                ComputeOffsetGroups(plan, faces, (object)SafeApp(partDoc), opt.ExtraOffsetMm);
-
             return plan;
-        }
-
-        private static object SafeApp(dynamic partDoc)
-        {
-            try { return partDoc.Application; } catch { return null; }
-        }
-
-        /// <summary>
-        /// Agrupa as faces de queima por COR e calcula a folga (offset para dentro, mm) de
-        /// cada grupo = tabela(Ra) + <paramref name="extraMm"/>. Cor→Ra por
-        /// <see cref="RaColorMap"/>; Ra→folga por <see cref="RaOffsetTablePolicy"/>. Faces
-        /// sem cor mapeada recebem só o extra (e um aviso). Eletrodo ENCOLHE (offset p/ dentro).
-        /// </summary>
-        private static void ComputeOffsetGroups(BlockOverSurfacesPlan plan, List<object> faces, object application, double extraMm)
-        {
-            var reader = new FaceStyleColorReader();
-            var map = new RaColorMap();
-            var policy = new RaOffsetTablePolicy();
-            var byColor = new Dictionary<int, OffsetGroup>();
-
-            foreach (var f in faces)
-            {
-                System.Drawing.Color color; string src;
-                bool gotColor = reader.TryReadColor(f, application, out color, out src);
-                if (!gotColor) color = System.Drawing.Color.Empty;
-
-                int key = color.ToArgb();
-                if (!byColor.TryGetValue(key, out OffsetGroup g))
-                {
-                    g = new OffsetGroup { Color = color };
-                    if (gotColor && map.TryGetRa(color, out double ra, out _))
-                    {
-                        g.ColorMapped = true; g.Ra = ra;
-                        g.OffsetMm = policy.GetInwardOffsetMm(new Model.ElectrodePass("", ra), plan.ChosenBlank?.Material ?? "Cobre") + extraMm;
-                    }
-                    else
-                    {
-                        g.ColorMapped = false; g.OffsetMm = extraMm; // sem Ra: só o extra
-                    }
-                    byColor[key] = g;
-                }
-                g.Faces.Add(f);
-            }
-
-            foreach (var g in byColor.Values.OrderByDescending(v => v.Faces.Count))
-                plan.OffsetGroups.Add(g);
-
-            if (plan.OffsetGroups.Any(g => !g.ColorMapped && g.Faces.Count > 0))
-                plan.Warnings.Add("há faces de queima sem cor mapeada — offset dessas = só a folga extra (confira a cor).");
         }
 
         // ================================================================ BUILD
@@ -350,7 +289,7 @@ namespace AutoEDM.Electrode
             foreach (var w in plan.Warnings) { Log.Warn(w); result.Warnings.Add(w); }
             if (!plan.SurfacesFound) return result;
 
-            Log.Info($"Bloco sobre superfícies: pegada {plan.FootprintXmm:0.0}×{plan.FootprintYmm:0.0} mm, centro da pegada " +
+            Log.Info($"Criar Base: pegada {plan.FootprintXmm:0.0}×{plan.FootprintYmm:0.0} mm, centro da pegada " +
                      $"({plan.FootprintCenterXmm:0.0},{plan.FootprintCenterYmm:0.0}), topo Z={plan.SurfacesTopZmm:0.0}; " +
                      $"blank {(plan.ChosenBlank?.Describe() ?? "(cru=pegada)")}; " +
                      $"bloco {plan.BlockXmm:0.0}×{plan.BlockYmm:0.0}×{plan.BlockHmm:0.0} CENTRADO NA ORIGEM (0,0), base Z={plan.BlockBaseZmm:0.0} " +
@@ -381,15 +320,21 @@ namespace AutoEDM.Electrode
             // passo definitivo de "unir superfícies ao bloco" no próximo run.
             ProbeModelApi(partDoc);
 
-            // (1b) FAIXA DE MEDIÇÃO (item 5): degrau menor + chanfro de orientação, sob o
-            // bloco (topo da faixa = base do bloco). Funde com o bloco (protrusão).
+            // (1b) FAIXA DE MEDIÇÃO (item 5): degrau menor + orientação, sob o bloco (topo da
+            // faixa = base do bloco). Funde com o bloco (protrusão). Blank QUAD/RET -> faixa
+            // retangular + chanfro no canto X+ Y−; blank REDONDO -> faixa REDONDA + flat em Y−
+            // (Carlos, 2026-07-17: a faixa precisa acompanhar a forma do blank).
             if (opt.AddMeasurementBand)
             {
                 try
                 {
-                    object band = BlankModeler.AddMeasurementBand(partDoc, plan.BlockXmm, plan.BlockYmm,
-                        plan.BlockBaseZmm, opt.BandHeightMm, opt.BandMarginMm, opt.ChamferLegMm,
-                        plan.CenterXmm, plan.CenterYmm);
+                    object band = plan.RoundBlank
+                        ? BlankModeler.AddMeasurementBandRound(partDoc, plan.BlockXmm,
+                            plan.BlockBaseZmm, opt.BandHeightMm, opt.BandMarginMm, opt.ChamferLegMm,
+                            plan.CenterXmm, plan.CenterYmm)
+                        : BlankModeler.AddMeasurementBand(partDoc, plan.BlockXmm, plan.BlockYmm,
+                            plan.BlockBaseZmm, opt.BandHeightMm, opt.BandMarginMm, opt.ChamferLegMm,
+                            plan.CenterXmm, plan.CenterYmm);
                     if (band != null) { result.CreatedFeatures.Add(band); result.BandCreated = true; }
                 }
                 catch (Exception ex) { Log.Warn("Faixa de medição (bloco preservado): " + ex.GetBaseException().Message); }
@@ -429,8 +374,8 @@ namespace AutoEDM.Electrode
             // fica em síncrono para o re-preview/Cancel deletarem fácil.
             if (!preview) FinalizeToOrdered(partDoc, result, opt);
 
-            Log.Info($"Concluído: bloco={result.BlockCreated}, faixa={result.BandCreated}, offset={result.SurfacesOffset}, " +
-                     $"unidas={result.SurfacesUnited}, ordenado={result.SwitchedToOrdered}, fixação={result.FixationApplied}. " +
+            Log.Info($"Concluído: bloco={result.BlockCreated}, faixa={result.BandCreated}, " +
+                     $"ordenado={result.SwitchedToOrdered}, fixação={result.FixationApplied}. " +
                      $"Features criadas: {result.CreatedFeatures.Count}.");
             return result;
         }
@@ -623,7 +568,7 @@ namespace AutoEDM.Electrode
         /// <summary>
         /// Botão ISOLADO "Unir superfícies": engrossa a superfície de queima (faces
         /// SELECIONADAS ou CopySurface existente) PARA CIMA, até dentro do bloco, e UNE ao
-        /// bloco → um sólido único. SEPARADO do "Bloco sobre superfícies" porque o thicken, ao
+        /// bloco → um sólido único. SEPARADO do "Criar Base" porque o thicken, ao
         /// falhar, ENVENENA o doc e derruba a fixação (Carlos, 2026-07-15) — aqui o experimento
         /// de superfície fica isolado do fluxo (bloco+faixa+furos) que já funciona. Requer o
         /// BLOCO já criado (Models.Item(1)) e as faces de queima selecionadas na peça.
@@ -681,27 +626,184 @@ namespace AutoEDM.Electrode
             if (surfCreated) result.CreatedFeatures.Add(surf);
             Log.Info($"Unir: superfície de queima = {surfSrc}.");
 
-            // Offset de faísca (item 7): o que SERÁ aplicado (na feature de união, em ordenado).
-            foreach (var g in plan.OffsetGroups) Log.Info($"  (offset planejado) {g.Describe()}");
-
             // PROCESSO CORRETO (Carlos, 2026-07-16): NÃO usar espessamento (Thicken) — ele engrossa
             // p/ fora, não é o eletrodo. O método real: (1) VERIFICAR se a superfície está FECHADA
-            // em X,Y; (2) fechar os vãos laterais com superfície "Limite" (SurfaceByBoundaries);
-            // (3) COSTURAR (StitchSurfaces); (4) ESTENDER/mover em Z até o bloco; (5) unir ao bloco.
-            // 1º PASSO IMPLEMENTADO = DIAGNÓSTICO das arestas ABERTAS (não-costuradas) — as que
-            // pertencem a UMA só face. É a ferramenta "Exibir Arestas Não-Costuradas": diz se está
-            // fechada em X,Y e onde estão os vãos a fechar. Os passos 2–4 entram assim que o SPY das
-            // suas features manuais (Limite/costura/estender) confirmar os argumentos.
-            DiagnoseOpenEdges(surf, blockBottomZmm, result);
+            // em X,Y; (2) fechar os vãos laterais com superfície "Limite" (SurfaceByBoundaries),
+            // manual por enquanto; (3) unir ao bloco. O "estender em Z" (item antigo) NÃO é mais
+            // necessário: "Criar Base" agora usa GapMm=0 (Carlos, 2026-07-17), então o topo da
+            // superfície JÁ toca a base do bloco — só falta fechar os vãos X,Y (se houver) e unir.
+            bool readyToUnite = DiagnoseOpenEdges(surf, blockBottomZmm, result);
+            if (!readyToUnite) return;
+
+            if (opt.UniteChoice == null)
+            {
+                Log.Info("Unir: pronta p/ unir, mas nenhum GAP/Ra escolhido (opt.UniteChoice=null) — só diagnóstico, nada foi alterado.");
+                return;
+            }
+
+            // Cor ANTES de unir — pinta a CopySurface enquanto as faces ainda são referências
+            // frescas (o União pode invalidar as antigas e criar faces novas no corpo mesclado).
+            TryPaintSurface(surf, opt.UniteChoice.Color);
+
+            // Guarda as faces de queima ANTES de unir — tenta reusar essas MESMAS referências
+            // no offset pós-união; se o União as invalidar, o log abaixo mostra exatamente isso
+            // (regra do projeto: nunca adivinhar 2x sem um log real no meio).
+            var burnFaces = new List<object>();
+            AddFacesFrom((object)surf, burnFaces);
+
+            object unionFeature = TryUniteToBlock(blockModel, surf);
+            if (unionFeature == null)
+            {
+                Log.Warn("Unir: União falhou — GAP não aplicado (bloco/faixa/furos preservados, nada foi perdido).");
+                return;
+            }
+            result.CreatedFeatures.Add(unionFeature);
+            result.SurfacesUnited = true;
+
+            // GAP (offset de faísca) DEPOIS de unir, no sólido já mesclado — precisa de
+            // modelagem ORDENADA (Model.FaceOffsets só existe lá; Constructions.OffsetSurfaces,
+            // que funciona em síncrono, foi DESCARTADO porque o GAP não fica editável depois —
+            // Carlos, 2026-07-17). Feature fica na árvore p/ reajuste manual futuro.
+            int mode = 1; try { mode = (int)partDoc.ModelingMode; } catch { }
+            if (mode != 2)
+            {
+                try { partDoc.ModelingMode = 2; mode = 2; result.SwitchedToOrdered = true; Log.Info("Unir: alternado para ORDENADO (necessário p/ Model.FaceOffsets)."); }
+                catch (Exception e) { Log.Warn("Unir: alternar p/ Ordenado falhou — GAP não será aplicado: " + e.GetBaseException().Message); }
+            }
+            if (mode == 2)
+            {
+                object offsetFeature = TryApplyGapOffset(burnFaces, opt.UniteChoice.GapMm, blockModel);
+                if (offsetFeature != null) { result.CreatedFeatures.Add(offsetFeature); result.SurfacesOffset = true; }
+            }
+        }
+
+        /// <summary>
+        /// Une a superfície de queima (CopySurface) ao SÓLIDO do bloco — `Model.Unions.Add`
+        /// (assinatura + enums confirmados 2026-07-17 pelo dump COMPLETO da typelib, nunca
+        /// exercitados ao vivo ainda: 1º disparo real). Opção 0 nos dois enums =
+        /// "múltiplos corpos se não-manifold" (não falha a operação). NUNCA lança — se falhar,
+        /// bloco/faixa/furos ficam intactos e o log/LogMembers dá o material p/ corrigir.
+        /// </summary>
+        private static object TryUniteToBlock(dynamic blockModel, dynamic surf)
+        {
+            try
+            {
+                object blockBody = blockModel.Body;
+                object surfBody = SurfBodyOf(surf);
+                System.Array targets = ToTypedBodyArray(blockBody);
+                System.Array tools = ToTypedBodyArray(surfBody);
+                if (targets.Length == 0 || tools.Length == 0)
+                {
+                    Log.Warn("Unir: bloco ou superfície não expõem a interface Body — união pulada.");
+                    return null;
+                }
+
+                var unions = (SolidEdgePart.Unions)blockModel.Unions;
+                object union = unions.Add(1, ref targets, 1, ref tools,
+                    SolidEdgePart.SETargetDesignBodyOption.igCreateMultipleDesignBodiesOnNonManifoldOption,
+                    SolidEdgePart.SETargetConstructionBodyOption.igCreateMultipleConstructionBodiesOnNonManifoldOption);
+                Log.Info($"Unir: superfície UNIDA ao bloco — Status {FeatureStatusText(union)}.");
+                return union;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Unir: Model.Unions.Add falhou — " + e.GetBaseException().Message);
+                try { ComDiagnostics.LogMembers("Model.Unions", (object)blockModel.Unions); } catch { }
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// GAP (offset de faísca) no sólido já unido — `Model.FaceOffsets.AddEx`. NÃO existe na
+        /// PIA estática do projeto (Interop.SolidEdge.dll só tem o `Add` de 8 params — versão
+        /// antiga do SDK) — por isso via `InvokeMember` direto no objeto COM vivo, igual
+        /// `AddFiniteExtrudedProtrusion`. Valores confirmados 2026-07-17 pela leitura de volta de
+        /// um offset real feito pelo Carlos na UI: FaceOffsetType=1
+        /// (igFaceOffsetBySynchronousOffset), BlendRecreation=194 (igIgnoreBlends),
+        /// AlongOrReverseVector=20 (igNormal), AlongOrReverseDirectionToKeyPoint=44 (igNone, sem
+        /// keypoint). offsetDistance NEGATIVO em metros = encolhe. NUNCA lança — GAP é secundário
+        /// à união (já concluída nesse ponto).
+        /// </summary>
+        private static object TryApplyGapOffset(List<object> burnFaces, double gapMm, dynamic blockModel)
+        {
+            try
+            {
+                System.Array farr = ToTypedFaceArray(burnFaces);
+                if (farr.Length == 0) { Log.Warn("Unir (GAP): sem faces tipáveis — offset pulado."); return null; }
+
+                object faceOffsets = (object)blockModel.FaceOffsets;
+                try { ComDiagnostics.LogSignatures(faceOffsets, "AddEx", "Add"); } catch { }
+
+                object[] args =
+                {
+                    farr.Length, farr,
+                    1,                          // FaceOffsetType = igFaceOffsetBySynchronousOffset
+                    0, new int[0], new bool[0], // NumOfLiveRules=0, sem regras ativas
+                    194,                        // BlendRecreation = igIgnoreBlends
+                    20,                         // AlongOrReverseVector = igNormal
+                    -Math.Abs(gapMm) / 1000.0,  // offsetDistance (m) — negativo encolhe
+                    null, null,                 // ToReferenceEntity, ToKeyPoint — sem referência
+                    0.0,                        // DistanceFromKeyPoint
+                    44                          // AlongOrReverseDirectionToKeyPoint = igNone
+                };
+                object result = faceOffsets.GetType().InvokeMember(
+                    "AddEx", BindingFlags.InvokeMethod, null, faceOffsets, args);
+                Log.Info($"Unir (GAP): offset {gapMm:0.00}mm aplicado (Ordenado — editável na árvore) — Status {FeatureStatusText(result)}.");
+                return result;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Unir (GAP): AddEx falhou — " + e.GetBaseException().Message +
+                         " (as faces podem ter ficado obsoletas pelo União — próximo log ajusta).");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Pinta as faces da superfície de queima com a cor do Ra escolhido — tentativa
+        /// DIRETA via `Face.Style.Diffuse{Red,Green,Blue}` (mesmo objeto confirmado p/ LEITURA
+        /// em <see cref="AutoEDM.Selection.FaceStyleColorReader"/>; escrita ainda NÃO confirmada
+        /// — 1ª tentativa). Se falhar, loga os membros do Style p/ achar o setter certo sem
+        /// adivinhar de novo. NUNCA lança — cor é secundária à união/GAP.
+        /// </summary>
+        private static void TryPaintSurface(dynamic surf, Color color)
+        {
+            var faces = new List<object>();
+            AddFacesFrom((object)surf, faces);
+            if (faces.Count == 0) { Log.Warn("Unir (cor): sem faces p/ pintar."); return; }
+
+            double r = color.R / 255.0, g = color.G / 255.0, b = color.B / 255.0;
+            int ok = 0;
+            foreach (var f in faces)
+            {
+                try
+                {
+                    dynamic face = f;
+                    dynamic style = face.Style;
+                    style.DiffuseRed = r; style.DiffuseGreen = g; style.DiffuseBlue = b;
+                    ok++;
+                }
+                catch { /* tenta a próxima; resumo + dump abaixo */ }
+            }
+
+            if (ok == faces.Count)
+                Log.Info($"Unir (cor): {ok}/{faces.Count} face(s) pintada(s) ✓ (RGB {color.R},{color.G},{color.B}).");
+            else
+            {
+                Log.Warn($"Unir (cor): só {ok}/{faces.Count} face(s) pintada(s) — Style.Diffuse* pode ser SÓ LEITURA; dump p/ achar o setter certo:");
+                try { ComDiagnostics.LogMembers("Face.Style", (object)((dynamic)faces[0]).Style); } catch { }
+            }
         }
 
         /// <summary>
         /// Passo 1 do processo de superfície (Carlos): reporta as arestas ABERTAS (não-costuradas)
         /// da superfície de queima — as que pertencem a UMA só face (fronteira/laminar). Classifica
         /// em VERTICAIS (Z varia = vãos laterais X,Y a fechar com "Limite") e HORIZONTAIS (rim de
-        /// topo/fundo). Equivale a "Exibir Arestas Não-Costuradas". Não modela — só diagnostica.
+        /// topo/fundo). Equivale a "Exibir Arestas Não-Costuradas". Não modela. Devolve TRUE se não
+        /// há vãos VERTICAIS (X,Y) — pronta p/ unir: com "Criar Base" em GapMm=0 (2026-07-17), o
+        /// rim horizontal já toca a base do bloco, então não precisa mais "estender em Z".
         /// </summary>
-        private static void DiagnoseOpenEdges(dynamic surf, double blockBottomZmm, BlockOverSurfacesResult result)
+        private static bool DiagnoseOpenEdges(dynamic surf, double blockBottomZmm, BlockOverSurfacesResult result)
         {
             // A CopySurface não expõe `.Body` (Log 2026-07-16). Pego as FACES (surf.Faces[1], que
             // já funciona) e, de cada face, suas arestas. Uma aresta de FRONTEIRA (aberta) pertence
@@ -709,7 +811,7 @@ namespace AutoEDM.Electrode
             // internas (costuradas, 2 faces) aparecem 2× mas são filtradas por EdgeFaceCount!=1.
             var faces = new List<object>();
             AddFacesFrom((object)surf, faces);
-            if (faces.Count == 0) { Log.Warn("Unir: a superfície de queima não deu faces p/ analisar as arestas."); return; }
+            if (faces.Count == 0) { Log.Warn("Unir: a superfície de queima não deu faces p/ analisar as arestas."); return false; }
 
             const double zTol = 0.05; // mm — abaixo disso a aresta é "horizontal"
             int visits = 0, open = 0, vertical = 0, horizontal = 0, unknownFaceCount = 0, shown = 0;
@@ -737,21 +839,15 @@ namespace AutoEDM.Electrode
             Log.Info($"Unir (diagnóstico de fechamento): {faces.Count} face(s), {visits} aresta(s) visitada(s), {open} ABERTA(s) — {horizontal} horizontal(is) (rim topo/fundo), {vertical} vertical(is) (vãos laterais X,Y a fechar)." +
                      (unknownFaceCount > 0 ? $" ({unknownFaceCount} sem contagem de faces)" : ""));
 
-            if (open == 0)
+            if (vertical == 0)
             {
-                Log.Info($"Unir: superfície SEM arestas abertas — já FECHADA em X,Y. Próximo passo: estender/mover o topo em Z até o bloco (Z≈{blockBottomZmm:0.0}mm) e unir.");
-                result.Warnings.Add("Superfície já fechada em X,Y — falta só estender/mover em Z até o bloco (a implementar).");
+                Log.Info($"Unir: sem vãos VERTICAIS (X,Y) — pronta p/ unir ao bloco (rim Z≈{blockBottomZmm:0.0}mm).");
+                return true;
             }
-            else if (vertical == 0)
-            {
-                Log.Info($"Unir: só arestas abertas HORIZONTAIS (rim) — a superfície é uma casca aberta em cima/baixo, fechada nas laterais. Próximo: estender o rim em Z até o bloco (Z≈{blockBottomZmm:0.0}) e costurar.");
-                result.Warnings.Add($"Superfície fechada nas laterais; {horizontal} rim(s) horizontais. Falta estender/costurar em Z (a implementar).");
-            }
-            else
-            {
-                Log.Info($"Unir: há {vertical} aresta(s) VERTICAL(is) aberta(s) (Z {vBotZ:0.0}→{vTopZ:0.0}) = VÃOS laterais em X,Y. Próximo: fechar cada vão com SurfaceByBoundaries ('Limite'), costurar, e então estender/mover em Z até o bloco.");
-                result.Warnings.Add($"Superfície ABERTA nas laterais: {vertical} vão(s) X,Y a fechar com 'Limite' (ver log). Depois costurar + estender Z.");
-            }
+
+            Log.Info($"Unir: há {vertical} aresta(s) VERTICAL(is) aberta(s) (Z {vBotZ:0.0}→{vTopZ:0.0}) = VÃOS laterais em X,Y. Feche cada vão com 'Limite' (SurfaceByBoundaries) na peça e rode de novo.");
+            result.Warnings.Add($"Superfície ABERTA nas laterais: {vertical} vão(s) X,Y a fechar com 'Limite' (ver log) antes de unir.");
+            return false;
         }
 
         /// <summary>Maior Z (mm) entre os corpos criados ALÉM da baseline (topo do corpo novo).</summary>

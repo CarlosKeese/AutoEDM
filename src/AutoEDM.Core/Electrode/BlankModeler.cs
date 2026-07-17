@@ -240,6 +240,111 @@ namespace AutoEDM.Electrode
             return ext;
         }
 
+        /// <summary>
+        /// FAIXA DE MEDIÇÃO REDONDA (Carlos, 2026-07-17): para blank REDONDO a faixa acompanha
+        /// o diâmetro do bloco (menos a margem) e, em vez do chanfro de canto (que não existe
+        /// num círculo), leva um FLAT — uma face chata voltada para Y− — como referência de
+        /// orientação. Perfil = arco MAIOR (contorna por cima, longe do flat) + uma linha reta
+        /// fechando o flat embaixo (Y−). <paramref name="flatDepthMm"/> é o quanto o flat
+        /// "morde" o círculo (mesma ideia/valor do <c>ChamferLegMm</c> do blank quadrado/retangular).
+        ///
+        /// Arco por 3 PONTOS (`Arcs2d.AddByStartAlongEnd`) — confirmado real pelo log do Carlos
+        /// (2026-07-17: `AddByCenterStartEndAngle` NÃO existe; os membros reais de Arcs2d são
+        /// `AddAsFillet/AddAsFilletNoTrim/AddByCenterStartEnd/AddByStartAlongEnd`). Escolhido
+        /// `AddByStartAlongEnd` (start+ponto-do-meio+end, todos NO círculo) em vez de
+        /// `AddByCenterStartEnd` de propósito: 3 pontos sobre o arco definem ele SEM ambiguidade
+        /// de sentido (o "along" = topo do círculo, longe do flat, força o arco MAIOR) — com
+        /// centro+start+end haveria 2 arcos possíveis (maior/menor) e nenhuma flag de qual usar
+        /// foi confirmada. Se mesmo assim falhar, o catch loga as ASSINATURAS reais (via
+        /// LogSignatures) para corrigir sem adivinhar de novo. NUNCA lança: a faixa é secundária.
+        /// </summary>
+        public static dynamic AddMeasurementBandRound(dynamic partDoc,
+            double blockDiameterMm, double bandTopZmm,
+            double bandHeightMm = 5.0, double marginMm = 0.5, double flatDepthMm = 3.0,
+            double centerXmm = 0.0, double centerYmm = 0.0)
+        {
+            object ext = null;
+            try
+            {
+                double bandBaseZmm = bandTopZmm - bandHeightMm;
+                double radiusMm = blockDiameterMm / 2.0 - marginMm;
+                if (radiusMm <= 0)
+                {
+                    Log.Warn($"Faixa de medição (redonda): diâmetro {blockDiameterMm - 2 * marginMm:0.0} pequeno demais — pulada.");
+                    return null;
+                }
+
+                // Flat limitado a 60% do raio (não pode "morder" mais que meio círculo).
+                double flatLeg = Math.Min(flatDepthMm, radiusMm * 0.6);
+                double chordDistMm = radiusMm - flatLeg;        // distância do centro à corda do flat (mm)
+                double halfWidthMm = Math.Sqrt(Math.Max(0.0, radiusMm * radiusMm - chordDistMm * chordDistMm));
+                if (flatLeg < 1e-5 || halfWidthMm < 1e-5)
+                {
+                    Log.Warn($"Faixa de medição (redonda): raio {radiusMm:0.0}mm pequeno demais p/ o flat {flatDepthMm:0.0}mm — pulada.");
+                    return null;
+                }
+
+                double r = radiusMm / 1000.0, cx = centerXmm / 1000.0, cy = centerYmm / 1000.0;
+                double chordY = chordDistMm / 1000.0, halfW = halfWidthMm / 1000.0;
+                double h = bandHeightMm / 1000.0;
+
+                dynamic plane = partDoc.RefPlanes.Item(1);
+                bool lifted = false;
+                if (Math.Abs(bandBaseZmm) > 1e-6)
+                {
+                    try
+                    {
+                        plane = partDoc.RefPlanes.AddParallelByDistance(
+                            partDoc.RefPlanes.Item(1), bandBaseZmm / 1000.0, 2,
+                            Type.Missing, Type.Missing, Type.Missing);
+                        lifted = true;
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Warn($"Plano da faixa redonda (Z={bandBaseZmm:0.0}mm) falhou: {e.GetBaseException().Message}");
+                        plane = partDoc.RefPlanes.Item(1);
+                    }
+                }
+
+                Log.Info($"Faixa de medição REDONDA: Ø{radiusMm * 2:0.0}×{bandHeightMm:0.0} mm (margem {marginMm:0.0}), " +
+                         $"flat {flatLeg:0.0}mm em Y−, base Z={bandBaseZmm:0.0}, topo Z={bandTopZmm:0.0}.");
+
+                dynamic profileSet = partDoc.ProfileSets.Add();
+                dynamic profile = profileSet.Profiles.Add(plane);
+
+                // Pontos onde o flat corta o círculo (y = cy - chordY) + um ponto no TOPO
+                // (longe do flat) para o arco de 3 pontos passar por cima, nunca pelo flat.
+                double xLeft = cx - halfW, xRight = cx + halfW, yFlat = cy - chordY;
+                double xTop = cx, yTop = cy + r;
+
+                try
+                {
+                    profile.Arcs2d.AddByStartAlongEnd(xRight, yFlat, xTop, yTop, xLeft, yFlat);
+                }
+                catch (Exception exArc)
+                {
+                    Log.Warn($"Faixa redonda: Arcs2d.AddByStartAlongEnd falhou ({exArc.GetBaseException().Message}) — dumping assinaturas reais de Arcs2d p/ corrigir sem adivinhar.");
+                    try { AutoEDM.Com.ComDiagnostics.LogSignatures((object)profile.Arcs2d, "AddByStartAlongEnd", "AddByCenterStartEnd", "AddAsFillet", "AddAsFilletNoTrim"); } catch { }
+                    try { profileSet.Delete(); } catch { }
+                    return null;
+                }
+                profile.Lines2d.AddBy2Points(xLeft, yFlat, xRight, yFlat); // fecha o flat (corda em Y−)
+                profile.End(1);
+
+                var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)profile };
+                ext = RetryStaleCom(() =>
+                    ((object)partDoc.Models).GetType().InvokeMember("AddFiniteExtrudedProtrusion",
+                        BindingFlags.InvokeMethod, null, partDoc.Models,
+                        new object[] { 1, arr, 2, h }), "Faixa de medição redonda (extrusão)");
+
+                try { profileSet.Delete(); } catch (Exception e) { Log.Warn($"ProfileSet.Delete() (faixa redonda): {e.GetBaseException().Message}"); }
+                if (lifted) { try { plane.Visible = false; } catch { } }
+                Log.Info(FeatureFailed(ext) ? "  Faixa redonda: feature com Status FALHA." : "  Faixa de medição redonda criada ✓.");
+            }
+            catch (Exception ex) { Log.Warn($"Faixa de medição redonda falhou (bloco preservado): {ex.GetBaseException().Message}"); }
+            return ext;
+        }
+
         private static string SafeName(dynamic o) { try { return (string)o.Name; } catch { return "?"; } }
 
         /// <summary>
@@ -543,6 +648,10 @@ namespace AutoEDM.Electrode
                 try { plane.Visible = false; } catch { }
                 if (FeatureFailed(hole)) Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — feature com Status FALHA.");
                 else                     Log.Info($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — ok.");
+
+                // Rosca FÍSICA (corte real da hélice) — separado do ThreadSetting acima, que só
+                // liga a ANOTAÇÃO/desenho. Só faz sentido no furo roscado (threadDesc != null).
+                if (threadDesc != null && hole != null && !FeatureFailed(hole)) TryEnablePhysicalThread(hole);
             }
             catch (Exception e) { Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm falhou: {e.GetBaseException().Message}"); }
             finally { if (ps != null) { try { ps.Delete(); } catch { } } }
@@ -602,6 +711,38 @@ namespace AutoEDM.Electrode
             //     ThreadSetting = igRegularThread(164) = "Standard Thread"; igNone(44) = sem rosca.
             try { hd.ThreadSetting = 164; Log.Info("  Rosca LIGADA (ThreadSetting=igRegularThread)."); }
             catch (Exception e) { Log.Warn("  Rosca: ThreadSetting=igRegularThread falhou: " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>
+        /// Liga a rosca FÍSICA (corte real da hélice no sólido) — achado 2026-07-17: um furo
+        /// roscado gravado pela UI tinha `ThreadSetting=igRegularThread` (liga só a
+        /// ANOTAÇÃO/desenho, ver <see cref="FillThreadDataManual"/>) mas `CreatePhysicalThread
+        /// = False`, e o Carlos confirmou que esse furo saiu SEM rosca física no sólido — a
+        /// causa raiz do M6 "não sai roscado". A propriedade é READ-ONLY (sem "put" no dump);
+        /// o mutador é este método `CreatePhysicalThreadAndReturnStatus(bool, [out]
+        /// PhysicalThreadErrorCode*)` — [out] por ParameterModifier, mesmo padrão de
+        /// <see cref="AutoEDM.Selection.FaceGeometry"/>. NUNCA lança (rosca física é secundária
+        /// ao furo em si).
+        /// </summary>
+        private static bool TryEnablePhysicalThread(object hole)
+        {
+            try
+            {
+                object[] args = { true, 0 };
+                var mod = new ParameterModifier(2);
+                mod[1] = true; // [out] enumPhysicalThreadErrorCode
+                hole.GetType().InvokeMember(
+                    "CreatePhysicalThreadAndReturnStatus", BindingFlags.InvokeMethod, null, hole, args,
+                    new[] { mod }, null, null);
+                int status = 0; try { status = Convert.ToInt32(args[1]); } catch { }
+                Log.Info($"  Rosca FÍSICA: CreatePhysicalThreadAndReturnStatus(true) chamado, status={status} (PhysicalThreadErrorCode — confira a rosca cortada na tela).");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("  Rosca FÍSICA: CreatePhysicalThreadAndReturnStatus falhou: " + e.GetBaseException().Message);
+                return false;
+            }
         }
 
         /// <summary>

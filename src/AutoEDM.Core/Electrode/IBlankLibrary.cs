@@ -284,16 +284,16 @@ namespace AutoEDM.Electrode
             new BlankSpec { Code = "12343", Shape = BlankShape.Round, DimA = 6,  Material = "CuW80" },
             new BlankSpec { Code = "8835",  Shape = BlankShape.Round, DimA = 10 },
             new BlankSpec { Code = "12344", Shape = BlankShape.Round, DimA = 12, Material = "CuW80" },
-            new BlankSpec { Code = "8836",  Shape = BlankShape.Round, DimA = 13 },
+            new BlankSpec { Code = "8836",  Shape = BlankShape.Round, DimA = 12.7 }, // "13" nominal = 12,7mm real (Carlos, 2026-07-17)
             new BlankSpec { Code = "8837",  Shape = BlankShape.Round, DimA = 16 },
             new BlankSpec { Code = "12345", Shape = BlankShape.Round, DimA = 16, Material = "CuW80" },
-            new BlankSpec { Code = "11718", Shape = BlankShape.Round, DimA = 25 },
+            new BlankSpec { Code = "11718", Shape = BlankShape.Round, DimA = 25.4 }, // "25" nominal = 25,4mm real — 1" (Carlos, 2026-07-17)
             new BlankSpec { Code = "9223",  Shape = BlankShape.Round, DimA = 38 },
             // Retangulares
-            new BlankSpec { Code = "8842",  Shape = BlankShape.Rectangular, DimA = 25,  DimB = 13 },
+            new BlankSpec { Code = "8842",  Shape = BlankShape.Rectangular, DimA = 25.4, DimB = 12.7 }, // "25×13" nominal = 25,4×12,7mm real (Carlos, 2026-07-17)
             new BlankSpec { Code = "8843",  Shape = BlankShape.Rectangular, DimA = 38,  DimB = 16 },
             new BlankSpec { Code = "8844",  Shape = BlankShape.Rectangular, DimA = 50,  DimB = 19 },
-            new BlankSpec { Code = "11721", Shape = BlankShape.Rectangular, DimA = 102, DimB = 25 },
+            new BlankSpec { Code = "11721", Shape = BlankShape.Rectangular, DimA = 102, DimB = 25.4 }, // idem: "25" = 25,4mm real
         };
     }
 }

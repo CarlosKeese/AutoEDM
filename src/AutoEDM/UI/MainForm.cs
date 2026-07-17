@@ -178,7 +178,7 @@ namespace AutoEDM.UI
 
             _btnSurf = new Button
             {
-                Text = "🧩  Bloco sobre superfícies",
+                Text = "🧩  Criar Base",
                 Left = 1514, Top = 8, Width = 250, Height = 44,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left,
                 BackColor = Color.FromArgb(150, 90, 40),
@@ -371,7 +371,7 @@ namespace AutoEDM.UI
         }
 
         private void StartBlockOverSurfaces()
-            => RunOnSta("Bloco sobre superfícies...", (connector, app, doc) =>
+            => RunOnSta("Criar Base...", (connector, app, doc) =>
             {
                 int type = 0; try { type = (int)doc.Type; } catch { }
                 if (type != 1) // 1 = igPartDocument
@@ -379,10 +379,10 @@ namespace AutoEDM.UI
                     Log.Warn("Abra uma PEÇA (.par) ATIVA, com as faces de queima já copiadas nela (doc.Type != 1).");
                     return;
                 }
-                Log.Info("Bloco sobre superfícies (peça ativa, opções default; 1ª vez também loga o PROBE das APIs de superfície)...");
+                Log.Info("Criar Base (peça ativa, opções default; 1ª vez também loga o PROBE das APIs de superfície)...");
                 var res = new SurfaceBlockBuilder().Build(doc, new BlockOverSurfacesOptions());
-                Log.Info($"Concluído: bloco={res.BlockCreated}, faixa={res.BandCreated}, offset={res.SurfacesOffset}, " +
-                         $"unidas={res.SurfacesUnited}, ordenado={res.SwitchedToOrdered}, fixação={res.FixationApplied}, " +
+                Log.Info($"Concluído: bloco={res.BlockCreated}, faixa={res.BandCreated}, " +
+                         $"ordenado={res.SwitchedToOrdered}, fixação={res.FixationApplied}, " +
                          $"features criadas={res.CreatedFeatures.Count}. Revise no SE.");
             });
 

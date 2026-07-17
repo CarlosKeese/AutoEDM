@@ -43,6 +43,25 @@ namespace AutoEDM.Selection
             return false;
         }
 
+        /// <summary>
+        /// Bounding box de um CORPO/superfície inteiro (Body/CopySurface item), em mm — mesma
+        /// receita de <see cref="TryGetRangeMm"/> (Body.GetRange/GetExactRange têm a MESMA forma
+        /// [in,out] SAFEARRAY(double)×2, confirmada no dump). REDE DE SEGURANÇA (achado
+        /// 2026-07-17): o bbox por-FACE perde qualquer face cujo GetRange/GetExactRange/Vertices
+        /// falhem TODOS (visto numa face curva sem propriedade Vertices) — isso subestimou o topo
+        /// Z de uma superfície com calota/nariz arredondado (a face de referência da faixa saiu
+        /// 0,2mm DENTRO da geometria real). O bbox do CORPO inteiro não depende de nenhuma face
+        /// individual, então é usado para EXPANDIR (nunca encolher) o bbox por-face.
+        /// </summary>
+        public static bool TryGetBodyRangeMm(object comBody, out double[] minMm, out double[] maxMm)
+        {
+            string err1 = null, err2 = null;
+            if (TryRange(comBody, "GetRange", out minMm, out maxMm, ref err1)) return true;
+            if (TryRange(comBody, "GetExactRange", out minMm, out maxMm, ref err2)) return true;
+            Log.Warn($"FaceGeometry (Body): range indisponível — GetRange: {err1} | GetExactRange: {err2}");
+            return false;
+        }
+
         private static bool TryRangeFromVertices(object comFace,
             out double[] minMm, out double[] maxMm, ref string error)
         {

@@ -7,10 +7,15 @@ using AutoEDM.Electrode;
 namespace AutoEDM.AddIn.UI
 {
     /// <summary>
-    /// Janela do botão "Bloco sobre superfícies" (ambiente de PEÇA). Configura os
-    /// parâmetros (material, base/blank, gap, altura, fixação), mostra um resumo ao
-    /// vivo (pegada + bloco escolhido) e permite PREVIEW: constrói de verdade e, ao
-    /// re-visualizar ou cancelar, apaga a geometria do preview anterior.
+    /// Janela do botão "Criar Base" (ambiente de PEÇA). Configura os parâmetros (material,
+    /// base/blank, gap, altura, fixação), mostra um resumo ao vivo (pegada + bloco escolhido)
+    /// e permite PREVIEW: constrói de verdade e, ao re-visualizar ou cancelar, apaga a
+    /// geometria do preview anterior.
+    ///
+    /// SEM GAP/offset por cor (Carlos, 2026-07-17): as superfícies copiadas na peça NÃO
+    /// carregam a cor original de queima, então detectar Ra por cor aqui não funciona — essa
+    /// folga entra depois, no botão "Unir superfícies" (sobre o sólido já unido, em modelagem
+    /// ORDENADA). Ver [[autoedm-decisions]].
     ///
     /// Roda na thread STA do Solid Edge (a ribbon abre esta janela modal), então as
     /// chamadas COM do <see cref="SurfaceBlockBuilder"/> acontecem no contexto certo —
@@ -28,7 +33,6 @@ namespace AutoEDM.AddIn.UI
         private NumericUpDown _numHeight;
         private CheckBox _chkFix;
         private CheckBox _chkBand;
-        private CheckBox _chkOffset;
         private TextBox _txtSummary;
         private Button _btnPreview, _btnOk, _btnCancel;
         private readonly ToolTip _tips = new ToolTip();
@@ -58,11 +62,11 @@ namespace AutoEDM.AddIn.UI
 
         private void BuildUi()
         {
-            Text = "AutoEDM — Bloco sobre superfícies";
+            Text = "AutoEDM — Criar Base";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false; MinimizeBox = false;
-            ClientSize = new Size(440, 420);
+            ClientSize = new Size(440, 386);
             Font = new Font("Segoe UI", 9f);
 
             int lx = 14, cx = 150, cw = 270, y = 16, dy = 34;
@@ -83,9 +87,9 @@ namespace AutoEDM.AddIn.UI
             y += dy;
 
             AddLabel("Afastamento (mm):", lx, y + 3);
-            _numGap = new NumericUpDown { Left = cx, Top = y, Width = 90, DecimalPlaces = 1, Increment = 0.5M, Minimum = 0, Maximum = 100, Value = 1M };
+            _numGap = new NumericUpDown { Left = cx, Top = y, Width = 90, DecimalPlaces = 1, Increment = 0.5M, Minimum = 0, Maximum = 100, Value = 0M };
             _numGap.ValueChanged += (s, e) => { if (!_loading) UpdateSummary(); };
-            _tips.SetToolTip(_numGap, "Afastamento vertical entre a base do bloco e o topo das superfícies de queima (mm).");
+            _tips.SetToolTip(_numGap, "Afastamento vertical entre a base do bloco e o topo das superfícies de queima (mm). Default 0 — a base toca a superfície, pronta p/ unir sem precisar estender.");
             Controls.Add(_numGap);
             y += dy;
 
@@ -99,16 +103,10 @@ namespace AutoEDM.AddIn.UI
             Controls.Add(_chkFix);
             y += dy;
 
-            _chkBand = new CheckBox { Left = cx, Top = y, Width = cw, Text = "Faixa de medição (5 mm + chanfro)", Checked = true };
-            _tips.SetToolTip(_chkBand, "Degrau de medição um pouco menor que o bloco, 5 mm de altura, com chanfro 1×45° no canto X+ Y− (orientação). Fica ENTRE o afastamento e o bloco (o bloco parte do topo da faixa).");
+            _chkBand = new CheckBox { Left = cx, Top = y, Width = cw, Text = "Faixa de medição (5 mm + orientação)", Checked = true };
+            _tips.SetToolTip(_chkBand, "Degrau de medição um pouco menor que o bloco, 5 mm de altura, com uma referência de orientação (chanfro 1×45° no canto X+ Y− p/ blank QUAD/RET; flat em Y− p/ blank REDONDO). Fica ENTRE o afastamento e o bloco (o bloco parte do topo da faixa).");
             _chkBand.CheckedChanged += (s, e) => { if (!_loading) UpdateSummary(); };
             Controls.Add(_chkBand);
-            y += dy;
-
-            _chkOffset = new CheckBox { Left = cx, Top = y, Width = cw, Text = "Offset por cor (folga de faísca)", Checked = true };
-            _tips.SetToolTip(_chkOffset, "Aplica a folga de faísca nas faces de queima conforme a cor (Ra→folga: 0,8→0,05; 1,6→0,10; 3,2→0,20; 6,3→0,30 mm). O eletrodo encolhe.");
-            _chkOffset.CheckedChanged += (s, e) => { if (!_loading) UpdateSummary(); };
-            Controls.Add(_chkOffset);
             y += dy;
 
             _txtSummary = new TextBox
@@ -149,7 +147,6 @@ namespace AutoEDM.AddIn.UI
                 BlockHeightMm = (double)_numHeight.Value,
                 ApplyFixation = _chkFix.Checked,
                 AddMeasurementBand = _chkBand.Checked,
-                ApplyColorOffset = _chkOffset.Checked,
             };
         }
 
@@ -257,7 +254,7 @@ namespace AutoEDM.AddIn.UI
 
         private void ShowError(string what, Exception ex)
         {
-            Log.Error($"Falha ao {what} (bloco sobre superfícies).", ex);
+            Log.Error($"Falha ao {what} (Criar Base).", ex);
             MessageBox.Show(this, ex.GetBaseException().Message, "AutoEDM — erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }

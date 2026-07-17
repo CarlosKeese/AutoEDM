@@ -55,6 +55,19 @@ Reference impl in AutoEDM: `ComDiagnostics.DumpTypeLibraries(outPath, seeds)` +
 `ModelingProbe.DumpSdk`. Output is a `.txt` — **grep it, never load it wholesale
 into context.** This is what replaces the expensive one-method-per-run discovery loop.
 
+**(2026-07-17) `DumpTypeLibraries` is now CUMULATIVE, not one-shot-overwrite.** If `outPath`
+already exists, it reads the lib GUIDs already dumped (from a `[guid]` marker in each section's
+header) and **appends only the new ones** — reruns from different seeds (or different sessions)
+never lose libs already captured. This is also wired transparently into the live-object dump:
+every `DumpObject`/"Inspect selection" click harvests the typelib of every object it touches into
+`%LOCALAPPDATA%\AutoEDM\logs\SE_API_dump_<version>.txt` (see `HarvestTypeLibs`/`ResolveDumpPath`).
+Practical effect: `SolidEdgeGeometry`/`SolidEdgeAssembly` — which the one-shot `ModelingProbe`
+seeds never reliably reached — fill in naturally the moment the human selects any live Face,
+Edge, or Occurrence and clicks "Inspect selection." No need to re-run a big seeded probe once
+this is accumulating. `tools/generate_api_docs.py` auto-discovers the newest
+`SE_API_dump_*.txt` between `%LOCALAPPDATA%\AutoEDM\logs` and the old `bin/Debug` location (or
+takes an explicit path as `argv[1]`).
+
 Emit **parameter types and direction**, not just names — read each param's
 `ELEMDESC` (`FUNCDESC.lprgelemdescParam`) for the `TYPEDESC` (resolve `VT_PTR` → `*`,
 `VT_SAFEARRAY` → `SAFEARRAY(...)`, `VT_USERDEFINED` via `GetRefTypeInfo`) and
@@ -129,21 +142,37 @@ shows more) — when they do, **the dump wins**.
 ## Live object dump ("Solid Edge Spy", home-grown)
 
 `ComDiagnostics` already does the `IDispatch → ITypeInfo → ITypeLib` walk that Solid Edge Spy
-does. `DumpObject(label, comObj, maxDepth)` goes further: it lists a live object's **property
-values** (safe-getting each member, skipping methods) and recurses into child COM objects — so
-you **reverse-engineer the API from a real feature the human built by hand.** Workflow that
-beats guessing: have the human create the feature the right way in SE (a hole, a surface copy,
-an offset), **select it**, and dump the selection (`doc.SelectSet.Item(i)`). The dump reveals
-the exact type, the collection it lives in, and every property (e.g. a `Hole` feature exposes
+does. `DumpObject(label, comObj, maxDepth)` lists a live object's **property values**
+(safe-getting each 0-arg getter) AND recurses into child COM objects — so you
+**reverse-engineer the API from a real feature the human built by hand.** Workflow that beats
+guessing: have the human create the feature the right way in SE (a hole, a surface copy, an
+offset), **select it**, and dump the selection (`doc.SelectSet.Item(i)`). The dump reveals the
+exact type, the collection it lives in, and every property (e.g. a `Hole` feature exposes
 `HoleData` with `HoleType=33, HoleDiameter, Depth`; its `.Parent` Model exposes the whole
-boolean/extend family). Depth-1 shows child-collection **names** (they log as "COM;
-max-depth") — bump depth or reflect the interop to get their `Add` signatures. Wire it to a
-ribbon button ("Inspect selection") for a zero-friction discovery loop.
+boolean/extend family). Wire it to a ribbon button ("Inspect selection") for a zero-friction
+discovery loop.
+
+**(2026-07-17 upgrade — read this before assuming the old "skips methods" behavior.)** The dump
+used to silently drop anything that wasn't a 0-arg getter (every method, every indexed
+property). It no longer does:
+- Every member is classified via one `ITypeInfo` walk (`GetMemberSchema`, shared with
+  `LogSignatures`): 0-arg getters print `name = value` as before; **methods print a full
+  signature line** (`métodos: AddSync(...) -> ret; ...`); **indexed getters/setters print a
+  signature too** instead of vanishing. This is what turns one SPY click into "here's the exact
+  call to make," not just "here's a value."
+- **Collections (anything with a 0-arg `Count` + an `Item`) auto-expand** instead of logging as
+  opaque "COM; max-depth" — it prints `Count` and dumps the first 5 items (`maxItems`) at
+  `depth+1`. Depth-1 now genuinely shows child-collection **contents**, not just names — bump
+  `maxDepth` only if you need grandchildren.
+- **Every object touched during a dump — including navigation members that don't recurse — now
+  also feeds the persistent, cumulative type-library dump** (see below). A single "Inspect
+  selection" click both answers "what does this look like right now" and permanently grows the
+  offline SDK map.
 
 - **Skip the navigation members when recursing** (`Application`, `Parent`, `Document`,
   `Documents`, `ActiveDocument`) — otherwise depth≥1 dumps the entire SE application object
-  (~250 noise lines per selection). Skipping them keeps the dump to the object's own props +
-  useful direct children.
+  (~250 noise lines per selection). Skipping them keeps the VALUE dump to the object's own props
+  + useful direct children (they still get harvested into the typelib map, just not recursed).
 - **Dumping ONE feature reveals the WHOLE feature tree for free.** Because `.Parent`/model
   back-references chain through every feature, a depth-1 dump of a single selected feature logs
   each sibling feature's `Name`/`DisplayName`/`EdgebarName`/`Type` — so selecting the *last*
@@ -167,15 +196,70 @@ by SPY 2026-07-16).** The human's steps and the exact features they create (feat
    `Constructions.StitchSurfaces.Add(nSurf, ref Array surfaces, Heal, Tolerance)`.
 3. **Extend the rim in Z** up to the block — "Estender Superfície" (`Extend Surface_1`,
    Type −1575914081, sync). (A real feature even though `Model.ExtendSurfaces` isn't reachable by
-   late-binding — find its true collection.)
-4. **Move the top face onto the block** — "Afastar/Deslocar Face" (`Offset_1`, Type 1180468550,
-   **ordered**) = `Model.FaceMoves.Add(...)` moving the face **to a KEYPOINT** on the block
-   (`FaceOffsetType=1`, `AlongOrReverseVector=20`, `AlongOrReverseDirectionToKeyPoint=44`,
-   `DistanceFromKeyPoint=0`). The alternative to steps 3–4 is one `RedefineFaces`/thicken.
+   late-binding — find its true collection.) **Not observed in the 2026-07-17 recording** (the
+   human's block, built by the AutoEDM tool itself, ended up in the SAME solid body as the
+   stitched surface with no separate union/extend feature in between — `Models.Count` went 0→1
+   as a single "Design Model" body).
+
+   **ANSWERED (Carlos, same day):** there IS an "attach surface to solid" command, but **it
+   creates NO feature-tree entry at all** — it applies the surface directly onto the solid
+   without a registered feature, which is exactly why the Gravador (a feature-tree collection
+   diff) never captured it. When that command doesn't work, the human falls back to **"União"**
+   (`Model.Unions.Add`, signature already confirmed below), which DOES register a feature.
+   **Automation consequence: don't try to reproduce "anexar" — it's not a feature, there's
+   nothing to call. Go straight for `Unions.Add` after extending the open edges to the block.**
+   General COM lesson: not every visible modeling action in the SE UI creates a tree feature —
+   some apply geometry directly with no record, so a feature-tree-based recorder (like the
+   Gravador) will show a false "nothing changed" for those specific actions even though the
+   model visibly did change. If a diff shows no new feature but the geometry clearly changed,
+   suspect a non-feature action before assuming the recorder missed something.
+4. **Offset the burn surface by GAP** — "Afastar/Deslocar Face" (`Offset_N`, Type 1180468550,
+   **ordered** — `ModelingMode` flips 1→2 right before this step). **CORRECTED 2026-07-17 (was
+   wrongly attributed to `Model.FaceMoves` on 2026-07-16 — the Gravador's per-collection diff now
+   names the collection unambiguously):** it's **`Model.FaceOffsets`**, confirmed live +
+   confirmed from the typelib dump (now capturing `SolidEdgeGeometry` live too — see below):
+   ```
+   Model.FaceOffsets.Add(FacesToOffset: IDispatch, BlendRecreation: FeaturePropertyConstants,
+       AlongOrReverseVector: FeaturePropertyConstants, offsetDistance: double,
+       ToReferenceEntity: IDispatch, ToKeyPoint: IDispatch, DistanceFromKeyPoint: double,
+       AlongOrReverseDirectionToKeyPoint: FeaturePropertyConstants) -> FaceOffset  [8 params]
+   Model.FaceOffsets.AddEx(NumFaces: int, FacesToBeOffset: SAFEARRAY(IDispatch),
+       FaceOffsetType: FaceOffsetConstants, NumOfLiveRules: int, LiveRules: SAFEARRAY(...),
+       LiveRulesOnOff: SAFEARRAY(bool), BlendRecreation: FeaturePropertyConstants,
+       AlongOrReverseVector: FeaturePropertyConstants, offsetDistance: double,
+       ToReferenceEntity: IDispatch, ToKeyPoint: IDispatch, DistanceFromKeyPoint: double,
+       AlongOrReverseDirectionToKeyPoint: FeaturePropertyConstants) -> FaceOffset  [13 params]
+   ```
+   Live example decoded (24 faces offset at once → use `AddEx`, not `Add`, for the whole burn
+   surface): `FaceOffsetType=1` (`igFaceOffsetBySynchronousOffset`), `AlongOrReverseVector=20`
+   (`igNormal` — offsets along the face normal), `AlongOrReverseDirectionToKeyPoint=44`
+   (`igNone` — no keypoint target, so `ToReferenceEntity`/`ToKeyPoint` are null), `offsetDistance
+   = -5E-05` (meters = **−0,05 mm, NEGATIVE = shrink inward** — matches the known "electrode
+   SHRINKS" rule, [[electrode-anatomy]]/[[autoedm-decisions]] Ra→offset table), `FaceOffsetBlendType=194`
+   (`igIgnoreBlends`). This is the concrete call to automate the GAP-offset step.
 
 To find WHICH open edges bound each X,Y gap, note `edge.Faces.Count` is **not readable by late
 binding** here (returns nothing) — get boundary edges another way (per-face `Loops`, or the
 surface's laminar-edge query) rather than counting adjacent faces.
+
+**Real workflow clarified (Carlos, 2026-07-17) — Inter-Part Copy DOES work, but only in-context.**
+The human creates the electrode as a new part **in the assembly**, then edits it **in-context**
+(in-place, `AssemblyDocument.ModelingInAssembly`-style) — that in-context mode is what makes
+Inter-Part Copy possible (a bare `.par` opened standalone can't do it, matching the earlier
+"Inter-Part Copy blocked" finding — it's blocked OUTSIDE in-context, not always). Sequence: copy
+the burn surfaces via Inter-Part Copy → **"quebrar" (break)** to unlink them from the source part
+→ treat/close/stitch the surfaces → generate the block (the human uses the AutoEDM "Criar Base"
+button for this part, renamed 2026-07-17 from "Bloco sobre superfícies" — GAP/color-offset logic
+was stripped from it, see `autoedm-decisions` memory) → attach surface to block (non-feature
+action, or fall back to União — see above) → switch to
+**Ordered** modeling → add the GAP offset (`Model.FaceOffsets`, above) → exit in-context edit back
+to the assembly. `Application.ActiveDocument` reports the electrode **part** (`Type=1`) the whole
+time it's in-context — the Gravador's "Iniciar leitura"/"Gravar log" clicks must both land while
+that part window still has focus (see the recorder-robustness note in `autoedm-decisions` memory
+about `ConfirmDocParaGravacao` — it only warns when the doc ISN'T a part, not when it's the WRONG
+part; a first attempt this same day accidentally snapshotted the master/cavity part instead of the
+electrode because "Iniciar leitura" was clicked too early, before entering the electrode's
+in-context edit).
 
 ## Confirmed facts (SE 2023, v223.00.13.05) — verify against the dump for other versions
 
@@ -278,11 +362,39 @@ the live object** (`ComDiagnostics.LogMembers`/`DumpObject`) before you build on
 | Op | Real call |
 |---|---|
 | Thicken a surface's faces into a solid | `partDoc.Models.AddThickenFeature(Side FeaturePropertyConstants, offset double, nFaces int, Faces SAFEARRAY(IDispatch)) → Model` |
-| Boolean unite bodies | `Model.Unions.Add(nTargets, TargetArray SAFEARRAY(IDispatch), nTools, ToolsArray SAFEARRAY(IDispatch), SETargetDesignBodyOption, SETargetConstructionBodyOption)` (igCreateSingleDesignBodyOnNonManifold=2, igCreateSingleConstructionGeneralBody=1) |
+| Boolean unite bodies | `Model.Unions.Add(nTargets, TargetArray SAFEARRAY(IDispatch), nTools, ToolsArray SAFEARRAY(IDispatch), SETargetDesignBodyOption, SETargetConstructionBodyOption)` (igCreateSingleDesignBodyOnNonManifold=2, igCreateSingleConstructionGeneralBody=1; both enums also have a `0` = igCreateMultiple…OnNonManifoldOption — safer default, doesn't fail the op on a non-manifold result). Target/tool array elements are `SolidEdgeGeometry.Body` (a `Body`, not a `Model` — get it via `model.Body`), typed as `SolidEdgeGeometry.Body[]`. **`Unions` IS in the stale PIA** (unlike `FaceOffsets.AddEx`, below) — `(SolidEdgePart.Unions)model.Unions` compiles, and tlbimp generated its SAFEARRAY params as `ref Array` (not a plain array) — pass `ref targets, ref tools`. |
 | Boolean subtract (also a hole workaround) | `Model.Subtracts.Add(nTargets, TargetArray, nTools, ToolsArray, DirectionArray SAFEARRAY(SESubtractDirection), targetOpt, constrOpt)` |
 | Boolean intersect | `Model.Intersects.Add(nTargets, TargetArray, nTools, ToolsArray, targetOpt, constrOpt)` |
 | Redefine/replace solid faces with a surface | `Model.RedefineFaces.Add(nFaces, [in,out] FacesArray, nEdges, [in,out] NonLaminarEdgesArray, [in,out] TangencyTypeArray, FaceMerge SurfaceByBoundaryPatchTopology, ReplaceFacesOnSolidBody bool) → RedefineFace` |
 | Also present on the Model | `ReplaceFaces, Thickens, TrimExtendCollection, FaceOffsets, BlankSurfaces, Threads, Holes, Rounds, Chamfers` (no ExtendSurfaces/IntersectSurfaces) |
+
+**The stale PIA can have the COCLASS but be missing individual LIVE methods — check
+per-method, not just per-type** (found 2026-07-17: `SolidEdgePart.FaceOffsets` exists in
+this project's referenced `Interop.SolidEdge.dll` — a real, castable type — but that type
+only has the old 8-param `Add`; **`AddEx` (13-param, multi-face) is simply absent**, because
+the referenced interop was generated from an older SE SDK than what's installed. Casting to
+`(SolidEdgePart.FaceOffsets)x` compiles fine and `.Add(...)` works — it's only when you reach
+for `.AddEx` that you'd get a compile error "does not contain a definition." The fix is the
+same one used everywhere else in this skill for members the PIA doesn't know about: call it
+via `obj.GetType().InvokeMember("AddEx", BindingFlags.InvokeMethod, null, obj, args)` on the
+raw `object`/`__ComObject`, passing the typed SAFEARRAY as a **plain array element** in
+`args` (no `ref`, no `ParameterModifier` — those are only needed for true `[out]`/`[in,out]`
+params; a pure `[in]` SAFEARRAY(IDispatch) marshals fine as a normal arg through
+`IDispatch::Invoke`, same as `AddFiniteExtrudedProtrusion`'s profile array elsewhere in this
+skill).
+
+**Quick way to check whether a method exists in the referenced interop DLL before writing
+code that assumes it does** (avoids a build-time surprise or a wrongly-guessed `InvokeMember`
+call for something that was reachable directly all along):
+```powershell
+$asm = [System.Reflection.Assembly]::LoadFrom("path\to\Interop.SolidEdge.dll")
+$t = $asm.GetType("SolidEdgePart.FaceOffsets")
+$t.GetMethods() | Select-Object Name   # AddEx present? Add only?
+$t.GetMethod("Add").GetParameters() | % { "$($_.ParameterType) $($_.Name)" }  # ref Array or plain Array?
+```
+This also answers the "does this SAFEARRAY param need `ref`" question directly (tlbimp
+sometimes emits `ref Array` for params the IDL just calls `SAFEARRAY(...)*` with no
+`[out]`/`[in,out]` tag) — cheaper than guessing and hitting a runtime marshaling error.
 
 Stitch/offset/copy are on **`Constructions`** (also live-confirmed): `CopySurfaces.Add(nFaces,
 FaceArray, [opt]InternalBoundary, [opt]ExternalBoundary) → CopySurface`; `StitchSurfaces.Add(
@@ -423,6 +535,18 @@ E_FAIL/poison cascade). Three gotchas that each looked like "the thread doesn't 
      igRegularThread (164)`** (the API equivalent of the "Rosca" checkbox in the Hole dialog;
      `igNone=44` = no thread). With correct data but `ThreadSetting` unset, the hole has all the
      M6 numbers but shows as a plain drilled hole. This is the last mile people miss.
+  4. **`ThreadSetting=igRegularThread` alone is COSMETIC ONLY — it does not cut the real
+     helical geometry** (confirmed 2026-07-17: a real UI-made tapped hole had
+     `ThreadSetting=164` yet `Hole.CreatePhysicalThread = False`, and Carlos visually
+     confirmed that hole was NOT actually threaded in the solid). The `Model.Holes` feature
+     (and `Model.Threads` feature) exposes its own separate bool property
+     **`CreatePhysicalThread`** plus a method
+     `CreatePhysicalThreadAndReturnStatus(CreatePhysicalThread: bool, [out]
+     enumPhysicalThreadErrorCode: PhysicalThreadErrorCode*) -> void`. To get a solid with a
+     real machined thread (what EDM/manufacturing needs, as opposed to a drawing-callout
+     thread), call `hole.CreatePhysicalThreadAndReturnStatus(true, out status)` after the
+     hole is created — this is the untested missing step for the M6 fixation hole. Not yet
+     wired into `BlankModeler`/`BlankBoxProbe` — next recording session should validate it.
 `HoleDataCollection.Add` has **21 params** (authored docs claiming 7 are wrong — the live dump
 wins): `(HoleType, HoleDiameter, [CounterboreDiameter], [CounterboreDepth], [CountersinkDiameter],
 [CountersinkAngle], [BottomAngle], [TreatmentType], [TaperMethod], [Taper], [ThreadMinorDiameter],
@@ -456,6 +580,19 @@ build the AABB from boundary points. If the object **isn't actually a `Face`** (
 surface body or edge picked up from a user `SelectSet`), `GetRange`/`GetExactRange` throw
 `DISP_E_UNKNOWNNAME (0x80020006)` and `.Vertices` is absent — so guard the read and skip
 non-faces (or descend into `item.Faces[igQueryAll]` when the item is a body/surface).
+
+**A per-face bbox loop can silently UNDERSHOOT — even on a genuine Face** (found
+2026-07-17, AutoEDM). A curved/blend face threw `DISP_E_UNKNOWNNAME` on **both**
+`GetRange` and `GetExactRange`, **and had no `Vertices` property at all** (all 3 fallbacks
+failed on that one face). Code that skips failed faces when accumulating a bounding box
+(`if (TryGetRangeMm(f, ...)) { merge } ` with a silent `continue` otherwise) then computes a
+bbox that's **too small if the skipped face happened to be the extreme one** (e.g. the apex
+of a domed/rounded cap) — no exception, no obviously-wrong number, just a plausible-looking
+box that's short by however much that face stuck out. **Fix: don't trust the per-face loop
+alone — also read the parent BODY's own `GetRange`/`GetExactRange`** (same by-ref SAFEARRAY
+shape, works on `Body`/`CopySurface` items too, confirmed live) and **expand** (never shrink)
+the per-face box with it. The body-level range doesn't depend on any single face succeeding,
+so it catches what individual faces silently drop.
 
 **Positioning a part by mates (alternative to `PutOrigin`).** When an exact origin isn't
 enough, constrain the occurrence: `Ref = AssemblyDocument.CreateReference(Occurrence, Face)`

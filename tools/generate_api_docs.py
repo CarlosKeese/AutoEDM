@@ -8,25 +8,60 @@ Parseia o dump da type library do Solid Edge gerado por AutoEDM.Core.Com.ComDiag
 `docs/api/`.
 
 Uso:
-    python tools/generate_api_docs.py
+    python tools/generate_api_docs.py [caminho/para/SE_API_dump_X.txt]
+
+Sem argumento, procura o dump mais recente em %LOCALAPPDATA%\\AutoEDM\\logs (o dump
+CUMULATIVO do add-in, que cresce a cada "Inspecionar seleção" no SE) e em
+src/AutoEDM/bin/Debug/net472/logs (a GUI de debug).
 """
 
-import re
 import os
+import re
 import sys
 from pathlib import Path
 from collections import defaultdict
 
 # Diretórios base (relativo à raiz do projeto)
 ROOT = Path(__file__).resolve().parent.parent
-DUMP_PATH = ROOT / "src" / "AutoEDM" / "bin" / "Debug" / "net472" / "logs" / "SE_API_dump_223.00.13.05.txt"
 OUT_DIR = ROOT / "docs" / "api"
 
-# Regexes
-RE_TYPELIB = re.compile(r"^########## TYPELIB\s+(.+?)\s+—\s+(\d+)\s+tipo\(s\)\s+##########$")
+# Regexes. O cabeçalho de cada lib ganhou um "[guid]" opcional (ComDiagnostics 2026-07-17,
+# dump virou CUMULATIVO — o guid é o que permite o merge detectar lib já conhecida); o
+# grupo de nome é non-greedy e o "[...]" é opcional, então dumps antigos (sem guid) também
+# continuam parseando.
+RE_TYPELIB = re.compile(r"^########## TYPELIB\s+(.+?)(?:\s+\[[0-9a-fA-F-]{36}\])?\s+—\s+(\d+)\s+tipo\(s\)\s+##########$")
 RE_TYPE = re.compile(r"^\[TKIND_(\w+)\s+(.+?)\]$")
 RE_ENUM_MEMBER = re.compile(r"^\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$")
 RE_METHOD = re.compile(r"^\s+(.+?)\s*\((.*)\)\s*(?:->\s*(.+?))?\s*\[(\d+)\s+params\]$")
+
+
+def find_dump_path() -> Path:
+    """Acha o dump mais recente a usar. Prioridade: (1) caminho passado na linha de
+    comando; (2) o dump CUMULATIVO do add-in em %LOCALAPPDATA%\\AutoEDM\\logs — cresce a
+    cada clique em "Inspecionar seleção" no SE, é normalmente o mais completo; (3) o dump
+    da GUI de debug em bin/Debug/net472/logs (herança da sonda ModelingProbe). Entre
+    candidatos, pega o mais RECENTE (mtime) — útil se houver dumps de versões diferentes
+    do SE."""
+    if len(sys.argv) > 1:
+        p = Path(sys.argv[1])
+        if p.exists():
+            return p
+        print(f"Aviso: caminho informado não existe, caindo para busca automática: {p}", file=sys.stderr)
+
+    search_dirs = [ROOT / "src" / "AutoEDM" / "bin" / "Debug" / "net472" / "logs"]
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        search_dirs.append(Path(local_appdata) / "AutoEDM" / "logs")
+
+    candidates = [p for d in search_dirs if d.exists() for p in d.glob("SE_API_dump_*.txt")]
+    if not candidates:
+        print(f"Erro: nenhum SE_API_dump_*.txt encontrado em {[str(d) for d in search_dirs]}", file=sys.stderr)
+        print("Gere um dump primeiro (rode o AutoEDM conectado ao SE e clique 'Inspecionar seleção', ou rode ModelingProbe).", file=sys.stderr)
+        sys.exit(1)
+    best = max(candidates, key=lambda p: p.stat().st_mtime)
+    if len(candidates) > 1:
+        print(f"{len(candidates)} dump(s) encontrado(s); usando o mais recente: {best}")
+    return best
 
 
 def parse_dump(path: Path):
@@ -260,8 +295,9 @@ def write_api_index(typelibs: list, out_path: Path):
 
 
 def main():
-    print(f"Lendo dump: {DUMP_PATH}")
-    typelibs = parse_dump(DUMP_PATH)
+    dump_path = find_dump_path()
+    print(f"Lendo dump: {dump_path}")
+    typelibs = parse_dump(dump_path)
     print(f"Type libraries encontradas: {len(typelibs)}")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

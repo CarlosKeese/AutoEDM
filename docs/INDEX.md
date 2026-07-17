@@ -59,24 +59,21 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 
 ## Fontes da verdade
 
-- **Dump da type library:** `src/AutoEDM/bin/Debug/net472/logs/SE_API_dump_223.00.13.05.txt`
-- **Interop tipado (todas as libs):** `Interop.SolidEdge.dll` (NuGet v219 = SE 2023) — reflita quando o dump não cobre (ex.: geometria).
-- **Geradores de documentação:** `tools/generate_api_docs.py` (do dump) · `tools/reflect_api_docs.ps1` (por reflexão do interop → Geometry/Assembly)
+- **Dump da type library (CUMULATIVO, 2026-07-17):** `%LOCALAPPDATA%\AutoEDM\logs\SE_API_dump_<versão>.txt` — cresce sozinho a cada clique em **"Inspecionar seleção"** no add-in (cada objeto tocado soma a lib dele ao arquivo, sem sobrescrever o que já foi capturado; dedup por GUID no cabeçalho `[guid]` de cada seção). É a fonte MAIS confiável para Geometry/Assembly: como vem de objeto AO VIVO (não de reflexão do interop), não lista tipos que o objeto real não expõe (ver `ComDiagnostics.HarvestTypeLibs`/`ResolveDumpPath`). O antigo `src/AutoEDM/bin/Debug/net472/logs/SE_API_dump_223.00.13.05.txt` (gerado por `ModelingProbe`, seeds fixos) continua existindo e também é lido pelo gerador.
+- **Interop tipado (todas as libs):** `Interop.SolidEdge.dll` (NuGet v219 = SE 2023) — reflita quando o dump ainda não cobrir algo; mas desconfie: a reflexão lista TIPOS declarados na typelib que o objeto VIVO pode não expor (memória do projeto, Log 2026-07-15).
+- **Geradores de documentação:** `tools/generate_api_docs.py` (do dump — agora acha sozinho o dump mais recente entre LOCALAPPDATA e bin/Debug, ou aceita um caminho explícito) · `tools/reflect_api_docs.ps1` (por reflexão do interop → Geometry/Assembly, só como fallback)
 - **Código-fonte:** `src/AutoEDM.Core/`, `src/AutoEDM.AddIn/`, `src/AutoEDM/`
 
 ## Convenções importantes
 
 - Toda a geometria COM usa **metros/radianos** internamente.
 - Coleções COM são **1-based** (`Item(1)` é o primeiro elemento).
-- O dump reflete a versão do Solid Edge **2023 (`223.00.13.05`)**. Para outras versões, reexecute `ComDiagnostics.DumpTypeLibraries` e regenere o catálogo com `tools/generate_api_docs.py`.
+- O dump cumulativo não tem uma "versão fixa" — cada `SE_API_dump_<versão>.txt` corresponde à versão do SE que gerou aquele arquivo (`Application.Version`); ao trocar de instalação do SE, um arquivo NOVO começa sozinho (nome diferente), sem misturar com o antigo.
 
 ## Como atualizar esta documentação
 
-1. Execute o AutoEDM para gerar um novo dump da type library (se necessário):
-   ```bash
-   # O dump é gerado automaticamente em src/AutoEDM/bin/Debug/net472/logs/SE_API_dump_<versão>.txt
-   ```
-2. Regenere o catálogo de API:
+1. No Solid Edge, com o add-in AutoEDM carregado: selecione features/faces/arestas variadas (quanto mais tipos diferentes de objeto — furo, superfície, ocorrência de montagem, face — melhor a cobertura) e clique **"Inspecionar seleção"** algumas vezes. Isso vai enchendo `%LOCALAPPDATA%\AutoEDM\logs\SE_API_dump_<versão>.txt` sozinho, sem precisar de nenhum passo manual extra.
+2. Regenere o catálogo de API (acha o dump mais recente automaticamente):
    ```bash
    python tools/generate_api_docs.py
    ```

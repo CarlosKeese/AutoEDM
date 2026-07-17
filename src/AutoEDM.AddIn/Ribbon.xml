@@ -32,9 +32,9 @@
               imageId="4" showLabel="true" />
     </group>
     <group name="Peça">
-      <button id="5" size="large" label="Bloco s/ superfícies"
-              screentip="Bloco sobre superfícies (ambiente de PEÇA)"
-              supertip="Na PEÇA aberta: cria o bloco no material mais próximo, com a FAIXA de medição (chanfro de orientação) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. O trabalho de superfície ficou no botão 'Unir superfícies'."
+      <button id="5" size="large" label="Criar Base"
+              screentip="Criar Base (ambiente de PEÇA)"
+              supertip="Na PEÇA aberta: cria a BASE (bloco no material mais próximo) com a FAIXA de medição (chanfro X+ Y− p/ QUAD/RET, ou flat em Y− p/ REDONDO) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. SEM gap/offset por cor aqui — a superfície copiada não carrega a cor original; isso e o trabalho de superfície entram no botão 'Unir superfícies'."
               imageId="1" showLabel="true" />
       <button id="7" size="large" label="Unir superfícies"
               screentip="Engrossar a queima e unir ao bloco (ambiente de PEÇA)"
@@ -44,7 +44,7 @@
     <group name="Diagnóstico">
       <button id="6" size="large" label="Inspecionar seleção"
               screentip="SPY: dumpa o objeto COM selecionado"
-              supertip="Selecione uma feature no SE (ex.: um furo ou uma superfície que você criou na mão) e clique: o log mostra o TIPO e todas as propriedades/valores do objeto COM — para descobrir a API real (furo síncrono, offset/stitch/unir) sem adivinhar."
+              supertip="Selecione uma feature no SE (ex.: um furo ou uma superfície que você criou na mão) e clique: o log mostra o TIPO, propriedades/valores, métodos e coleções expandidas do objeto COM — para descobrir a API real (furo síncrono, offset/stitch/unir) sem adivinhar. Cada clique também soma a type library do que foi selecionado ao mapa acumulado da API (SE_API_dump_&lt;versão&gt;.txt) — selecionar Faces/Edges/Ocorrências cobre partes do SDK que a sonda estática não alcançava."
               imageId="3" showLabel="true" />
       <button id="8" size="large" label="Iniciar leitura de ação manual"
               screentip="Gravador: snapshot ANTES da sua ação manual"

@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
+using System.Text.RegularExpressions;
 using AutoEDM.Diagnostics;
 
 namespace AutoEDM.Com
@@ -96,45 +97,207 @@ namespace AutoEDM.Com
             Log.Info($"[DIAG] {label} ({members.Count}): {string.Join(", ", members)}");
         }
 
+        /// <summary>Um membro (propriedade OU método) de um objeto COM, com o tipo de invocação e
+        /// a assinatura já formatada (via ITypeInfo) — a base para o SPY mostrar tanto VALORES
+        /// (propriedades sem parâmetro) quanto ASSINATURAS (métodos, indexadas, setters) numa
+        /// passada só, em vez de simplesmente pular tudo que não é uma getter de 0 args.</summary>
+        private struct ComMemberInfo
+        {
+            public string Name;
+            public System.Runtime.InteropServices.ComTypes.INVOKEKIND Kind;
+            public int ParamCount;
+            public string Signature;
+        }
+
+        /// <summary>Walk de ITypeInfo (mesma mecânica de <see cref="LogSignatures"/> e
+        /// <see cref="DumpTypeInfo"/>) que devolve TODO membro com tipo de invocação + assinatura
+        /// — inclusive métodos e propriedades indexadas, que <see cref="GetMemberNames"/> não
+        /// distingue (e o SPY antigo simplesmente descartava).</summary>
+        private static List<ComMemberInfo> GetMemberSchema(object comObject)
+        {
+            var result = new List<ComMemberInfo>();
+            if (comObject == null || !Marshal.IsComObject(comObject)) return result;
+
+            ITypeInfo ti = null;
+            try
+            {
+                var disp = comObject as IDispatchLite;
+                if (disp == null) return result;
+                if (disp.GetTypeInfoCount(out uint cnt) != 0 || cnt == 0) return result;
+                if (disp.GetTypeInfo(0, 0, out ti) != 0 || ti == null) return result;
+
+                IntPtr pAttr;
+                ti.GetTypeAttr(out pAttr);
+                int funcs;
+                try
+                {
+                    var attr = (System.Runtime.InteropServices.ComTypes.TYPEATTR)Marshal.PtrToStructure(pAttr, typeof(System.Runtime.InteropServices.ComTypes.TYPEATTR));
+                    funcs = attr.cFuncs;
+                }
+                finally { ti.ReleaseTypeAttr(pAttr); }
+
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < funcs; i++)
+                {
+                    IntPtr pFunc;
+                    ti.GetFuncDesc(i, out pFunc);
+                    try
+                    {
+                        var fd = (System.Runtime.InteropServices.ComTypes.FUNCDESC)Marshal.PtrToStructure(pFunc, typeof(System.Runtime.InteropServices.ComTypes.FUNCDESC));
+                        var buf = new string[64];
+                        int got;
+                        ti.GetNames(fd.memid, buf, buf.Length, out got);
+                        if (got == 0 || string.IsNullOrEmpty(buf[0])) continue;
+                        string name = buf[0];
+                        if (!seen.Add(name + "#" + fd.invkind)) continue; // dedup por (nome, invkind)
+
+                        int elemSize = Marshal.SizeOf(typeof(System.Runtime.InteropServices.ComTypes.ELEMDESC));
+                        bool hasElems = fd.lprgelemdescParam != IntPtr.Zero;
+                        var ps = new List<string>();
+                        for (int k = 0; k < fd.cParams; k++)
+                        {
+                            string pn = (k + 1 < got) ? buf[k + 1] : $"p{k}";
+                            if (!hasElems) { ps.Add(pn); continue; }
+                            string pt = "?", dir = "";
+                            try
+                            {
+                                IntPtr pElem = fd.lprgelemdescParam + k * elemSize;
+                                var ed = (System.Runtime.InteropServices.ComTypes.ELEMDESC)Marshal.PtrToStructure(pElem, typeof(System.Runtime.InteropServices.ComTypes.ELEMDESC));
+                                pt = TypeName(ti, ed.tdesc, 0);
+                                dir = ParamDir((short)ed.desc.paramdesc.wParamFlags);
+                            }
+                            catch { }
+                            ps.Add($"{dir}{pn}: {pt}");
+                        }
+                        string ret = "";
+                        try { ret = " -> " + TypeName(ti, fd.elemdescFunc.tdesc, 0); } catch { }
+                        string kindTag =
+                            fd.invkind == System.Runtime.InteropServices.ComTypes.INVOKEKIND.INVOKE_PROPERTYGET ? "get " :
+                            fd.invkind == System.Runtime.InteropServices.ComTypes.INVOKEKIND.INVOKE_PROPERTYPUT ? "put " :
+                            fd.invkind == System.Runtime.InteropServices.ComTypes.INVOKEKIND.INVOKE_PROPERTYPUTREF ? "putref " : "";
+                        result.Add(new ComMemberInfo
+                        {
+                            Name = name,
+                            Kind = fd.invkind,
+                            ParamCount = fd.cParams,
+                            Signature = $"{kindTag}{name}({string.Join(", ", ps)}){ret}"
+                        });
+                    }
+                    finally { ti.ReleaseFuncDesc(pFunc); }
+                }
+            }
+            catch { /* introspecção é best-effort */ }
+            finally { if (ti != null) Marshal.ReleaseComObject(ti); }
+
+            return result;
+        }
+
         /// <summary>
         /// "SPY" ao vivo: loga o TIPO e TODAS as propriedades (nome = VALOR) de um objeto COM,
-        /// recursando nos filhos que também são COM até <paramref name="maxDepth"/>. É a
-        /// versão genérica do <see cref="LogColorDiscovery"/> — a mesma ideia do Solid Edge
-        /// Spy (IDispatch→ITypeInfo), mas dirigida a UM objeto (ex.: uma feature de furo que o
-        /// usuário criou na mão), para descobrir a API real sem adivinhar. Best-effort: membros
-        /// que são MÉTODO (ou pedem args) são pulados; leituras que lançam são ignoradas.
+        /// as ASSINATURAS de todo método/propriedade-indexada/setter, e expande coleções (Count +
+        /// Item) em vez de tratá-las como opacas — recursando nos filhos que também são COM até
+        /// <paramref name="maxDepth"/>. É a versão genérica do <see cref="LogColorDiscovery"/> —
+        /// a mesma ideia do Solid Edge Spy (IDispatch→ITypeInfo), mas dirigida a UM objeto (ex.:
+        /// uma feature que o usuário criou na mão), para descobrir a API real sem adivinhar.
+        /// Como efeito colateral, TODO objeto visitado (inclusive os de navegação, que não
+        /// recursam) alimenta o dump acumulado do SDK (<see cref="HarvestTypeLibs"/>) — cada
+        /// clique no SPY também engorda o mapa persistente da API COM. Best-effort: leituras que
+        /// lançam são logadas (não escondidas) e nunca interrompem o dump.
         /// </summary>
         public static void DumpObject(string label, object comObject, int maxDepth = 1)
         {
             Log.Info($"[SPY] ===== {label} =====");
-            DumpObjectInner(comObject, maxDepth, 0);
+            var seeds = new List<object>();
+            DumpObjectInner(comObject, maxDepth, 0, seeds);
+            HarvestTypeLibs(seeds);
         }
 
-        private static void DumpObjectInner(object obj, int maxDepth, int depth)
+        private static void DumpObjectInner(object obj, int maxDepth, int depth, List<object> harvestSeeds, int maxItems = 5)
         {
             string pad = new string(' ', 2 + depth * 2);
             if (obj == null) { Log.Info($"[SPY]{pad}(null)"); return; }
             if (!Marshal.IsComObject(obj)) { Log.Info($"[SPY]{pad}= {obj} ({obj.GetType().Name})"); return; }
 
-            var members = GetMemberNames(obj);
-            Log.Info($"[SPY]{pad}COM: {{ {string.Join(", ", members)} }}");
-            foreach (var m in members)
+            harvestSeeds?.Add(obj);
+
+            var schema = GetMemberSchema(obj);
+            var names = schema.Select(m => m.Name).Distinct(StringComparer.OrdinalIgnoreCase)
+                               .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+            Log.Info($"[SPY]{pad}COM: {{ {string.Join(", ", names)} }}");
+
+            var getters = schema.Where(m => m.Kind == System.Runtime.InteropServices.ComTypes.INVOKEKIND.INVOKE_PROPERTYGET)
+                                 .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+
+            // Coleção (tem Count sem parâmetro + Item)? Expande os primeiros itens em vez de
+            // tratar como "profundidade máxima" — é onde vivem Faces/Edges/HoleData/features etc.
+            bool isCollection = getters.Any(m => m.Name.Equals("Count", StringComparison.OrdinalIgnoreCase) && m.ParamCount == 0)
+                              && names.Any(n => n.Equals("Item", StringComparison.OrdinalIgnoreCase));
+            if (isCollection)
             {
+                int count = 0;
+                try { count = (int)((dynamic)obj).Count; } catch { }
+                Log.Info($"[SPY]{pad}  Count = {count}");
+                if (count > 0)
+                {
+                    if (depth < maxDepth)
+                    {
+                        int shown = Math.Min(count, maxItems);
+                        for (int i = 1; i <= shown; i++)
+                        {
+                            object it;
+                            try { it = ((dynamic)obj).Item(i); }
+                            catch (Exception ex) { Log.Info($"[SPY]{pad}  Item({i}) -> (leitura falhou: {ex.GetBaseException().Message})"); continue; }
+                            Log.Info($"[SPY]{pad}  Item({i}) ->");
+                            DumpObjectInner(it, maxDepth, depth + 1, harvestSeeds, maxItems);
+                        }
+                        if (count > shown) Log.Info($"[SPY]{pad}  ... +{count - shown} item(ns) não mostrados (maxItems={maxItems})");
+                    }
+                    else Log.Info($"[SPY]{pad}  Item(i) -> (COM; profundidade máx.)");
+                }
+            }
+
+            foreach (var m in getters)
+            {
+                if (m.Name.Equals("Count", StringComparison.OrdinalIgnoreCase) || m.Name.Equals("Item", StringComparison.OrdinalIgnoreCase))
+                    continue; // já tratado acima quando é coleção
+                if (m.ParamCount > 0) { Log.Info($"[SPY]{pad}  {m.Signature}  (propriedade indexada — não lida automaticamente)"); continue; }
+
                 object val;
-                try { val = obj.GetType().InvokeMember(m, BindingFlags.GetProperty, null, obj, null); }
-                catch { continue; } // é método, ou pede argumentos — não é uma propriedade simples
-                if (val == null) { Log.Info($"[SPY]{pad}  {m} = null"); continue; }
+                try { val = obj.GetType().InvokeMember(m.Name, BindingFlags.GetProperty, null, obj, null); }
+                catch (Exception ex) { Log.Info($"[SPY]{pad}  {m.Name} (leitura falhou: {ex.GetBaseException().Message})"); continue; }
+
+                if (val == null) { Log.Info($"[SPY]{pad}  {m.Name} = null"); continue; }
                 if (Marshal.IsComObject(val))
                 {
                     // Não recursa em membros de NAVEGAÇÃO (poluem com a árvore inteira do SE) —
                     // só o objeto em si + seus filhos DIRETOS úteis interessam.
-                    bool noise = m == "Application" || m == "Parent" || m == "Document" ||
-                                 m == "Documents" || m == "ActiveDocument";
-                    if (depth < maxDepth && !noise) { Log.Info($"[SPY]{pad}  {m} ->"); DumpObjectInner(val, maxDepth, depth + 2); }
-                    else Log.Info($"[SPY]{pad}  {m} -> (COM{(noise ? "; navegação" : "; profundidade máx.")})");
+                    bool noise = m.Name == "Application" || m.Name == "Parent" || m.Name == "Document" ||
+                                 m.Name == "Documents" || m.Name == "ActiveDocument";
+                    if (depth < maxDepth && !noise)
+                    {
+                        Log.Info($"[SPY]{pad}  {m.Name} ->");
+                        DumpObjectInner(val, maxDepth, depth + 1, harvestSeeds, maxItems);
+                    }
+                    else
+                    {
+                        harvestSeeds?.Add(val); // não recursa, mas ainda alimenta o dump acumulado da lib
+                        Log.Info($"[SPY]{pad}  {m.Name} -> (COM{(noise ? "; navegação" : "; profundidade máx.")})");
+                    }
                 }
-                else Log.Info($"[SPY]{pad}  {m} = {val} ({val.GetType().Name})");
+                else Log.Info($"[SPY]{pad}  {m.Name} = {val} ({val.GetType().Name})");
             }
+
+            var methods = schema.Where(m => m.Kind == System.Runtime.InteropServices.ComTypes.INVOKEKIND.INVOKE_FUNC)
+                                 .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+            if (methods.Count > 0)
+                Log.Info($"[SPY]{pad}  métodos: {string.Join("; ", methods.Select(m => m.Signature))}");
+
+            var setters = schema.Where(m => m.Kind == System.Runtime.InteropServices.ComTypes.INVOKEKIND.INVOKE_PROPERTYPUT || m.Kind == System.Runtime.InteropServices.ComTypes.INVOKEKIND.INVOKE_PROPERTYPUTREF)
+                                 .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
+                                 .Where(m => !getters.Any(g => g.Name.Equals(m.Name, StringComparison.OrdinalIgnoreCase))) // já coberto (get+put)
+                                 .ToList();
+            if (setters.Count > 0)
+                Log.Info($"[SPY]{pad}  setters: {string.Join("; ", setters.Select(m => m.Signature))}");
         }
 
         // ===================== Gravador de ação manual (Carlos) ======================
@@ -363,23 +526,44 @@ namespace AutoEDM.Com
         /// Dumpa as type libraries que contêm os objetos COM dados (dedup por GUID)
         /// para <paramref name="outPath"/>. Cada objeto serve só para alcançar a lib
         /// dele; passe objetos de módulos diferentes do SE para cobrir tudo.
+        ///
+        /// CUMULATIVO: se <paramref name="outPath"/> já existe, os GUIDs de lib já
+        /// presentes (marcados no cabeçalho `[guid]` de cada seção) são lidos primeiro e o
+        /// arquivo é ABERTO EM APPEND — reexecutar (com os mesmos seeds ou outros, de outra
+        /// sessão) só ACRESCENTA libs novas, nunca perde o que já foi capturado. É o que
+        /// permite o dump crescer clique a clique via <see cref="HarvestTypeLibs"/> em vez de
+        /// depender de UMA sonda com seeds hardcoded cobrindo tudo de uma vez (o motivo de
+        /// SolidEdgeGeometry/SolidEdgeAssembly terem ficado de fora do dump original — os seeds
+        /// daquela sonda nunca alcançaram uma Face/Edge/Occurrence VIVA).
         /// </summary>
         public static void DumpTypeLibraries(string outPath, IEnumerable<object> seeds)
         {
             var seenLibs = new HashSet<Guid>();
-            int libCount = 0;
+            bool merging = File.Exists(outPath);
+            if (merging) foreach (var g in ReadKnownLibGuids(outPath)) seenLibs.Add(g);
+            int libsBefore = seenLibs.Count;
+            int newLibs = 0;
 
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath));
                 // AutoFlush: escreve incremental. Se a introspecção travar (ex.: AV
                 // em ponteiro COM), o que já saiu fica salvo em disco.
-                using (var w = new StreamWriter(outPath, false, new UTF8Encoding(false)) { AutoFlush = true })
+                using (var w = new StreamWriter(outPath, append: merging, new UTF8Encoding(false)) { AutoFlush = true })
                 {
-                    w.WriteLine("# Solid Edge COM type-library dump (AutoEDM ComDiagnostics)");
-                    w.WriteLine("# API de geometria = METROS. Coleções = 1-based.");
-                    w.WriteLine("# Formato: [TYPEKIND Nome] / método([dir]param: tipo, ...) -> ret [N params] / CONST = valor");
-                    w.WriteLine();
+                    if (!merging)
+                    {
+                        w.WriteLine("# Solid Edge COM type-library dump (AutoEDM ComDiagnostics)");
+                        w.WriteLine("# API de geometria = METROS. Coleções = 1-based.");
+                        w.WriteLine("# Formato: [TYPEKIND Nome] / método([dir]param: tipo, ...) -> ret [N params] / CONST = valor");
+                        w.WriteLine("# Dump CUMULATIVO: reexecutar só ACRESCENTA libs novas (não perde libs já capturadas antes).");
+                        w.WriteLine();
+                    }
+                    else
+                    {
+                        w.WriteLine();
+                        w.WriteLine($"# ----- merge em {DateTime.Now:yyyy-MM-dd HH:mm:ss} ({libsBefore} lib(s) já conhecida(s) antes deste run) -----");
+                    }
 
                     foreach (var seed in seeds)
                     {
@@ -396,9 +580,9 @@ namespace AutoEDM.Com
                             if (lib == null) continue;
 
                             Guid guid = GetLibGuid(lib, out string libName);
-                            if (!seenLibs.Add(guid)) continue; // lib já dumpada por outro seed
-                            DumpOneLib(lib, libName, w);
-                            libCount++;
+                            if (!seenLibs.Add(guid)) continue; // lib já dumpada por outro seed (neste run ou num anterior)
+                            DumpOneLib(lib, libName, guid, w);
+                            newLibs++;
                         }
                         catch (Exception ex) { w.WriteLine($"# ERRO em seed: {ex.Message}"); }
                         finally
@@ -408,12 +592,72 @@ namespace AutoEDM.Com
                         }
                     }
                 }
-                Log.Info($"Typelib dump: {libCount} lib(s) -> {outPath}");
+                Log.Info($"Typelib dump: +{newLibs} lib(s) nova(s), {seenLibs.Count} total -> {outPath}");
             }
             catch (Exception ex)
             {
                 Log.Error($"Falha ao gravar o dump em {outPath}.", ex);
             }
+        }
+
+        /// <summary>Lê os GUIDs de type library já presentes num dump anterior (cabeçalho
+        /// `[guid]`), para o merge não duplicar seções. Dumps antigos (sem `[guid]` no
+        /// cabeçalho) não contribuem nenhum GUID — suas libs são re-dumpadas de novo, o que é
+        /// inofensivo (só duplica a seção, não quebra nada). Nunca lança.</summary>
+        private static List<Guid> ReadKnownLibGuids(string path)
+        {
+            var result = new List<Guid>();
+            var rx = new Regex(@"^##########\s+TYPELIB\s+.+?\s+\[([0-9a-fA-F-]{36})\]");
+            try
+            {
+                foreach (var line in File.ReadLines(path))
+                {
+                    var m = rx.Match(line);
+                    if (m.Success && Guid.TryParse(m.Groups[1].Value, out var g)) result.Add(g);
+                }
+            }
+            catch { /* dump ilegível/ausente — trata como se nenhuma lib fosse conhecida ainda */ }
+            return result;
+        }
+
+        /// <summary>Soma os objetos visitados pelo SPY (<see cref="DumpObject"/>) — e as type
+        /// libraries que eles alcançam — ao dump acumulado do SDK em
+        /// `%LOCALAPPDATA%\AutoEDM\logs\SE_API_dump_&lt;versão&gt;.txt`, sem o chamador precisar
+        /// saber caminho nem versão do SE. Cada clique em "Inspecionar seleção" (ou feature nova
+        /// pega pelo Gravador) tende a alcançar UMA lib diferente da já coberta pelas sondas
+        /// estáticas (Geometry via uma Face, Assembly via uma Occurrence, ...) — é assim que o
+        /// mapa cresce até cobrir tudo que o Carlos realmente usa. Best-effort: nunca lança.</summary>
+        private static void HarvestTypeLibs(List<object> seeds)
+        {
+            if (seeds == null || seeds.Count == 0) return;
+            try
+            {
+                string path = ResolveDumpPath(seeds);
+                if (path == null) return;
+                DumpTypeLibraries(path, seeds);
+            }
+            catch { /* o SPY nunca deve quebrar por causa do harvest */ }
+        }
+
+        /// <summary>Acha `%LOCALAPPDATA%\AutoEDM\logs\SE_API_dump_&lt;versão&gt;.txt` perguntando
+        /// a versão do SE a QUALQUER seed que exponha `.Application.Version` (ou `.Version`, se o
+        /// próprio seed já for o Application) — a maioria dos objetos do SE expõe `.Application`
+        /// (é por isso que o dump SEMPRE consegue achar o caminho certo, mesmo semeado só com uma
+        /// Face ou Feature qualquer).</summary>
+        private static string ResolveDumpPath(List<object> seeds)
+        {
+            string ver = null;
+            foreach (var seed in seeds)
+            {
+                if (seed == null) continue;
+                try { ver = (string)((dynamic)seed).Application.Version; if (!string.IsNullOrEmpty(ver)) break; } catch { }
+                try { ver = (string)((dynamic)seed).Version; if (!string.IsNullOrEmpty(ver)) break; } catch { }
+            }
+            if (string.IsNullOrEmpty(ver)) ver = "unknown";
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AutoEDM", "logs");
+            return Path.Combine(dir, $"SE_API_dump_{ver}.txt");
         }
 
         private static Guid GetLibGuid(ITypeLib lib, out string name)
@@ -429,10 +673,13 @@ namespace AutoEDM.Com
             finally { lib.ReleaseTLibAttr(p); }
         }
 
-        private static void DumpOneLib(ITypeLib lib, string libName, TextWriter w)
+        private static void DumpOneLib(ITypeLib lib, string libName, Guid guid, TextWriter w)
         {
             int n = lib.GetTypeInfoCount();
-            w.WriteLine($"########## TYPELIB {libName} — {n} tipo(s) ##########");
+            // O [guid] no cabeçalho é o que permite o merge (ReadKnownLibGuids) detectar,
+            // num run futuro, que esta lib já foi capturada — não remover/reformatar sem
+            // atualizar o regex lá E o parser em tools/generate_api_docs.py.
+            w.WriteLine($"########## TYPELIB {libName} [{guid:D}] — {n} tipo(s) ##########");
             for (int i = 0; i < n; i++)
             {
                 ITypeInfo ti = null;
