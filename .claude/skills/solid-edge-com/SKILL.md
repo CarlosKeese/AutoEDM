@@ -27,7 +27,16 @@ description: >
   call) + ThreadSetting=igRegularThread to render, the add-in DEPLOY-folder trap (SE loads from
   %LOCALAPPDATA%\...\addin, re-run the register tool after EVERY rebuild), isolating COM-proxy-
   poisoning ops from the working deliverable, live COM object dumping (DumpObject / Solid Edge Spy
-  style), named-ValueTuple loses names when returned through a dynamic call.
+  style), named-ValueTuple loses names when returned through a dynamic call, attaching/uniting a
+  surface onto a solid body (Model.Attach — synchronous, void, no tree feature — vs
+  Model.BooleanFeatures.Add vs the Ordered-only Model.Unions/Subtracts/Intersects family),
+  DISP_E_TYPEMISMATCH from a bare `null` IDispatch argument through Type.InvokeMember (needs
+  System.Runtime.InteropServices.DispatchWrapper(null)), DISP_E_PARAMNOTOPTIONAL from Type.Missing
+  on a param that isn't actually [opt] in the dump, E_NOINTERFACE reading a Model sub-collection via
+  dynamic property access when the static PIA is older than the running SE (fetch via
+  Type.InvokeMember(name, BindingFlags.GetProperty, ...) instead), a manual-action recorder ([REC])
+  showing "nothing changed" for a real void-returning action (look for an existing item migrating
+  between collections, not just new names).
 ---
 
 # Solid Edge COM automation (no SDK on the machine)
@@ -133,6 +142,9 @@ shows more) — when they do, **the dump wins**.
 | Enum constant is wrong across versions | Enum values are version-specific | Read the value from the dump (e.g. face query type / `igQueryAll`), don't hardcode from another version |
 | `DISP_E_TYPEMISMATCH` passing an **array of COM objects** (`Face[]`, `Profile[]`) | `object[]` marshals as `SAFEARRAY(VARIANT)`; the method wants `SAFEARRAY(IDispatch)` | Build a **typed interop array** (`SolidEdgeGeometry.Face[]`, `SolidEdgePart.Profile[]`) — reference `Interop.SolidEdge` just for the array; keep the rest late-bound |
 | `E_FAIL (0x80004005)` on an inter-part / in-context modeling call | You are NOT actually in in-place edit (see in-place fact below) | Confirm `AssemblyDocument.ModelingInAssembly`; if false, the operation can't work — switch to a workaround that needs no in-place edit |
+| `DISP_E_TYPEMISMATCH (0x80020005)` passing a bare C# `null` for an **IDispatch-typed (not VARIANT) parameter** through `Type.InvokeMember`'s `object[]` args (e.g. `FaceOffsets.AddEx`'s `ToReferenceEntity`/`ToKeyPoint`) | A raw `null` element in that `object[]` marshals to `VT_EMPTY`, not `VT_DISPATCH` with a null pointer — the callee's typed `IDispatch*` param rejects `VT_EMPTY` as the wrong VARTYPE. This is invisible from the signature dump (it just says `ToReferenceEntity: IDispatch`, no hint about `null` handling) | Wrap it: `new System.Runtime.InteropServices.DispatchWrapper(null)` instead of `null` — forces `VT_DISPATCH` with a null pointer, which the param actually expects for "no reference chosen" |
+| `E_NOINTERFACE (0x80004002)` reading a **Model/Document sub-collection via dynamic property access** (`blockModel.SomeNewishCollection`) even though a live SPY/`ProbeSub` dump proves the collection genuinely exists on the object | `dynamic` member access on a COM object whose CLSID/IID is ALSO known to the referenced static PIA (`Interop.SolidEdge`) can resolve through that PIA's (older/narrower) interface definition instead of falling back to pure late-bound IDispatch — if the PIA's version of the interface predates that property, the QueryInterface-style resolution fails even though the live object's real IDispatch has it | Fetch the property via `Type.InvokeMember(name, BindingFlags.GetProperty, null, owner, null)` on the raw `object`, not `owner.PropertyName` — this is the SAME code path `ComDiagnostics`/`ProbeSub` use for its dumps, which is exactly why the SPY sees members that a dynamic access on the same object can't reach |
+| `DISP_E_PARAMNOTOPTIONAL (0x8002000F)` calling a method found only via live SPY (not in the static PIA) with `Type.Missing` for a trailing arg that "looked optional" | The signature dump is authoritative about `[opt]` — a parameter with NO `[opt]` marker in the dump (e.g. `Model.Attach`'s `fpcSide: FeaturePropertyConstants`, unlike `Model.BooleanFeatures.Add`'s `[opt]PlaneSide`) is REQUIRED even if semantically it feels like it should default to something | Re-check the dumped signature text specifically for `[opt]` on that exact param before assuming `Type.Missing` is safe; if absent, supply a real value (try the small known enum set for that param family, e.g. `igRight=2`/`igLeft=1` for a "which side" `FeaturePropertyConstants`) |
 | A feature `Add` **returns without throwing** but the geometry is wrong/absent | SE does **not** raise a COM error for a failed feature — it sets `.Status` | After every `Add`, check `feature.Status == igFeatureOK (1216476310 / 0x4877F5D6)`; `igFeatureFailed = 1216476311`. Compare as **uint32**. try/catch alone misses these |
 | `E_INVALID_MODELING_MODE` / `CO_E_NOT_SUPPORTED (0x80004021)` | Called a method for the wrong modeling mode (ordered method on a sync part, etc.) | Branch on `PartDocument.ModelingMode` (sync=1/ordered=2); use the matching `AddSync*` vs `AddFinite*` |
 | `0x80010114` ("object does not exist") on the call **right after a feature `Add`** (`AddSync`/`AddFinite`/extrude) — even when that Add **succeeded** | After a feature Add the model **regenerates** and the part proxy / child collections (`Models`, `HoleDataCollection`, `Holes`) briefly disconnect; the next COM call on a cached ref fails and can cascade past your per-item catch. (An `E_FAIL` mid-op poisons the proxy the same way — it's not only failures.) | Create dependent objects (e.g. all `HoleData`) **before** the first Add; **re-fetch collection refs fresh** after each Add (don't cache `model.Holes` across Adds); **retry once on `0x80010114`** after a short sleep. **The stale call is often a *benign* op that STARTS the next feature** — e.g. `ProfileSets.Add()` for the next hole — so wrap **that first call inside the try + retry too**, not just the feature `Add`, and make each item independent (one stale failure shouldn't abort its siblings). (Log 58: the M6 hole succeeded, then the Ø4's `ProfileSets.Add()` sat *outside* the retry, threw `0x80010114`, and killed both dowels.) Isolate risky/experimental features (threads) in a throwaway part and make secondary steps non-throwing so a failure can't take down the deliverable |
@@ -201,46 +213,73 @@ by SPY 2026-07-16).** The human's steps and the exact features they create (feat
    stitched surface with no separate union/extend feature in between — `Models.Count` went 0→1
    as a single "Design Model" body).
 
-   **ANSWERED (Carlos, same day):** there IS an "attach surface to solid" command, but **it
-   creates NO feature-tree entry at all** — it applies the surface directly onto the solid
-   without a registered feature, which is exactly why the Gravador (a feature-tree collection
-   diff) never captured it. When that command doesn't work, the human falls back to **"União"**
-   (`Model.Unions.Add`, signature already confirmed below), which DOES register a feature.
-   **Automation consequence: don't try to reproduce "anexar" — it's not a feature, there's
-   nothing to call. Go straight for `Unions.Add` after extending the open edges to the block.**
-   General COM lesson: not every visible modeling action in the SE UI creates a tree feature —
-   some apply geometry directly with no record, so a feature-tree-based recorder (like the
-   Gravador) will show a false "nothing changed" for those specific actions even though the
-   model visibly did change. If a diff shows no new feature but the geometry clearly changed,
-   suspect a non-feature action before assuming the recorder missed something.
+   **HISTORICAL — this whole sub-thread (2026-07-16/17) chased the WRONG mechanism; kept for the
+   methodology lesson, see the CORRECTED recipe right after it.** `Carlos` said at the time there
+   was an "attach surface to solid" command that "creates NO feature-tree entry at all", and that
+   when it doesn't work the human falls back to "União" — so the conclusion drawn then was "don't
+   try to reproduce 'anexar', there's nothing to call, go straight for `Unions.Add`". That
+   conclusion was **wrong**: "anexar" DOES have a real COM call (`Model.Attach`, see below) — it
+   was never found because nobody had sondado the Model's member list for it yet, only guessed
+   from the ribbon UI wording. The follow-up test (**CONFIRMED live 2026-07-17**) then spent a
+   whole round making `Unions.Add` work by stitching the surface to a synthetic rim patch first
+   and forcing Ordered mode — a real, reproducible recipe (patch the open rim with
+   `SurfaceByBoundaries.Add` → `StitchSurfaces.Add` the surface + patch → `Unions.Add` the
+   stitched result, `E_FAIL` in sync / `E_INVALIDARG` in ordered without the patch) — but it was
+   solving the wrong problem: the human's OWN manual process does not require any of that. General
+   COM lesson that DOES still hold: **not every visible modeling action in the SE UI creates a
+   tree feature** — some apply geometry directly with no record, so a feature-tree-based recorder
+   (the Gravador) shows a false "nothing changed" for those actions even though the model visibly
+   changed; but the fix for that isn't "give up and use a different API that DOES register a
+   feature" — it's to sonda the owning object's member list directly (below) rather than assume a
+   void-returning method doesn't exist just because a naive Union-based workaround does.
 
-   **CONFIRMED live 2026-07-17 (AutoEDM, human did the manual sequence specifically to verify
-   this): touching/coincident geometry does NOT count as "closed" for `StitchSurfaces` — even
-   when the open surface's rim is exactly coplanar with (touching) the target solid's face, you
-   still need an actual patch surface spanning that rim before Stitch will treat the shape as a
-   closed shell.** `Constructions.SurfaceByBoundaries.Add` over the open rim edges, THEN
-   `StitchSurfaces.Add` over **both** the original surface and the new patch (2-element tool
-   array), THEN `Model.Unions.Add` on the stitched result — skipping the patch and feeding
-   `Unions.Add` the raw un-patched surface (even with 0 "open" edges by an edge-adjacency count)
-   throws **`E_FAIL` (0x80004005) in synchronous modeling, `E_INVALIDARG` (0x80070057) in
-   ordered** — a reliable diagnostic signature for "the tool isn't a genuinely closed body" that
-   isn't obviously about the enum arguments (which can be completely correct and still get this
-   error). **Both `StitchSurfaces` and `Unions` only do anything in ORDERED modeling** — a
-   synchronous-mode attempt silently no-ops (confirmed by a human clicking the same UI commands
-   in both modes: nothing happens in sync, the same click stitches/unites in ordered) — switch
-   `ModelingMode = 2` before either, not just before `FaceOffsets`.
-   `Unions.Add`'s `TargetDesignBodyOption`/`TargetConstructionBodyOption` — reading back a real
-   `Union` feature confirmed **both `0`** (`igCreateMultiple…OnNonManifoldOption`) for a normal
-   single-target/single-tool merge; the `2`/`1` "Single…" variants mentioned in the enum are for
-   forcing non-manifold results into one body, not needed for the common case.
-   Neither the `StitchSurface` nor the `Union` result exposes a `.Body` property in its live
-   member list — when you need a `SolidEdgeGeometry.Body`-typed array element from one (e.g. to
-   feed as a Union tool), try `.Body` first, then a direct cast of the object itself (it may
-   implement `Body` as a secondary QueryInterface-able interface not listed in the default
-   dispinterface — same "reflection/dump lies about secondary interfaces" pattern as
-   `ChamferReferenceFace` elsewhere in this skill), then fall back to the object's own concrete
-   interop type (`SolidEdgePart.StitchSurface`) as the array element — `Unions.Add`'s array
-   params are generic `SAFEARRAY(IDispatch)`, so they don't strictly require `Body` specifically.
+   **CORRECTED recipe (2026-07-20, AutoEDM `SurfaceBlockBuilder.TryUniteToBlock`, 8 real test
+   rounds against a live SE 2023/2026, narrative in AutoEDM's `docs/AutoEDM_Logs_Consolidated_
+   Analysis.md`).** The human's actual manual flow, and Carlos's own correction mid-investigation:
+   "está tentando costurar superfícies para unir ao bloco, esse não é o recurso correto, preciso
+   apenas do comando 'unir' mas no síncrono e não no ordenado" — Stitch is NOT the union mechanism
+   (it's a separate, legitimate step ONLY for consolidating a multi-face raw surface into one
+   cohesive body BEFORE attaching it — different from stitching a synthetic rim patch just to
+   satisfy `Unions.Add`), and the real union runs in SYNCHRONOUS, not Ordered.
+   - **The real "anexar" call is `Model.Attach(NumOfObjects: int, psaObjects: SAFEARRAY(IDispatch)*,
+     bAdd: bool, fpcSide: FeaturePropertyConstants) -> void`** — found on the live Model's member
+     list once someone actually looked (163 members, `ProbeModelApi` in AutoEDM) instead of
+     assuming "no feature = no call". It **returns void and registers NO tree feature** — that's
+     exactly why the Gravador diff kept showing "nothing changed" even on a successful manual run;
+     the only observable trace is that the SOURCE `CopySurface` feature (still present, same
+     `Type=igCopySurfaceObject`) starts appearing under `Model.Features` in addition to
+     `Constructions.CopySurfaces` — i.e. it gets reparented into the body's feature list rather
+     than consumed/replaced by a new one. **If a recorder diff shows an EXISTING item migrating
+     between two collections (not a brand-new name), that's the signature of a void-returning
+     "attach"-style call — don't dismiss it as noise.**
+   - `fpcSide` is **NOT optional** (the dump shows no `[opt]` on it, unlike `BooleanFeatures.Add`'s
+     `PlaneSide`) — `Type.Missing` throws `DISP_E_PARAMNOTOPTIONAL`; supply a real
+     `FeaturePropertyConstants` value, tried `igRight=2` then `igLeft=1` (same left/right
+     convention as extrude `ExtentSide`).
+   - The tool array (`psaObjects`) must be a **typed** `SolidEdgePart.CopySurface[]` (or
+     `StitchSurface[]` if you stitched first) — `object[]` marshals as `SAFEARRAY(VARIANT)` and
+     throws `DISP_E_TYPEMISMATCH` (the general SAFEARRAY-typing rule elsewhere in this skill,
+     confirmed again here).
+   - **`Model.Attach` is SYNCHRONOUS-only** — same class of bug as `AddThickenFeature` (silent
+     no-op outside its native mode) — if the document is already in Ordered mode (leftover from a
+     PREVIOUS run that switched modes for the GAP step), force `ModelingMode = 1` **before**
+     calling `Attach`, then switch to Ordered only afterward for `FaceOffsets`.
+   - **Fallback candidate (found in the same sondagem, less tested):** `Model.BooleanFeatures.Add(
+     NumberOfTools: int, Tools: VARIANT, Function: BooleanFeatureConstants, [opt]PlaneSide: VARIANT)
+     -> BooleanFeature` — a SEPARATE boolean collection from `Unions`/`Subtracts`/`Intersects`
+     (those are the Ordered-only family; confirmed `E_FAIL` in Sync across 2 real tests, don't use
+     them for a sync surface→solid attach). Notably has **no explicit Target parameter** — the
+     target is implicit (the Model's own body), matching the "select tool, not target+tool" feel
+     of the ribbon UI. `Function=3` = `seBooleanUnite` (`docs/api/constants.md`). Must be fetched
+     via `Type.InvokeMember("BooleanFeatures", BindingFlags.GetProperty, ...)`, NOT
+     `blockModel.BooleanFeatures` dynamic access — the latter throws `E_NOINTERFACE` even though
+     the collection genuinely exists live (see the error table's PIA-mismatch row above).
+   - **Stitch still has a real, narrower use: self-consolidation, not rim-patching.** When the burn
+     surface comes from several SEPARATE selected faces (not one pre-made `CopySurface`), a human's
+     real process re-includes `StitchSurfaces.Add` over just those faces (`Heal=true`, no synthetic
+     rim patch) to fold them into one coherent body before `Attach` — confirmed by a real `[REC]`
+     recording showing `StitchedSurface_N` appear right before a successful Attach. This is
+     optional (skip to the raw surface if it fails) and orthogonal to the abandoned rim-patch hack.
 4. **Offset the burn surface by GAP** — "Afastar/Deslocar Face" (`Offset_N`, Type 1180468550,
    **ordered** — `ModelingMode` flips 1→2 right before this step). **CORRECTED 2026-07-17 (was
    wrongly attributed to `Model.FaceMoves` on 2026-07-16 — the Gravador's per-collection diff now
@@ -390,11 +429,13 @@ the live object** (`ComDiagnostics.LogMembers`/`DumpObject`) before you build on
 | Op | Real call |
 |---|---|
 | Thicken a surface's faces into a solid | `partDoc.Models.AddThickenFeature(Side FeaturePropertyConstants, offset double, nFaces int, Faces SAFEARRAY(IDispatch)) → Model` |
-| Boolean unite bodies | `Model.Unions.Add(nTargets, TargetArray SAFEARRAY(IDispatch), nTools, ToolsArray SAFEARRAY(IDispatch), SETargetDesignBodyOption, SETargetConstructionBodyOption)` (igCreateSingleDesignBodyOnNonManifold=2, igCreateSingleConstructionGeneralBody=1; both enums also have a `0` = igCreateMultiple…OnNonManifoldOption — safer default, doesn't fail the op on a non-manifold result). **`Unions` IS in the stale PIA** (unlike `FaceOffsets.AddEx`, below) — `(SolidEdgePart.Unions)model.Unions` compiles, and tlbimp generated its SAFEARRAY params as `ref Array` (not a plain array) — pass `ref targets, ref tools`. **Array element type is NOT one-size-fits-all — cast each side to what it actually IS, not to a generic `Body`:** a solid Model's target casts fine to `SolidEdgeGeometry.Body[]` (`model.Body`), but a **`CopySurface` tool does NOT implement `SolidEdgeGeometry.Body`** — casting it throws `E_NOINTERFACE` on IID `{09FCA073-DFBF-11D0-A275-080036C5ED02}` (confirmed live, 2026-07-17). A `CopySurface` is already a valid `IDispatch`; type its array element as `SolidEdgePart.CopySurface[]` instead (`new SolidEdgePart.CopySurface[] { (SolidEdgePart.CopySurface)surf }`) — `Unions.Add`'s `SAFEARRAY(IDispatch)` doesn't care that target/tool are different concrete interop types, it just needs each element to genuinely implement *some* real COM interface, not `object`. |
+| Boolean unite bodies (**Ordered-only in practice — see caveat**) | `Model.Unions.Add(nTargets, TargetArray SAFEARRAY(IDispatch), nTools, ToolsArray SAFEARRAY(IDispatch), SETargetDesignBodyOption, SETargetConstructionBodyOption)` (igCreateSingleDesignBodyOnNonManifold=2, igCreateSingleConstructionGeneralBody=1; both enums also have a `0` = igCreateMultiple…OnNonManifoldOption — safer default, doesn't fail the op on a non-manifold result). **`Unions` IS in the stale PIA** (unlike `FaceOffsets.AddEx`, below) — `(SolidEdgePart.Unions)model.Unions` compiles, and tlbimp generated its SAFEARRAY params as `ref Array` (not a plain array) — pass `ref targets, ref tools`. **Array element type is NOT one-size-fits-all — cast each side to what it actually IS, not to a generic `Body`:** a solid Model's target casts fine to `SolidEdgeGeometry.Body[]` (`model.Body`), but a **`CopySurface` tool does NOT implement `SolidEdgeGeometry.Body`** — casting it throws `E_NOINTERFACE` on IID `{09FCA073-DFBF-11D0-A275-080036C5ED02}` (confirmed live, 2026-07-17). A `CopySurface` is already a valid `IDispatch`; type its array element as `SolidEdgePart.CopySurface[]` instead (`new SolidEdgePart.CopySurface[] { (SolidEdgePart.CopySurface)surf }`) — `Unions.Add`'s `SAFEARRAY(IDispatch)` doesn't care that target/tool are different concrete interop types, it just needs each element to genuinely implement *some* real COM interface, not `object`. **CAVEAT (2026-07-20, 2 more real tests, correctly-typed target AND tool):** for a raw/un-stitched surface merging into a solid, `Unions.Add` reliably threw `E_FAIL` when the document was actually in SYNCHRONOUS mode — for that specific surface→solid "attach" use case, use `Model.Attach` or `Model.BooleanFeatures.Add` (next rows), NOT `Unions.Add`. `Unions.Add` may still be the right call for solid+solid merges (e.g. two design bodies) — not re-tested for that case. |
+| **Attach a surface directly onto a solid ("anexar"), SYNCHRONOUS, no tree feature created** | `Model.Attach(NumOfObjects: int, psaObjects: SAFEARRAY(IDispatch)*, bAdd: bool, fpcSide: FeaturePropertyConstants) -> void`. Confirmed live 2026-07-20 (AutoEDM). Returns `void` — no new feature registers anywhere; the only trace is the SOURCE `CopySurface`/`StitchSurface` migrating into `Model.Features` (previously only in `Constructions.CopySurfaces`). `fpcSide` is **required** (no `[opt]` in the dump) — try `igRight=2` then `igLeft=1`. Tool array must be typed (`SolidEdgePart.CopySurface[]`/`StitchSurface[]`), not `object[]`. **Must run in Sync mode** — same silent-no-op-outside-native-mode risk as `AddThickenFeature` if the doc is already Ordered from a previous step. |
+| Boolean unite, SYNCHRONOUS-capable alternative to `Unions` | `Model.BooleanFeatures.Add(NumberOfTools: int, Tools: VARIANT, Function: BooleanFeatureConstants, [opt]PlaneSide: VARIANT) -> BooleanFeature`. No explicit Target param (implicit = the Model's own body). `Function=3` = `seBooleanUnite` (`1`=Intersect, `2`=Subtract, `4`=PlaneFront — `docs/api/constants.md`). Less field-tested than `Attach` (found in the same 2026-07-20 sondagem, not yet the primary path in AutoEDM). **Fetch the collection via `Type.InvokeMember("BooleanFeatures", BindingFlags.GetProperty, ...)`, not dynamic property access** — `model.BooleanFeatures` threw `E_NOINTERFACE` even though the collection genuinely exists live (PIA-version mismatch, see error table). |
 | Boolean subtract (also a hole workaround) | `Model.Subtracts.Add(nTargets, TargetArray, nTools, ToolsArray, DirectionArray SAFEARRAY(SESubtractDirection), targetOpt, constrOpt)` |
 | Boolean intersect | `Model.Intersects.Add(nTargets, TargetArray, nTools, ToolsArray, targetOpt, constrOpt)` |
 | Redefine/replace solid faces with a surface | `Model.RedefineFaces.Add(nFaces, [in,out] FacesArray, nEdges, [in,out] NonLaminarEdgesArray, [in,out] TangencyTypeArray, FaceMerge SurfaceByBoundaryPatchTopology, ReplaceFacesOnSolidBody bool) → RedefineFace` |
-| Also present on the Model | `ReplaceFaces, Thickens, TrimExtendCollection, FaceOffsets, BlankSurfaces, Threads, Holes, Rounds, Chamfers` (no ExtendSurfaces/IntersectSurfaces) |
+| Also present on the Model | `ReplaceFaces, Thickens, TrimExtendCollection, FaceOffsets, BlankSurfaces, Threads, Holes, Rounds, Chamfers, Attach, Detach, BooleanFeatures` (no ExtendSurfaces/IntersectSurfaces) |
 
 **The stale PIA can have the COCLASS but be missing individual LIVE methods — check
 per-method, not just per-type** (found 2026-07-17: `SolidEdgePart.FaceOffsets` exists in

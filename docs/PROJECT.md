@@ -81,10 +81,12 @@ ativa** (não em peça isolada) e chamam o mesmo `ElectrodeBuilder`. Log em
 | Planejamento do eletrodo por região | [ElectrodeBuilder.cs](src/AutoEDM.Core/Electrode/ElectrodeBuilder.cs) | ✅ plano não-destrutivo |
 | **Add-in COM (ribbon "AutoEDM" → "Criar eletrodos")** | [src/AutoEDM.AddIn/](src/AutoEDM.AddIn/) | ✅ Validado in-process no SE 2023 |
 | **Registro por usuário (HKCU, sem admin)** | [src/AutoEDM.Register/](src/AutoEDM.Register/) | ✅ Validado |
-| **Relatório de coordenadas de queima** (ferramenta 1) | [Reporting/](src/AutoEDM.Core/Reporting/) + `ElectrodeBuilder.BuildBurnReport` | ✅ construído (só leitura) — **aguarda teste no SE** |
-| Criar eletrodo em contexto (`AddByTemplate`) | [ElectrodeBuilder.cs](src/AutoEDM.Core/Electrode/ElectrodeBuilder.cs) | 🚧 reescrito, aguarda teste (fronteira) |
-| Inter-Part Copy das faces de queima | [InterPartCopier.cs](src/AutoEDM.Core/Electrode/InterPartCopier.cs) | 🚧 assinatura conhecida, em validação (copy-test) |
-| Offset (spark gap) / blank / fixação | [ElectrodeBuilder.cs](src/AutoEDM.Core/Electrode/ElectrodeBuilder.cs) | 🚧 scaffold, a validar |
+| **Relatório de coordenadas de queima** (ferramenta 1) | [Reporting/](src/AutoEDM.Core/Reporting/) + `ElectrodeBuilder.BuildBurnReport` | ✅ construído (só leitura) — validado no SE |
+| **Spec-sheet de eletrodos** (ferramenta 2) | [ElectrodeBuilder.cs](src/AutoEDM.Core/Electrode/ElectrodeBuilder.cs) | ✅ validado no SE |
+| **Criar eletrodos c/ blank** (ferramenta 3, `CreateElectrodesWithBlank`) | [ElectrodeBuilder.cs](src/AutoEDM.Core/Electrode/ElectrodeBuilder.cs) | ✅ validado no SE (peça standalone → bloco → `AddByFilename` → `PutTransform`) |
+| Inter-Part Copy das faces de queima | [InterPartCopier.cs](src/AutoEDM.Core/Electrode/InterPartCopier.cs) | 🚧 só funciona em edição EM CONTEXTO (in-place); fora de contexto é bloqueado pela API COM — o desenhista copia manualmente e usa "Criar Base"/"Unir superfícies" a partir daí |
+| **Criar Base** (ferramenta 4 — bloco + faixa de medição + fixação sobre a superfície copiada) | [SurfaceBlockBuilder.cs](src/AutoEDM.Core/Electrode/SurfaceBlockBuilder.cs) + [BlockOverSurfacesForm.cs](src/AutoEDM.AddIn/UI/BlockOverSurfacesForm.cs) | ✅ validado no SE |
+| **Unir superfícies** (anexa a queima ao bloco + aplica o GAP) | [SurfaceBlockBuilder.cs](src/AutoEDM.Core/Electrode/SurfaceBlockBuilder.cs) (`TryUniteToBlock`/`TryApplyGapOffset`) | 🚧 união validada no SE (`Model.Attach`, síncrono); GAP corrigido (`FaceOffsets.AddEx` + `DispatchWrapper`), aguardando confirmação final no SE |
 | GUI de monitoramento | [MainForm.cs](src/AutoEDM/UI/MainForm.cs) | ✅ |
 | Módulo corte a fio (IGES) | — | 📋 Roadmap |
 
@@ -122,7 +124,7 @@ localmente, então descobrimos a API **em tempo de execução, por introspecçã
    (`AutoEDM NNN.log`) e o dump, e envia de volta. Cada run responde **uma** dúvida.
 
 Todo esse método (e as armadilhas de COM) está na skill **`solid-edge-com`**
-(`.kimi/skills/solid-edge-com/`). **Consulte a skill antes de escrever código de
+(`.claude/skills/solid-edge-com/`). **Consulte a skill antes de escrever código de
 automação.** Correções de conhecimento devem ir para a skill, não para docs avulsos.
 
 Para uma referência técnica completa da integração COM (ProgID, type libraries,

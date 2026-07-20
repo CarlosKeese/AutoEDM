@@ -75,10 +75,12 @@ A biblioteca trabalha principalmente com as type libraries do Solid Edge: `Solid
 | `Face` | `GetRange(MinPt, MaxPt)` | Bounding box (metros) |
 | `Face` | `GetReferenceKey` | Chave para `TopologyReference` |
 | `Constructions` | `CopySurfaces.Add(...)` | Inter-Part Copy associativo de faces |
-| `Constructions` | `OffsetSurfaces.Add(...)` | Offset das faces por Ra/spark gap |
+| `Constructions` | `OffsetSurfaces.Add(...)` / `StitchSurfaces.Add(...)` | Offset das faces por Ra/spark gap; consolidar faces soltas numa superfície coesa |
+| `Model` | `Attach(nObjects, objects, bAdd, fpcSide)` | Anexar a superfície de queima ao sólido do bloco (síncrono, sem feature na árvore) |
+| `Model` | `FaceOffsets.AddEx(...)` | Aplicar o GAP (spark gap) nas faces já unidas ao bloco (ordenado) |
 | `Documents` / `SelectSet` | `StartCommand` | Fallback para comandos nativos interativos |
 
-> **Regra de ouro deste projeto:** nenhuma assinatura é inventada. Toda assinatura vem do dump da typelib (`SE_API_dump_*.txt`) ou de introspecção COM ao vivo. Veja [`docs/api/`](docs/api/) e a skill [`solid-edge-com`](.kimi/skills/solid-edge-com/SKILL.md).
+> **Regra de ouro deste projeto:** nenhuma assinatura é inventada. Toda assinatura vem do dump da typelib (`SE_API_dump_*.txt`) ou de introspecção COM ao vivo. Veja [`docs/api/`](docs/api/) e a skill [`solid-edge-com`](.claude/skills/solid-edge-com/SKILL.md).
 
 ---
 
@@ -149,10 +151,11 @@ Detalhes completos em [`docs/COM_INTEGRATION.md`](docs/COM_INTEGRATION.md) e [`d
 | Ferramenta | Estado |
 |---|---|
 | Relatório de coordenadas de queima | ✅ construído |
-| Selecionar/destacar faces de queima | 🚧 núcleo pronto |
-| Criar eletrodo em contexto (`AddByTemplate`) | 🚧 fronteira atual |
-| Copiar superfícies (Inter-Part Copy) | 🚧 em validação |
-| Offset por Ra + blank + fixação | 🚧 scaffold |
+| Spec-sheet de eletrodos (Ra/pegada/blank/fixação) | ✅ construído |
+| Criar eletrodos c/ blank (`CreateElectrodesWithBlank`) | ✅ validado no SE |
+| Criar Base (bloco + faixa de medição + fixação sobre a superfície copiada) | ✅ validado no SE |
+| Unir superfícies (anexar a queima ao bloco + GAP) | 🚧 união validada no SE; GAP corrigido, aguardando confirmação final |
+| Copiar superfícies (Inter-Part Copy) | 🚧 só funciona em edição em contexto (in-place) |
 | Orquestrador completo | 📋 planejado |
 
 Legenda: ✅ funcionando · 🚧 em andamento · 📋 planejado.
@@ -165,7 +168,7 @@ Legenda: ✅ funcionando · 🚧 em andamento · 📋 planejado.
 - [`docs/COM_INTEGRATION.md`](docs/COM_INTEGRATION.md) — guia técnico de integração COM com o Solid Edge.
 - [`docs/INDEX.md`](docs/INDEX.md) — catálogo de API, métodos e constantes do dump.
 - [`docs/api/`](docs/api/) — referências markdown por namespace do Solid Edge.
-- [`.kimi/skills/solid-edge-com/SKILL.md`](.kimi/skills/solid-edge-com/SKILL.md) — skill com os fatos validados de COM do SE.
+- [`.claude/skills/solid-edge-com/SKILL.md`](.claude/skills/solid-edge-com/SKILL.md) — skill com os fatos validados de COM do SE.
 
 ---
 
