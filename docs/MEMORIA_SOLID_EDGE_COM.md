@@ -1,6 +1,6 @@
 # Memória Solid Edge COM — o que funciona, o que não, e como
 
-> **Fonte de verdade COMPARTILHADA (Claude ↔ Kimi).** Este é o primeiro arquivo a
+> **Fonte de verdade.** Este é o primeiro arquivo a
 > consultar antes de escrever, corrigir ou analisar qualquer integração COM com o
 > Solid Edge. Ele registra o **comportamento real** da API — não a teoria — validado
 > run a run no SE 2023 real.
@@ -14,7 +14,7 @@
 
 ## 0. Como usar e manter esta memória
 
-**Regras (valem para Claude e Kimi):**
+**Regras:**
 
 1. **Nunca inventar API.** Toda assinatura vem do **dump** da typelib. Se não está no
    dump, ou não existe com aquele nome, ou falta um dump completo — **marque, não conclua**.
@@ -298,7 +298,7 @@ ITypeInfo, ao vivo.
 | [`COM_INTEGRATION.md`](./COM_INTEGRATION.md) | **Setup**: ProgID, registro, TLBs, `.csproj`, STA, OLE filter |
 | [`api/`](./api/) + dump | **Catálogo completo** de tipos/assinaturas/constantes |
 | [`MAPEAMENTO_INTEGRACAO_COM.md`](./MAPEAMENTO_INTEGRACAO_COM.md) | Mapa por estágio do pipeline (⚠️ seções de in-place e CopySurfaces **superadas** por esta memória — §3/§4) |
-| [`.kimi/skills/solid-edge-com/SKILL.md`](../.kimi/skills/solid-edge-com/SKILL.md) | Briefing/papel do Kimi (pesquisa, sem código) |
+| [`.claude/skills/solid-edge-com/SKILL.md`](../.claude/skills/solid-edge-com/SKILL.md) | Skill com os fatos validados de COM do SE |
 | [`README.md`](../README.md) | Direção, verdades do domínio, papéis |
 
 > **Ao divergir:** esta memória (§3/§4) vence os docs mais antigos, porque reflete os logs

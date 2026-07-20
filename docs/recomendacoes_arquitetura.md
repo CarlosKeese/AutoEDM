@@ -2,7 +2,7 @@
 
 Este documento consolida a análise de arquitetura, pontos de atenção identificados e recomendações técnicas para o desenvolvimento dos stubs de automação do Solid Edge no projeto **AutoEDM** (automação de extração de eletrodos via COM).
 
-O objetivo é servir de base para discussão e validação conjunta entre os membros do time (Claude, Kimi e equipe de engenharia).
+O objetivo é servir de base para discussão e validação conjunta entre os membros do time (Claude e equipe de engenharia).
 
 ---
 

@@ -50,8 +50,7 @@ mesmos métodos sem a UI. Quebrar essa regra é o único jeito de o plano falhar
 5. Offset por Ra → blank + fixação.
 6. **Orquestrador**: roda 1→5 em todas as regiões = automação completa.
 
-**Papéis:** Carlos **testa** no SE real (tem a licença); Claude **constrói** o código;
-Kimi **pesquisa/lê/analisa** (sem escrever código). Ver
+**Papéis:** Carlos **testa** no SE real (tem a licença); Claude **constrói** o código. Ver
 [Regras para IAs colaboradoras](#regras-para-ias-colaboradoras).
 
 **Âncora:** modernizar ≠ copiar o módulo comercial. Ancore no fluxo real do Carlos
@@ -186,9 +185,7 @@ padrão de fixação M6+2×Ø4) estão implementados no código do domínio.
 
 **Divisão de trabalho (2026-07-07):** **Carlos** roda e testa no Solid Edge real (tem a
 licença e valida cada ferramenta). **Claude** constrói o código (núcleo + add-in + GUI).
-**Kimi** ajuda **pesquisando, lendo e analisando** — **não escreve código**: lê o
-dump/logs/código e produz análises que ajudam o Claude a decidir os próximos passos.
-Regras comuns a todos, para pararmos de gastar ciclos com soluções que não rodam:
+Regras, para pararmos de gastar ciclos com soluções que não rodam:
 
 1. **Nunca invente API COM.** Toda assinatura vem do `SE_API_dump_*.txt` (grep) ou
    da skill `solid-edge-com`. Sem evidência no dump → marque como "a validar",
@@ -204,31 +201,6 @@ Regras comuns a todos, para pararmos de gastar ciclos com soluções que não ro
    novo e validado, proponha a edição da skill `solid-edge-com`.
 5. **Não introduza dependências novas** (frameworks, linguagens, camadas) sem que
    sirvam diretamente à extração de eletrodo validada contra o SE real.
-
-### Kimi — pesquisa e análise (não escreve código)
-
-O papel do Kimi é **acelerar a decisão do Claude**, não produzir código. Tarefas úteis:
-
-- **Ler e resumir o dump** (`SE_API_dump_*.txt`): achar assinaturas, tipos, direção de
-  parâmetros e valores de enum de um método/coleção específico (ex.: `AddByTemplate`,
-  `OffsetSurfaces.Add`), sempre por `grep`, nunca carregando o arquivo inteiro.
-- **Analisar os logs numerados** (`logs/AutoEDM NNN.log`): identificar o HRESULT/erro
-  real, correlacionar com o passo que falhou e propor a próxima hipótese a testar.
-- **Comparar abordagens**: p.ex. como o módulo comercial de eletrodos do SE resolve um
-  passo vs. o nosso, ou alternativas de API (`CopySurfaces` vs. `InterpartConstructions`
-  vs. `CreateTopologyReference`) — com prós/contras.
-- **Pesquisar a API do SE** (fóruns, Programmer's Guide, Solid Edge Community) para achar
-  o nome/uso de um método, **sempre marcando "a validar no dump/SE"**.
-
-Entregáveis do Kimi = **análises, tabelas comparativas, hipóteses priorizadas** em texto
-(markdown), apontando arquivos/linhas e trechos do dump. **Nunca** editar código,
-`.csproj`, ou criar arquivos de implementação. Se identificar uma correção,
-**descreva-a** (arquivo, método, o que mudar e por quê) para o Claude aplicar.
-
-Regras de qualidade (valem para qualquer pesquisa): **nunca invente API COM** — toda
-assinatura vem do dump; **sinalize dependência de versão** do SE; e **respeite as
-verdades do domínio** (a última rodada de sugestão trocaria `CopySurfaces` por
-`AddCopiedPart` — o dump mostrou que são coisas diferentes).
 
 ---
 

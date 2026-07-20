@@ -518,6 +518,6 @@ Se um MCP for criado no futuro, ele deve expor **tools de negócio**, não de ge
   - [Face.GetRange](https://support.industrysoftware.automation.siemens.com/trainings/se/107/api/SolidEdgeGeometry~Face~GetRange.html)
   - [Edge.GetRange](https://support.industrysoftware.automation.siemens.com/trainings/se/107/api/SolidEdgeGeometry~Edge~GetRange.html)
   - [Solid Edge Part Type Library](https://support.industrysoftware.automation.siemens.com/trainings/se/107/api/SolidEdgePart_P.html)
-- Skill do projeto: `.kimi/skills/solid-edge-com/SKILL.md`
+- Skill do projeto: `.claude/skills/solid-edge-com/SKILL.md`
 - README do projeto: `README.md`
 - Plano de testes: `docs/PLANO_TESTE_SE.md`

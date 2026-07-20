@@ -5,8 +5,8 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 > **Direção atual (2026-07-07):** construímos um **add-in modernizado, ferramenta por
 > ferramenta** (cada comando da ribbon = uma casca fina sobre um método do `AutoEDM.Core`);
 > a automação total é a orquestração dessas ferramentas. Papéis: **Carlos testa** no SE
-> real, **Claude constrói** o código, **Kimi pesquisa/analisa** (sem escrever código). O
-> texto completo está em [`README.md` → Direção atual](../README.md#direção-atual-add-in-modernizado-ferramenta-por-ferramenta).
+> real, **Claude constrói** o código. O
+> texto completo está em [`docs/PROJECT.md` → Direção atual](./PROJECT.md#direção-atual-add-in-modernizado-ferramenta-por-ferramenta).
 
 ## Documentação de introdução
 
@@ -20,7 +20,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | Documento | Descrição |
 |---|---|
 | [`docs/GUIA_SOLID_EDGE_COM.md`](./GUIA_SOLID_EDGE_COM.md) | **A "Pedra de Roseta": guia de aprendizados** para automatizar o SE por COM sem o SDK — introspecção, out-params (`ParameterModifier`), late binding, unidades/STA/message filter, receitas de modelagem (sketch+extrusão, furos, superfícies intra-peça), síncrono×ordenado, in-place bloqueado, add-in de ribbon, tabela **erro→causa→fix**. Comece por aqui. |
-| [`docs/MEMORIA_SOLID_EDGE_COM.md`](./MEMORIA_SOLID_EDGE_COM.md) | **Fonte de verdade compartilhada (Claude ↔ Kimi):** o que a API COM do SE **deixa** ou **recusa** fazer, com status (✅/❌/🟡/⛔) + evidência (run/dump) em cada item. Consultar antes de escrever, corrigir ou analisar código COM. Corrige entendimentos superados (edição in-place, `CopySurfaces`). |
+| [`docs/MEMORIA_SOLID_EDGE_COM.md`](./MEMORIA_SOLID_EDGE_COM.md) | **Fonte de verdade:** o que a API COM do SE **deixa** ou **recusa** fazer, com status (✅/❌/🟡/⛔) + evidência (run/dump) em cada item. Consultar antes de escrever, corrigir ou analisar código COM. Corrige entendimentos superados (edição in-place, `CopySurfaces`). |
 
 ## API, SDK, funções, parâmetros e métodos
 
@@ -48,14 +48,13 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | Documento | Descrição |
 |---|---|
 | [`docs/recomendacoes_arquitetura.md`](./recomendacoes_arquitetura.md) | Recomendações de arquitetura para o núcleo COM. |
-| [`docs/analise_mcp_kimi.md`](./analise_mcp_kimi.md) | Análise sobre MCP genérico de CAD e alinhamento com o projeto. |
 
 ## Colaboração / IAs
 
 | Documento | Descrição |
 |---|---|
-| [`.kimi/skills/solid-edge-com/SKILL.md`](../.kimi/skills/solid-edge-com/SKILL.md) | **Briefing do Kimi**: papel de pesquisa/leitura/análise (sem escrever código) + referência de fatos SE-COM validados para consulta. |
-| [`README.md` → Regras para IAs colaboradoras](../README.md#regras-para-ias-colaboradoras) | Divisão de trabalho (Carlos testa · Claude constrói · Kimi pesquisa) e regras comuns. |
+| [`.claude/skills/solid-edge-com/SKILL.md`](../.claude/skills/solid-edge-com/SKILL.md) | Skill com os fatos validados de COM do SE (assinaturas, armadilhas, receitas de modelagem). |
+| [`docs/PROJECT.md` → Regras para IAs colaboradoras](./PROJECT.md#regras-para-ias-colaboradoras) | Divisão de trabalho (Carlos testa · Claude constrói) e regras comuns. |
 
 ## Fontes da verdade
 
