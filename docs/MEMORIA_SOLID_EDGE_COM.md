@@ -114,6 +114,9 @@ Cada um destes já custou pelo menos um run. Todos ✅.
 | **Furo roscado (`igTappedHole=37`)** | ❌ | `HoleDataCollection.Add(37, ...)` cria o `HoleData`, mas `Holes.AddSync` retorna **E_FAIL** e corrompe o proxy (`0x80010114`), abortando o eletrodo. | **Logs 046–047 ❌** |
 | Box via `AddBoxByTwoPoints` | ❌ | `DISP_E_TYPEMISMATCH` recorrente — use sketch+extrude acima. Também usado em `ElectrodeBuilder.CreateBlankAndHolder` — deve ser substituído. | Logs 8–30; revisão 2026-07-10 |
 | Cilindro (holder) | 📖 | `Models.AddCylinderByCenterAndRadius(x,y,z,dRadius,dDepth,pPlane,ExtentSide,vbKeyPointExtent,pKeyPointObj,pKeyPointFlags)` — 10 args | Log 8 |
+| Revolução | 📖 (assinatura confirmada, não usado no projeto ainda) | `Models.AddFiniteRevolvedProtrusion(NumberOfProfiles, ProfileArray SAFEARRAY(IDispatch), ReferenceAxis, ProfilePlaneSide, AngleofRevolution:double, [opt]KeyPointOrTangentFace, [opt]KeyPointFlags)` (+ `Sync`) | dump:19658/20133 |
+| Arredondamento (SE chama de **"Round"**, não "Fillet") | 📖 | `Model.Rounds.Add(NumberOfEdgeSets, EdgeSetArray:VARIANT, RadiusArray:VARIANT, [opt]RollAcrossTangentEdges, [opt]RollOrCapAcrossSharpEdges, [opt]RollAlongBlendEdges, [opt]ApplyVertexBlends) → Round` (tb. `AddVariable`/`AddBlend`/`AddSurfaceBlend`) | dump:4008 |
+| Chanfro | 📖 | `Model.Chamfers.AddEqualSetback(NumberOfEdgeSets, EdgeSetArray:VARIANT, SetbackDistance:double) → Chamfer` (tb. `AddUnequalSetback`/`AddSetbackAngle`/`RecognizeAndCreateChamfers`) | dump:4224 |
 
 ### 2.6. Cópia de superfícies / Inter-Part (⛔ **o nó atual**)
 
