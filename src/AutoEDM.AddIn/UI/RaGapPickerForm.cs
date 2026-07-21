@@ -17,9 +17,16 @@ namespace AutoEDM.AddIn.UI
 
         public RaGapPresets.Choice Chosen { get; private set; }
 
-        public RaGapPickerForm()
+        /// <summary>
+        /// Janela do "Aplicar GAP" (Carlos, 2026-07-21): <paramref name="preselectRa"/> vem da
+        /// variável Ra gravada na peça (<see cref="RaVariableStore"/> — escrita por "Criar
+        /// eletrodo (manual)" a partir da cor detectada na seleção, ou por um "Aplicar GAP"
+        /// anterior) para já abrir a lista na combinação certa em vez de sempre no topo (mais
+        /// grosso). Null = comportamento antigo (1º item da lista).
+        /// </summary>
+        public RaGapPickerForm(double? preselectRa = null)
         {
-            Text = "AutoEDM — Unir superfícies (GAP/Ra)";
+            Text = "AutoEDM — Aplicar GAP (GAP/Ra)";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
@@ -30,18 +37,24 @@ namespace AutoEDM.AddIn.UI
 
             _cbo = new ComboBox { Left = 12, Top = 36, Width = 260, DropDownStyle = ComboBoxStyle.DropDownList };
             foreach (var choice in RaGapPresets.All()) _cbo.Items.Add(choice);
-            if (_cbo.Items.Count > 0) _cbo.SelectedIndex = 0;
+            int preselectIndex = 0;
+            if (preselectRa.HasValue)
+            {
+                for (int i = 0; i < _cbo.Items.Count; i++)
+                    if (Math.Abs(((RaGapPresets.Choice)_cbo.Items[i]).Ra - preselectRa.Value) < 0.05) { preselectIndex = i; break; }
+            }
+            if (_cbo.Items.Count > 0) _cbo.SelectedIndex = preselectIndex;
             _cbo.SelectedIndexChanged += (s, e) => UpdateSwatch();
             Controls.Add(_cbo);
 
             _swatch = new Panel { Left = 282, Top = 36, Width = 24, Height = 24, BorderStyle = BorderStyle.FixedSingle };
             Controls.Add(_swatch);
 
-            var btnOk = new Button { Text = "Aplicar (Unir + GAP + cor)", Left = 12, Top = 80, Width = 200, DialogResult = DialogResult.OK };
+            var btnOk = new Button { Text = "Aplicar (GAP + cor)", Left = 12, Top = 80, Width = 200, DialogResult = DialogResult.OK };
             btnOk.Click += (s, e) => { Chosen = (RaGapPresets.Choice)_cbo.SelectedItem; };
             Controls.Add(btnOk);
 
-            var btnCancel = new Button { Text = "Só diagnosticar", Left = 220, Top = 80, Width = 128, DialogResult = DialogResult.Cancel };
+            var btnCancel = new Button { Text = "Cancelar", Left = 220, Top = 80, Width = 128, DialogResult = DialogResult.Cancel };
             Controls.Add(btnCancel);
 
             AcceptButton = btnOk; CancelButton = btnCancel;

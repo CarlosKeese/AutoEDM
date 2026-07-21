@@ -20,6 +20,14 @@
               screentip="Criar eletrodos + base"
               supertip="Cria uma peça por eletrodo com o BLOCO da base (holder) modelado e posicionado na montagem (você copia as faces de queima por baixo). Não salva a montagem."
               imageId="1" showLabel="true" />
+      <button id="10" size="large" label="Criar eletrodo (manual)"
+              screentip="Criar 1 eletrodo a partir das faces selecionadas"
+              supertip="Versão MANUAL do 'Criar eletrodos': selecione, na montagem, a(s) FACE(s) do fundo do bolsão a erodir (clique na peça e clique DE NOVO no mesmo ponto, ou segure Alt, para pegar a FACE em vez da ocorrência inteira) e clique aqui. Cria e posiciona UMA peça com o bloco/base no centro XY e no Z mais fundo das faces escolhidas — mesmo pipeline do 'Criar eletrodos', um clique por eletrodo. Tenta identificar o Ra pela cor das faces selecionadas e grava numa variável da peça (orienta o 'Aplicar GAP' depois). Não salva a montagem."
+              imageId="1" showLabel="true" />
+      <button id="12" size="large" label="Duplicar eletrodo"
+              screentip="Duplicar p/ o próximo Ra da tabela (desbaste/acabamento)"
+              supertip="Selecione a ocorrência de UM eletrodo já com GAP aplicado (tem Ra gravado) e clique. Cria uma cópia da peça com o GAP no PRÓXIMO Ra da escada (mais grosso) e posiciona a cópia em TODAS as posições onde esse eletrodo aparece na montagem — 1 clique gera o par desbaste/acabamento em cada posição repetida. Não salva a montagem."
+              imageId="1" showLabel="true" />
     </group>
     <group name="Relatórios">
       <button id="2" size="large" label="Coordenadas"
@@ -37,8 +45,12 @@
               supertip="Na PEÇA aberta: cria a BASE (bloco no material mais próximo) com a FAIXA de medição (chanfro X+ Y− p/ QUAD/RET, ou flat em Y− p/ REDONDO) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. SEM gap/offset por cor aqui — a superfície copiada não carrega a cor original; isso e o trabalho de superfície entram no botão 'Unir superfícies'."
               imageId="1" showLabel="true" />
       <button id="7" size="large" label="Unir superfícies"
-              screentip="Engrossar a queima e unir ao bloco (ambiente de PEÇA)"
-              supertip="ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — engrossa a superfície de queima para cima até dentro do bloco e une num sólido único. Separado do bloco para não interferir na fixação."
+              screentip="Unir a queima ao bloco, SÓ a união (ambiente de PEÇA)"
+              supertip="ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — une a superfície de queima ao bloco num sólido único. SÓ une (sem GAP/cor) — se falhar, uma NA MÃO no SE e siga para 'Aplicar GAP'. Separado do bloco para não interferir na fixação."
+              imageId="1" showLabel="true" />
+      <button id="11" size="large" label="Aplicar GAP"
+              screentip="GAP + cor + nome no corpo já unido (ambiente de PEÇA)"
+              supertip="Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
               imageId="1" showLabel="true" />
     </group>
     <group name="Diagnóstico">

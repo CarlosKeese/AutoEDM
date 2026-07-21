@@ -26,6 +26,9 @@ namespace AutoEDM.AddIn
         private const int CmdUnirSuperficies = 7;   // Engrossar a queima e unir ao bloco (ISOLADO)
         private const int CmdIniciarLeitura = 8;    // Gravador: snapshot inicial (ação manual)
         private const int CmdGravarLeitura = 9;     // Gravador: diff + dump das features novas
+        private const int CmdCriarEletrodoManual = 10; // Criar 1 eletrodo a partir da seleção manual de faces
+        private const int CmdAplicarGap = 11;       // GAP + cor + nome no corpo já unido (ambiente de PEÇA)
+        private const int CmdDuplicarEletrodo = 12; // Duplicar eletrodo(s) selecionado(s) p/ o próximo Ra da tabela
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -40,11 +43,14 @@ namespace AutoEDM.AddIn
             switch (control.CommandId)
             {
                 case CmdCriarEletrodos: CriarEletrodos(); break;
+                case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
                 case CmdRelatorio: GerarRelatorioCoordenadas(); break;
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
                 case CmdCriarBase: CriarBase(); break;
                 case CmdUnirSuperficies: UnirSuperficies(); break;
+                case CmdAplicarGap: AplicarGap(); break;
+                case CmdDuplicarEletrodo: DuplicarEletrodo(); break;
                 case CmdInspecionar: InspecionarSelecao(); break;
                 case CmdIniciarLeitura: IniciarLeitura(); break;
                 case CmdGravarLeitura: GravarLeitura(); break;
@@ -111,6 +117,34 @@ namespace AutoEDM.AddIn
             catch (Exception ex) { Fail("criar os eletrodos", ex); }
         }
 
+        /// <summary>
+        /// Versão MANUAL do "Criar eletrodos" (Carlos): em vez da detecção automática por
+        /// cor/nível de Z, o usuário SELECIONA à mão a(s) FACE(s) do fundo do bolsão (no SE,
+        /// clique na ocorrência e clique DE NOVO no mesmo ponto — ou segure Alt — para
+        /// selecionar a FACE em vez da peça inteira; não existe um "modo" de seleção
+        /// separado a ligar, é o comportamento nativo de seleção em 2 cliques do SE) e
+        /// clica este botão UMA vez por eletrodo. Cria e posiciona UMA peça com o bloco no
+        /// centro XY + Z mais fundo das faces escolhidas — mesmo pipeline do "Criar
+        /// eletrodos" automático. ESCREVE na montagem (não salva).
+        /// </summary>
+        private void CriarEletrodoManual()
+        {
+            if (!TryAssembly(out dynamic app, out dynamic doc)) return;
+            try
+            {
+                Log.Info("===== CRIAR ELETRODO (MANUAL, da seleção) (add-in) =====");
+                var connector = SolidEdgeConnector.Attach(app);
+                var p = new ElectrodeParams { ElectrodeName = "ELD" };
+                var builder = new ElectrodeBuilder(connector);
+
+                ManualElectrodeResult res = builder.CreateElectrodeFromSelection(doc, p);
+                MessageBox.Show(res.Message, "AutoEDM — Criar eletrodo (manual)", MessageBoxButtons.OK,
+                    res.Created ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                Log.Info("===== FIM (CRIAR ELETRODO MANUAL) =====");
+            }
+            catch (Exception ex) { Fail("criar o eletrodo manual", ex); }
+        }
+
         /// <summary>Relatório de coordenadas de queima (.txt + .csv). Somente leitura.</summary>
         private void GerarRelatorioCoordenadas()
         {
@@ -168,7 +202,10 @@ namespace AutoEDM.AddIn
         /// Botão ISOLADO "Unir superfícies" (ambiente de PEÇA): engrossa a superfície de
         /// queima selecionada para cima até dentro do bloco e une num sólido único. Separado
         /// do "Criar Base" porque o thicken, ao falhar, envenenava o doc e
-        /// derrubava a fixação — aqui o experimento fica isolado. ESCREVE na peça.
+        /// derrubava a fixação — aqui o experimento fica isolado. SÓ UNE (Carlos, 2026-07-21:
+        /// separado do GAP/cor/nome — quando a união automática falha, ele une NA MÃO no SE e
+        /// segue direto para "Aplicar GAP", sem precisar que este botão também acerte a união).
+        /// ESCREVE na peça.
         /// </summary>
         private void UnirSuperficies()
         {
@@ -176,30 +213,85 @@ namespace AutoEDM.AddIn
             try
             {
                 Log.Info("===== UNIR SUPERFÍCIES (add-in) =====");
-
-                // Lista suspensa Ra→GAP→cor (Carlos, 2026-07-17): escolher Ra já aplica o GAP
-                // (Model.FaceOffsets, editável em Ordenado) e a cor; "Só diagnosticar" mantém o
-                // comportamento antigo (só relata arestas abertas, não altera a peça).
-                var opt = new BlockOverSurfacesOptions();
-                using (var picker = new RaGapPickerForm())
-                {
-                    if (picker.ShowDialog() == DialogResult.OK && picker.Chosen != null)
-                    {
-                        opt.UniteChoice = picker.Chosen;
-                        Log.Info($"Unir: escolhido {picker.Chosen.Label}.");
-                    }
-                }
-
                 var builder = new SurfaceBlockBuilder();
-                BlockOverSurfacesResult res = builder.UniteSurfacesToBlock(doc, opt);
+                BlockOverSurfacesResult res = builder.UniteSurfacesToBlock(doc, new BlockOverSurfacesOptions());
                 string msg = res.SurfacesUnited
-                    ? $"Superfície unida ao bloco{(res.SurfacesOffset ? " + GAP aplicado" : "")}. Confira no modelo.\n\nDetalhe no log (linhas 'Unir:')."
-                    : "Não uni as superfícies ao bloco ainda.\n\nVeja o log (linhas 'Unir:') para o ponto exato — o bloco/faixa/furos NÃO foram tocados.";
+                    ? "Superfície unida ao bloco ✓. Confira no modelo — depois use 'Aplicar GAP' para o offset/cor.\n\nDetalhe no log (linhas 'Unir:')."
+                    : "Não uni as superfícies ao bloco ainda.\n\nVeja o log (linhas 'Unir:') para o ponto exato — o bloco/faixa/furos NÃO foram tocados. " +
+                      "Se preferir, una NA MÃO no SE e use 'Aplicar GAP' no corpo já mesclado.";
                 MessageBox.Show(msg, "AutoEDM — Unir superfícies", MessageBoxButtons.OK,
                     res.SurfacesUnited ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
                 Log.Info("===== FIM (UNIR SUPERFÍCIES) =====");
             }
             catch (Exception ex) { Fail("unir as superfícies", ex); }
+        }
+
+        /// <summary>
+        /// Botão "Aplicar GAP" (ambiente de PEÇA, Carlos, 2026-07-21): separado de "Unir
+        /// superfícies" — roda tanto depois de uma união automática quanto de uma união MANUAL
+        /// feita direto no SE (quando o botão "Unir" falha, o Carlos tem essa saída). Selecione
+        /// as faces de queima no corpo já unido (ou deixe em branco logo após um "Unir
+        /// superfícies" bem-sucedido na mesma sessão — cai no heurístico antigo) e clique.
+        /// A lista já abre pré-selecionada no Ra gravado na peça, se houver (detectado da cor
+        /// pela seleção manual, ou de uma aplicação anterior). ESCREVE na peça.
+        /// </summary>
+        private void AplicarGap()
+        {
+            if (!TryPart(out dynamic app, out dynamic doc)) return;
+            try
+            {
+                Log.Info("===== APLICAR GAP (add-in) =====");
+
+                double? preselect = RaVariableStore.TryRead(doc, out double ra) ? (double?)ra : null;
+                RaGapPresets.Choice chosen;
+                using (var picker = new RaGapPickerForm(preselect))
+                {
+                    if (picker.ShowDialog() != DialogResult.OK || picker.Chosen == null)
+                    {
+                        Log.Info("Aplicar GAP: cancelado pelo usuário.");
+                        return;
+                    }
+                    chosen = picker.Chosen;
+                }
+                Log.Info($"Aplicar GAP: escolhido {chosen.Label}.");
+
+                var builder = new SurfaceBlockBuilder();
+                BlockOverSurfacesResult res = builder.ApplyGapToUnitedSurfaces(doc, chosen);
+                string msg = res.SurfacesOffset
+                    ? $"GAP {chosen.GapMm:0.00}mm (Ra {chosen.Ra:0.0}) aplicado + cor + nome da feature. Confira no modelo.\n\nDetalhe no log (linhas 'Aplicar GAP:')."
+                    : "Não apliquei o GAP.\n\n" + (res.Warnings.Count > 0 ? res.Warnings[0] : "Veja o log (linhas 'Aplicar GAP:').");
+                MessageBox.Show(msg, "AutoEDM — Aplicar GAP", MessageBoxButtons.OK,
+                    res.SurfacesOffset ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                Log.Info("===== FIM (APLICAR GAP) =====");
+            }
+            catch (Exception ex) { Fail("aplicar o GAP", ex); }
+        }
+
+        /// <summary>
+        /// Botão "Duplicar eletrodo" (ambiente de MONTAGEM, Carlos, 2026-07-21): selecione a
+        /// ocorrência de UM eletrodo já com GAP aplicado (tem Ra gravado — variável ou feature
+        /// "GAP: ... - Ra: ...") e clique. Cria uma cópia da peça com o GAP no PRÓXIMO Ra da
+        /// escada (mais grosso = desbaste, <see cref="RaColorMap.RoughingRaFor"/>) e posiciona
+        /// essa cópia em TODAS as posições onde o eletrodo original aparece na montagem (copia
+        /// as instâncias — não só a selecionada) — assim um par desbaste/acabamento sai em 1
+        /// clique por posição repetida. Não salva a montagem.
+        /// </summary>
+        private void DuplicarEletrodo()
+        {
+            if (!TryAssembly(out dynamic app, out dynamic doc)) return;
+            try
+            {
+                Log.Info("===== DUPLICAR ELETRODO (add-in) =====");
+                var connector = SolidEdgeConnector.Attach(app);
+                var p = new ElectrodeParams { ElectrodeName = "ELD" };
+                var builder = new ElectrodeBuilder(connector);
+
+                DuplicateElectrodeResult res = builder.DuplicateElectrodeToNextGap(doc, p);
+                MessageBox.Show(res.Message, "AutoEDM — Duplicar eletrodo", MessageBoxButtons.OK,
+                    res.Created ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                Log.Info("===== FIM (DUPLICAR ELETRODO) =====");
+            }
+            catch (Exception ex) { Fail("duplicar o eletrodo", ex); }
         }
 
         /// <summary>

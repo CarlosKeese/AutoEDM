@@ -135,6 +135,18 @@ Ver a saga completa e os caminhos ainda abertos na **§4**.
 | **Relatório de coordenadas de queima** | ✅ | reusa `GetTransform` + bbox por detalhe; grava `.txt`+`.csv` | Log 21/024; **Ferramenta 1 pronta** |
 | **Spec-sheet por eletrodo** | ✅ | reusa `PlanFromAssemblyDocument` (Ra/pegada/blank/offset por Ra/fixação); grava `.txt`+`.csv` (1 linha/passe) | **Ferramenta 2 validada (Log 30)** |
 
+### 2.8. União de superfície→sólido, GAP editável, variáveis (2026-07-20/21)
+
+| Capacidade | Status | API real | Evidência |
+|---|---|---|---|
+| Unir superfície ao sólido do bloco | ✅ (mas Carlos reporta falha frequente na prática) | `Model.Attach(NumOfObjects, psaObjects VARIANT tipado, bAdd:bool, fpcSide:int — NÃO opcional, tenta igRight=2 e igLeft=1) → void` (não cria feature, superfície é consumida/reparentada) | log `094346` (2026-07-20) |
+| Unir via booleana **REGISTRADA na árvore** — **PREFERIDO desde 2026-07-21** | 📖 assinatura confirmada; comportamento ao vivo 🟡 (não exercitada como caminho PRIMÁRIO ainda) | `Model.BooleanFeatures.Add(NumberOfTools:int, Tools:VARIANT tipado, Function:int=3/*seBooleanUnite*/, [opt]PlaneSide) → BooleanFeature`; coleção via `InvokeMember(GetProperty)` (acesso dinâmico dá E_NOINTERFACE) | dump:8736/8743 (`_IBooleanFeaturesAuto.Add`) |
+| ⚠️ Falha silenciosa da booleana/GAP | ✅ (achado 2026-07-20) | a chamada pode NÃO lançar e ainda assim a feature voltar com `.Status=igFeatureFailed` — **sempre decodificar `.Status`** antes de aceitar sucesso | log `102744` |
+| GAP (offset de faísca) — aplicar | ✅ | `Model.FaceOffsets.AddEx(NumFaces, FacesToBeOffset SAFEARRAY, FaceOffsetType=1, NumOfLiveRules=0, LiveRules, LiveRulesOnOff, BlendRecreation=194, AlongOrReverseVector=20, offsetDistance:double NEGATIVO=encolhe, ToReferenceEntity, ToKeyPoint, DistanceFromKeyPoint=0, AlongOrReverseDirectionToKeyPoint=44)` — só existe em modelagem ORDENADA; `ToReferenceEntity`/`ToKeyPoint` nulos precisam de `new DispatchWrapper(null)` (`null` cru vira `VT_EMPTY` e dá `DISP_E_TYPEMISMATCH`) | log `101852`/`102744` |
+| GAP — **editar** um offset já existente | 📖 assinatura confirmada; não exercitado ao vivo | `FaceOffset.Distance` é propriedade `double` get/put comum (metros, negativo=encolhe) — acesso dinâmico direto funciona (`feature.Distance = valor`), sem InvokeMember, já que o objeto vem de uma enumeração normal da coleção | dump:10753-10754 |
+| Excluir superfície usada como ferramenta (limpeza pós-união) | 📖 assinatura confirmada; não exercitado ao vivo | `CopySurface.Delete()` / `StitchSurface.Delete()` — sem args, `void`. Geometria já incorporada ao corpo mesclado (consumo síncrono, não é referência paramétrica viva) → seguro excluir depois de confirmar a união | dump:17307/17509 |
+| Guardar um valor simples (ex.: Ra) numa peça | 📖 assinatura confirmada; não exercitado ao vivo | `Document.Variables.Add(Name:BSTR, Formula:BSTR, [opt]UnitsType, [out]Variable)` (o `[out]` final vira retorno em late binding, igual `HoleDataCollection.Add`). **Ler/escrever por `Variable.Formula` (string), NUNCA `Variable.Value` (double)** — Value é escalado pela unidade (armadilha p/ valor que não é uma dimensão CAD de verdade) | dump:28018 (`_IVariablesAuto.Add`), 27943-27944 (`Formula`) |
+
 ---
 
 ## 3. Edição in-place — entendimento **corrigido** (2026-07-08)

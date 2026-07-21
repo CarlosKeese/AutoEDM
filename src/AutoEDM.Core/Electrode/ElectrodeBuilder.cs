@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using AutoEDM.Assembly;
 using AutoEDM.Com;
 using AutoEDM.Diagnostics;
@@ -11,6 +13,28 @@ using AutoEDM.Selection;
 
 namespace AutoEDM.Electrode
 {
+    /// <summary>Resultado de <see cref="ElectrodeBuilder.CreateElectrodeFromSelection"/> (1 clique = 1 eletrodo).</summary>
+    public sealed class ManualElectrodeResult
+    {
+        public bool Created { get; set; }
+        public string Message { get; set; }
+        public string Path { get; set; }
+        public int FaceCount { get; set; }
+        public double CenterXmm { get; set; }
+        public double CenterYmm { get; set; }
+        public double DeepestZmm { get; set; }
+        public double TopZmm { get; set; }
+    }
+
+    /// <summary>Resultado de <see cref="ElectrodeBuilder.DuplicateElectrodeToNextGap"/>.</summary>
+    public sealed class DuplicateElectrodeResult
+    {
+        public bool Created { get; set; }
+        public string Message { get; set; }
+        public string NewPath { get; set; }
+        public int InstanceCount { get; set; }
+    }
+
     /// <summary>
     /// Orquestra a extração de eletrodos a partir de uma montagem, em contexto.
     ///
@@ -359,135 +383,390 @@ namespace AutoEDM.Electrode
 
             int created = 0;
             foreach (var e in res.Electrodes)
-            {
-                dynamic partDoc = null;
-                try
-                {
-                    double blockH = p.HolderHeight;
-
-                    // DIMENSIONAMENTO: menor blank PADRÃO (catálogo de cobre) que comporta a
-                    // PEGADA da queima (SEM sobremetal). NÃO inflado p/ os furos — a fixação
-                    // se adapta (furos ou eixo). Piso mínimo só p/ o eixo menor caber.
-                    double footLong  = Math.Max(e.FootprintXmm, e.FootprintYmm) + 2 * p.BlankMargin;
-                    double footShort = Math.Min(e.FootprintXmm, e.FootprintYmm) + 2 * p.BlankMargin;
-                    double needLong  = Math.Max(footLong,  blockMin);
-                    double needShort = Math.Max(footShort, blockMin);
-
-                    var needBox = new BoundingBox { MaxX = needLong, MaxY = needShort };
-                    BlankSpec blank = _blankLibrary.SelectBlank(needBox, 0.0, p.Material);
-
-                    double blockLong, blockShort; bool roundBlank = false;
-                    if (blank != null)
-                    {
-                        switch (blank.Shape)
-                        {
-                            case BlankShape.Rectangular: blockLong = blank.DimA; blockShort = blank.DimB ?? blank.DimA; break;
-                            case BlankShape.Round:       roundBlank = true; blockLong = blockShort = blank.DimA; break;
-                            default:                     blockLong = blockShort = blank.DimA; break; // Square
-                        }
-                        Log.Info($"Eletrodo {e.Index}: blank {blank.Describe()} p/ pegada {e.FootprintXmm:0.0}×{e.FootprintYmm:0.0}.");
-                    }
-                    else
-                    {
-                        blockLong = needLong; blockShort = needShort;
-                        Log.Warn($"Eletrodo {e.Index}: NENHUM blank de '{p.Material}' comporta {needLong:0.0}×{needShort:0.0} mm — " +
-                                 "COMPRAR MATERIAL. Usando caixa sob medida.");
-                    }
-
-                    // Orienta o lado MAIOR do blank ao longo do lado maior da pegada.
-                    bool xIsLong = e.FootprintXmm >= e.FootprintYmm;
-                    double blockX = xIsLong ? blockLong : blockShort;
-                    double blockY = xIsLong ? blockShort : blockLong;
-
-                    // POSICIONAMENTO (regra do Carlos, Logs 51-52) — DOIS deslocamentos:
-                    //  (1) MONTAGEM: PutOrigin coloca o ZERO-PEÇA (origem do .par) na
-                    //      SUPERFÍCIE de queima, no espaço da MONTAGEM. A superfície local da
-                    //      cavidade vira montagem somando o TRANSFORM da ocorrência da cavidade
-                    //      (occ*mm) — que agora é lido CORRETO (antes vinha 0 por bug do
-                    //      GetTransform, jogando o eletrodo ~23mm fora no Z).
-                    //  (2) .par: o bloco é levantado internamente pela distância
-                    //      (superfície→zero-máquina) + folga, de modo que o FUNDO do holder
-                    //      fique 'HolderBaseClearanceMm' acima do zero-máquina (origem da
-                    //      montagem). Assim a origem toca a superfície (lá embaixo) e o holder
-                    //      fica no plano de referência da máquina (todos os holders juntos).
-                    //
-                    // A superfície que o eletrodo toca é o FUNDO do bolsão — a face
-                    // PERPENDICULAR ao Z no ponto MAIS FUNDO (Z mais negativo na montagem),
-                    // não o topo/abertura (paredes paralelas ao Z). Por isso DeepestZmm
-                    // (Z mínimo das faces), não TopZmm — antes estava invertido (Log 52).
-                    double baseZmm = e.DeepestZmm;                      // fundo do bolsão (Z mín.), LOCAL da cavidade
-                    // Aplica a rotação Z da cavidade ao CENTRO da queima (local -> montagem).
-                    // Z não muda numa rotação em torno de Z. A ocorrência do eletrodo também
-                    // é girada por occAz (PutTransform), alinhando o bloco à região de queima.
-                    double cosZ = Math.Cos(occAz), sinZ = Math.Sin(occAz);
-                    double rcx = e.CenterXmm * cosZ - e.CenterYmm * sinZ;
-                    double rcy = e.CenterXmm * sinZ + e.CenterYmm * cosZ;
-                    double asmX = occXmm + rcx;
-                    double asmY = occYmm + rcy;
-                    double asmZ = occZmm + baseZmm;                     // superfície, MONTAGEM (a origem vai aqui)
-
-                    double clearance = p.HolderBaseClearanceMm;         // folga do fundo do bloco acima do zero-máquina
-                    double lift = clearance - asmZ;                     // leva o fundo do bloco a Z=+clearance na montagem
-                    if (lift <= 0)
-                    {
-                        Log.Warn($"Eletrodo {e.Index}: superfície de queima em Z={asmZ:0.0}mm (montagem) NÃO está abaixo do " +
-                                 $"zero-máquina+{clearance:0.0} — lift calculado {lift:0.0} inválido; usando {clearance:0.0}mm. " +
-                                 "Confira o transform da cavidade / o sinal de Z.");
-                        lift = clearance;
-                    }
-                    double blockBaseAsm = asmZ + lift;                  // ~= clearance (fundo do bloco na montagem)
-
-                    string path = System.IO.Path.Combine(folder, $"{p.ElectrodeName}_D{e.Index:00}.par");
-                    Log.Info($"Eletrodo {e.Index}: base {blockX:0.0}×{blockY:0.0}×{blockH:0.0} mm; " +
-                             $"superfície local Z={baseZmm:0.0} -> montagem Z={asmZ:0.0} (origem); " +
-                             $"lift .par={lift:0.0}mm -> fundo do bloco na montagem Z={blockBaseAsm:0.0}mm; " +
-                             $"XY montagem ({asmX:0.0}, {asmY:0.0}), rotZ={occAz * 180.0 / Math.PI:0.0}° -> {System.IO.Path.GetFileName(path)}");
-
-                    partDoc = app.Documents.Add("SolidEdge.PartDocument");
-                    // Bloco: cilindro se o blank é redondo, senão caixa. Origem na superfície;
-                    // levantado 'lift' até o fundo do holder ficar no zero-máquina+folga.
-                    if (roundBlank) BlankModeler.CreateCylinder(partDoc, blockLong, blockH, 1, 2, lift);
-                    else            BlankModeler.CreateBox(partDoc, blockX, blockY, blockH, 1, 2, lift);
-
-                    // Fixação: furos M6+2×Ø4 se couberem no bloco; senão EIXO no topo (Carlos).
-                    if (BlankModeler.FixationHolesFit(blockX, blockY, fix))
-                    {
-                        Log.Info($"Eletrodo {e.Index}: fixação por FUROS (M6 + 2×Ø4).");
-                        BlankModeler.AddFixationHoles(partDoc, blockX, blockY, blockH, lift, fix);
-                    }
-                    else
-                    {
-                        Log.Info($"Eletrodo {e.Index}: furos não cabem no bloco {blockX:0.0}×{blockY:0.0} — fixação por EIXO no topo.");
-                        BlankModeler.AddShaft(partDoc, blockX, blockY, lift + blockH, fix);
-                    }
-                    partDoc.SaveAs(path);
-                    partDoc.Close();
-                    partDoc = null;
-
-                    dynamic occ = asmDoc.Occurrences.AddByFilename(path);
-                    // PutTransform (dump linha 6707): origem→superfície + rotação Z da cavidade,
-                    // alinhando o bloco à região de queima girada. Fallback p/ PutOrigin.
-                    try { occ.PutTransform(asmX / 1000.0, asmY / 1000.0, asmZ / 1000.0, 0.0, 0.0, occAz); }
-                    catch (Exception pe)
-                    {
-                        Log.Warn($"Eletrodo {e.Index}: PutTransform falhou ({pe.GetBaseException().Message}); tentando PutOrigin (sem rotação).");
-                        try { occ.PutOrigin(asmX / 1000.0, asmY / 1000.0, asmZ / 1000.0); }
-                        catch (Exception pe2) { Log.Warn($"Eletrodo {e.Index}: PutOrigin também falhou: {pe2.GetBaseException().Message}"); }
-                    }
-
+                if (CreateAndPlaceElectrode(app, asmDoc, folder, e, occXmm, occYmm, occZmm, occAz, p, fix, blockMin))
                     created++;
-                    Log.Info($"Eletrodo {e.Index} criado e posicionado ✓");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn($"Eletrodo {e.Index} falhou: {ex.GetBaseException().Message}");
-                    try { if (partDoc != null) partDoc.Close(); } catch { }
-                }
-            }
 
             Log.Info($"{created}/{res.Electrodes.Count} eletrodo(s) criado(s). " +
                      "Revise no SE; SALVE a montagem manualmente; depois subtraia a cavidade de cada bloco.");
             return created;
+        }
+
+        // ------------------------------------------------------------------
+        //  Ferramenta: criar UM eletrodo a partir da SELEÇÃO manual de faces
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Versão MANUAL da criação de eletrodos (Carlos): em vez da análise automática
+        /// por cor/nível de Z, o usuário SELECIONA à mão (no SE — clique de novo no mesmo
+        /// ponto, ou segure Alt, para pegar a FACE em vez da ocorrência inteira) as faces
+        /// do fundo do bolsão a erodir e clica este comando UMA vez por eletrodo. Reusa o
+        /// MESMO pipeline de posicionamento/blank/fixação de <see cref="CreateElectrodesWithBlank"/>
+        /// (<see cref="CreateAndPlaceElectrode"/>) — a única diferença é a origem do
+        /// "candidato": aqui vem do bounding box da seleção, não do agrupamento por Z.
+        /// </summary>
+        public ManualElectrodeResult CreateElectrodeFromSelection(dynamic asmDoc, ElectrodeParams p)
+        {
+            var result = new ManualElectrodeResult();
+            if (_connector.Application == null)
+                throw new InvalidOperationException("Conecte o SolidEdgeConnector primeiro.");
+            if (asmDoc == null) throw new ArgumentNullException(nameof(asmDoc));
+
+            dynamic app = _connector.Application;
+            var ctx = new AssemblyContext(asmDoc);
+
+            List<object> faces = CollectSelectedFaces(asmDoc, out int skipped);
+            if (faces.Count == 0)
+            {
+                result.Message = "Nenhuma FACE selecionada. No Solid Edge, clique na ocorrência e clique DE NOVO " +
+                    "no mesmo ponto (ou segure Alt ao clicar) para selecionar a FACE em vez da peça inteira — " +
+                    "selecione o(s) fundo(s) do bolsão a erodir e tente de novo.";
+                Log.Warn("Criar eletrodo manual: " + result.Message);
+                return result;
+            }
+            if (skipped > 0)
+                Log.Warn($"Criar eletrodo manual: {skipped} item(ns) da seleção ignorado(s) (não são faces).");
+
+            double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
+            double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
+            int withBox = 0;
+            foreach (var f in faces)
+            {
+                if (!FaceGeometry.TryGetRangeMm(f, out double[] mn, out double[] mx)) continue;
+                withBox++;
+                minX = Math.Min(minX, mn[0]); maxX = Math.Max(maxX, mx[0]);
+                minY = Math.Min(minY, mn[1]); maxY = Math.Max(maxY, mx[1]);
+                minZ = Math.Min(minZ, mn[2]); maxZ = Math.Max(maxZ, mx[2]);
+            }
+            if (withBox == 0)
+            {
+                result.Message = "Não consegui ler a geometria (bounding box) das faces selecionadas.";
+                Log.Warn("Criar eletrodo manual: " + result.Message);
+                return result;
+            }
+
+            // Ocorrência dona das faces (top-level) -> transform peça->montagem, igual ao
+            // fluxo automático (translação + rotação Z; X/Y avisa e não aplica, Log 53).
+            OccurrenceInfo cavity = FindOwningOccurrence(ctx, faces[0]);
+            double occXmm = 0, occYmm = 0, occZmm = 0, occAz = 0;
+            if (cavity != null)
+            {
+                if (ctx.TryGetPlacement(cavity, out double cox, out double coy, out double coz,
+                                         out double cax, out double cay, out double caz))
+                {
+                    occXmm = cox * 1000.0; occYmm = coy * 1000.0; occZmm = coz * 1000.0;
+                    occAz = caz;
+                    Log.Info($"Criar eletrodo manual: faces da ocorrência '{cavity.Name}' — origem ({occXmm:0.0}, {occYmm:0.0}, {occZmm:0.0}) mm.");
+                    if (Math.Abs(cax) + Math.Abs(cay) > 1e-4)
+                        Log.Warn("Criar eletrodo manual: ocorrência INCLINADA (rotação X/Y ≠ 0) — só a rotação Z é aplicada; confira a orientação.");
+                }
+                else Log.Warn($"Criar eletrodo manual: transform de '{cavity.Name}' ilegível — usando coordenadas locais como se fossem da montagem.");
+            }
+            else
+            {
+                Log.Warn("Criar eletrodo manual: não achei a ocorrência (top-level) dona das faces selecionadas " +
+                         "— usando as coordenadas locais como se já fossem da montagem.");
+            }
+
+            var e = new Selection.ProposedElectrode
+            {
+                Index = NextElectrodeIndex(ctx, p.ElectrodeName),
+                FaceCount = faces.Count,
+                CenterXmm = (minX + maxX) / 2.0,
+                CenterYmm = (minY + maxY) / 2.0,
+                DeepestZmm = minZ,
+                TopZmm = maxZ,
+                FootprintXmm = maxX - minX,
+                FootprintYmm = maxY - minY
+            };
+            result.FaceCount = e.FaceCount;
+            result.CenterXmm = e.CenterXmm; result.CenterYmm = e.CenterYmm;
+            result.DeepestZmm = e.DeepestZmm; result.TopZmm = e.TopZmm;
+
+            // Cor->Ra (Carlos, 2026-07-21): lida AQUI, nas faces originais da CAVIDADE ainda na
+            // montagem — é a ÚNICA janela em que a cor de queima está disponível (depois de
+            // copiada/unida, a superfície não carrega mais a cor original, ver [[autoedm-decisions]]).
+            // Best-effort: só orienta o "Aplicar GAP" depois (RaVariableStore); nunca bloqueia a
+            // criação do eletrodo.
+            double? detectedRa = DetectCommonRa(faces, app);
+
+            string folder = ResolveElectrodeFolder(asmDoc, p);
+            System.IO.Directory.CreateDirectory(folder);
+            var fix = new FixationPattern();
+            double blockMin = fix.ShaftDiameterSmall + 4.0;
+
+            Log.Info($"Criar eletrodo manual: D{e.Index:00}, {e.FaceCount} face(s), " +
+                     $"centro local ({e.CenterXmm:0.0}, {e.CenterYmm:0.0}), fundo Z={e.DeepestZmm:0.0} (local).");
+
+            result.Created = CreateAndPlaceElectrode(app, asmDoc, folder, e, occXmm, occYmm, occZmm, occAz, p, fix, blockMin, detectedRa);
+            result.Path = System.IO.Path.Combine(folder, $"{p.ElectrodeName}_D{e.Index:00}.par");
+            result.Message = result.Created
+                ? $"Eletrodo D{e.Index:00} criado e posicionado no centro de {e.FaceCount} face(s) (fundo Z={e.DeepestZmm:0.0} mm)." +
+                  (detectedRa.HasValue ? $" Ra {detectedRa.Value:0.0} detectado pela cor e gravado na peça." : "")
+                : $"Falha ao criar o eletrodo D{e.Index:00} — veja o log.";
+            return result;
+        }
+
+        /// <summary>
+        /// Ra comum às faces selecionadas, lido pela cor (<see cref="FaceStyleColorReader"/> +
+        /// <see cref="RaColorMap"/>) — mesma leitura usada pelo fluxo automático, aqui aplicada
+        /// só às faces que o usuário escolheu. Devolve null (sem gravar nada) se nenhuma face
+        /// tiver cor mapeada, ou se as faces mapeadas discordarem entre si (queima com Ra
+        /// misto não é o caso normal — mais seguro não adivinhar).
+        /// </summary>
+        private static double? DetectCommonRa(List<object> faces, dynamic application)
+        {
+            var colorReader = new FaceStyleColorReader();
+            var colorMap = new RaColorMap();
+            double? ra = null;
+            int matched = 0, mismatched = 0;
+            foreach (var f in faces)
+            {
+                if (!colorReader.TryReadColor(f, application, out System.Drawing.Color color, out string colorSource)) continue;
+                if (!colorMap.TryGetRa(color, out double faceRa, out _)) continue;
+                matched++;
+                if (ra == null) ra = faceRa;
+                else if (Math.Abs(ra.Value - faceRa) > 1e-6) mismatched++;
+            }
+            if (matched == 0) { Log.Info("Criar eletrodo manual: nenhuma face com cor mapeada — Ra não detectado."); return null; }
+            if (mismatched > 0)
+            {
+                Log.Warn($"Criar eletrodo manual: faces selecionadas têm Ra MISTO ({matched} mapeada(s), {mismatched} discordância(s)) — não gravando Ra (ambíguo).");
+                return null;
+            }
+            Log.Info($"Criar eletrodo manual: Ra {ra.Value:0.0} detectado pela cor ({matched} face(s)).");
+            return ra;
+        }
+
+        /// <summary>
+        /// Faces (objetos COM crus) da SelectSet atual — tolerante a itens que não são faces.
+        /// NUNCA falha silenciosamente: se a SelectSet vier vazia/inacessível, ou se algum item
+        /// não for uma face utilizável, loga o motivo real (exceção ou dump SPY do tipo do item)
+        /// em vez de só devolver "0 faces" sem explicação — é a única forma de descobrir, num
+        /// próximo teste real, o que a seleção de uma face de OCORRÊNCIA (direto na montagem,
+        /// sem entrar em contexto) realmente entrega em <c>AssemblyDocument.SelectSet</c>.
+        /// </summary>
+        private static List<object> CollectSelectedFaces(dynamic doc, out int skipped)
+        {
+            var faces = new List<object>();
+            skipped = 0;
+            dynamic ss;
+            try { ss = doc.SelectSet; }
+            catch (Exception ex) { Log.Warn($"Criar eletrodo manual: doc.SelectSet inacessível: {ex.GetBaseException().Message}"); return faces; }
+
+            int n = 0;
+            try { n = (int)ss.Count; }
+            catch (Exception ex) { Log.Warn($"Criar eletrodo manual: SelectSet.Count falhou: {ex.GetBaseException().Message}"); return faces; }
+            Log.Info($"Criar eletrodo manual: SelectSet.Count={n}.");
+
+            for (int i = 1; i <= n; i++)
+            {
+                object item;
+                try { item = ss.Item(i); }
+                catch (Exception ex) { Log.Warn($"Criar eletrodo manual: SelectSet.Item({i}) falhou: {ex.GetBaseException().Message}"); continue; }
+                if (item != null && FaceGeometry.TryGetRangeMm(item, out _, out _))
+                {
+                    faces.Add(item);
+                }
+                else
+                {
+                    skipped++;
+                    ComDiagnostics.DumpObject($"Criar eletrodo manual: SelectSet[{i}] não é face utilizável", item, 1);
+                }
+            }
+            return faces;
+        }
+
+        /// <summary>
+        /// Acha, entre as ocorrências TOP-LEVEL da montagem, a que contém o documento da
+        /// face amostrada (via Face.Document, comparado por FullName/Name — a mesma peça
+        /// pode ter proxies COM diferentes, então comparar por REFERÊNCIA não é confiável).
+        /// Null se a face não vier de nenhuma ocorrência top-level conhecida (ex.: dentro
+        /// de uma subMontagem — fora do escopo atual, igual ao <see cref="FindBurnOccurrence"/>).
+        /// </summary>
+        private static OccurrenceInfo FindOwningOccurrence(AssemblyContext ctx, object sampleFace)
+        {
+            string docName = null, docFull = null;
+            try
+            {
+                dynamic fdoc = ((dynamic)sampleFace).Document;
+                try { docName = (string)fdoc.Name; } catch { }
+                try { docFull = (string)fdoc.FullName; } catch { }
+            }
+            catch (Exception ex) { Log.Warn($"Criar eletrodo manual: Face.Document indisponível: {ex.GetBaseException().Message}"); }
+            if (docName == null && docFull == null) return null;
+
+            foreach (var occ in ctx.GetOccurrences())
+            {
+                if (occ.OccurrenceDocument == null) continue;
+                string oName = null, oFull = null;
+                try { oName = (string)occ.OccurrenceDocument.Name; } catch { }
+                try { oFull = (string)occ.OccurrenceDocument.FullName; } catch { }
+                if ((docFull != null && string.Equals(oFull, docFull, StringComparison.OrdinalIgnoreCase)) ||
+                    (docName != null && string.Equals(oName, docName, StringComparison.OrdinalIgnoreCase)))
+                    return occ;
+            }
+            return null;
+        }
+
+        /// <summary>Próximo índice "D##" livre, olhando os nomes das ocorrências já na montagem
+        /// (ex.: "ELD_D01", "ELD_D02" -> devolve 3) — assim eletrodos manuais e automáticos
+        /// nunca colidem de nome, mesmo entre sessões do SE (o contador não é um campo estático).</summary>
+        private static int NextElectrodeIndex(AssemblyContext ctx, string electrodeName)
+        {
+            int max = 0;
+            string prefix = (electrodeName ?? "ELD") + "_D";
+            foreach (var occ in ctx.GetOccurrences())
+            {
+                string name = occ.Name ?? "";
+                int i = name.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+                if (i < 0) continue;
+                string rest = name.Substring(i + prefix.Length);
+                int j = 0; while (j < rest.Length && char.IsDigit(rest[j])) j++;
+                if (j > 0 && int.TryParse(rest.Substring(0, j), out int n) && n > max) max = n;
+            }
+            return max + 1;
+        }
+
+        /// <summary>
+        /// Cria e posiciona UM eletrodo (peça + bloco + fixação) a partir de um
+        /// <see cref="Selection.ProposedElectrode"/> — reusado pela criação AUTOMÁTICA
+        /// (<see cref="CreateElectrodesWithBlank"/>, um por candidato da análise de Z) e
+        /// pela criação MANUAL (<see cref="CreateElectrodeFromSelection"/>, um por clique,
+        /// a partir das faces que o usuário selecionou à mão). Mesmo pipeline dos dois
+        /// fluxos: dimensiona o blank pela pegada, modela o bloco (caixa ou cilindro),
+        /// aplica a fixação (furos ou eixo) e posiciona a ocorrência na montagem via
+        /// PutTransform (origem = centro XY + fundo Z da região; rotação Z da cavidade).
+        /// </summary>
+        private bool CreateAndPlaceElectrode(dynamic app, dynamic asmDoc, string folder,
+            Selection.ProposedElectrode e, double occXmm, double occYmm, double occZmm, double occAz,
+            ElectrodeParams p, FixationPattern fix, double blockMin, double? detectedRa = null)
+        {
+            dynamic partDoc = null;
+            try
+            {
+                double blockH = p.HolderHeight;
+
+                // DIMENSIONAMENTO: menor blank PADRÃO (catálogo de cobre) que comporta a
+                // PEGADA da queima (SEM sobremetal). NÃO inflado p/ os furos — a fixação
+                // se adapta (furos ou eixo). Piso mínimo só p/ o eixo menor caber.
+                double footLong  = Math.Max(e.FootprintXmm, e.FootprintYmm) + 2 * p.BlankMargin;
+                double footShort = Math.Min(e.FootprintXmm, e.FootprintYmm) + 2 * p.BlankMargin;
+                double needLong  = Math.Max(footLong,  blockMin);
+                double needShort = Math.Max(footShort, blockMin);
+
+                var needBox = new BoundingBox { MaxX = needLong, MaxY = needShort };
+                BlankSpec blank = _blankLibrary.SelectBlank(needBox, 0.0, p.Material);
+
+                double blockLong, blockShort; bool roundBlank = false;
+                if (blank != null)
+                {
+                    switch (blank.Shape)
+                    {
+                        case BlankShape.Rectangular: blockLong = blank.DimA; blockShort = blank.DimB ?? blank.DimA; break;
+                        case BlankShape.Round:       roundBlank = true; blockLong = blockShort = blank.DimA; break;
+                        default:                     blockLong = blockShort = blank.DimA; break; // Square
+                    }
+                    Log.Info($"Eletrodo {e.Index}: blank {blank.Describe()} p/ pegada {e.FootprintXmm:0.0}×{e.FootprintYmm:0.0}.");
+                }
+                else
+                {
+                    blockLong = needLong; blockShort = needShort;
+                    Log.Warn($"Eletrodo {e.Index}: NENHUM blank de '{p.Material}' comporta {needLong:0.0}×{needShort:0.0} mm — " +
+                             "COMPRAR MATERIAL. Usando caixa sob medida.");
+                }
+
+                // Orienta o lado MAIOR do blank ao longo do lado maior da pegada.
+                bool xIsLong = e.FootprintXmm >= e.FootprintYmm;
+                double blockX = xIsLong ? blockLong : blockShort;
+                double blockY = xIsLong ? blockShort : blockLong;
+
+                // POSICIONAMENTO (regra do Carlos, Logs 51-52) — DOIS deslocamentos:
+                //  (1) MONTAGEM: PutOrigin coloca o ZERO-PEÇA (origem do .par) na
+                //      SUPERFÍCIE de queima, no espaço da MONTAGEM. A superfície local da
+                //      cavidade vira montagem somando o TRANSFORM da ocorrência da cavidade
+                //      (occ*mm) — que agora é lido CORRETO (antes vinha 0 por bug do
+                //      GetTransform, jogando o eletrodo ~23mm fora no Z).
+                //  (2) .par: o bloco é levantado internamente pela distância
+                //      (superfície→zero-máquina) + folga, de modo que o FUNDO do holder
+                //      fique 'HolderBaseClearanceMm' acima do zero-máquina (origem da
+                //      montagem). Assim a origem toca a superfície (lá embaixo) e o holder
+                //      fica no plano de referência da máquina (todos os holders juntos).
+                //
+                // A superfície que o eletrodo toca é o FUNDO do bolsão — a face
+                // PERPENDICULAR ao Z no ponto MAIS FUNDO (Z mais negativo na montagem),
+                // não o topo/abertura (paredes paralelas ao Z). Por isso DeepestZmm
+                // (Z mínimo das faces), não TopZmm — antes estava invertido (Log 52).
+                double baseZmm = e.DeepestZmm;                      // fundo do bolsão (Z mín.), LOCAL da cavidade
+                // Aplica a rotação Z da cavidade ao CENTRO da queima (local -> montagem).
+                // Z não muda numa rotação em torno de Z. A ocorrência do eletrodo também
+                // é girada por occAz (PutTransform), alinhando o bloco à região de queima.
+                double cosZ = Math.Cos(occAz), sinZ = Math.Sin(occAz);
+                double rcx = e.CenterXmm * cosZ - e.CenterYmm * sinZ;
+                double rcy = e.CenterXmm * sinZ + e.CenterYmm * cosZ;
+                double asmX = occXmm + rcx;
+                double asmY = occYmm + rcy;
+                double asmZ = occZmm + baseZmm;                     // superfície, MONTAGEM (a origem vai aqui)
+
+                double clearance = p.HolderBaseClearanceMm;         // folga do fundo do bloco acima do zero-máquina
+                double lift = clearance - asmZ;                     // leva o fundo do bloco a Z=+clearance na montagem
+                if (lift <= 0)
+                {
+                    Log.Warn($"Eletrodo {e.Index}: superfície de queima em Z={asmZ:0.0}mm (montagem) NÃO está abaixo do " +
+                             $"zero-máquina+{clearance:0.0} — lift calculado {lift:0.0} inválido; usando {clearance:0.0}mm. " +
+                             "Confira o transform da cavidade / o sinal de Z.");
+                    lift = clearance;
+                }
+                double blockBaseAsm = asmZ + lift;                  // ~= clearance (fundo do bloco na montagem)
+
+                string path = System.IO.Path.Combine(folder, $"{p.ElectrodeName}_D{e.Index:00}.par");
+                Log.Info($"Eletrodo {e.Index}: base {blockX:0.0}×{blockY:0.0}×{blockH:0.0} mm; " +
+                         $"superfície local Z={baseZmm:0.0} -> montagem Z={asmZ:0.0} (origem); " +
+                         $"lift .par={lift:0.0}mm -> fundo do bloco na montagem Z={blockBaseAsm:0.0}mm; " +
+                         $"XY montagem ({asmX:0.0}, {asmY:0.0}), rotZ={occAz * 180.0 / Math.PI:0.0}° -> {System.IO.Path.GetFileName(path)}");
+
+                partDoc = app.Documents.Add("SolidEdge.PartDocument");
+                // Bloco: cilindro se o blank é redondo, senão caixa. Origem na superfície;
+                // levantado 'lift' até o fundo do holder ficar no zero-máquina+folga.
+                if (roundBlank) BlankModeler.CreateCylinder(partDoc, blockLong, blockH, 1, 2, lift);
+                else            BlankModeler.CreateBox(partDoc, blockX, blockY, blockH, 1, 2, lift);
+
+                // Fixação: furos M6+2×Ø4 se couberem no bloco; senão EIXO no topo (Carlos).
+                if (BlankModeler.FixationHolesFit(blockX, blockY, fix))
+                {
+                    Log.Info($"Eletrodo {e.Index}: fixação por FUROS (M6 + 2×Ø4).");
+                    BlankModeler.AddFixationHoles(partDoc, blockX, blockY, blockH, lift, fix);
+                }
+                else
+                {
+                    Log.Info($"Eletrodo {e.Index}: furos não cabem no bloco {blockX:0.0}×{blockY:0.0} — fixação por EIXO no topo.");
+                    BlankModeler.AddShaft(partDoc, blockX, blockY, lift + blockH, fix);
+                }
+                if (detectedRa.HasValue) RaVariableStore.TryWrite(partDoc, detectedRa.Value);
+
+                partDoc.SaveAs(path);
+                partDoc.Close();
+                partDoc = null;
+
+                dynamic occ = asmDoc.Occurrences.AddByFilename(path);
+                // PutTransform (dump linha 6707): origem→superfície + rotação Z da cavidade,
+                // alinhando o bloco à região de queima girada. Fallback p/ PutOrigin.
+                try { occ.PutTransform(asmX / 1000.0, asmY / 1000.0, asmZ / 1000.0, 0.0, 0.0, occAz); }
+                catch (Exception pe)
+                {
+                    Log.Warn($"Eletrodo {e.Index}: PutTransform falhou ({pe.GetBaseException().Message}); tentando PutOrigin (sem rotação).");
+                    try { occ.PutOrigin(asmX / 1000.0, asmY / 1000.0, asmZ / 1000.0); }
+                    catch (Exception pe2) { Log.Warn($"Eletrodo {e.Index}: PutOrigin também falhou: {pe2.GetBaseException().Message}"); }
+                }
+
+                Log.Info($"Eletrodo {e.Index} criado e posicionado ✓");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Eletrodo {e.Index} falhou: {ex.GetBaseException().Message}");
+                try { if (partDoc != null) partDoc.Close(); } catch { }
+                return false;
+            }
         }
 
         /// <summary>Subpasta "Eletrodos" ao lado da montagem (escolha do Carlos); fallback local.</summary>
@@ -1077,6 +1356,307 @@ namespace AutoEDM.Electrode
                 Log.Info($"Salvando eletrodo: {parPath}");
                 electrodePart.SaveAs(parPath);
             }
+        }
+
+        // ------------------------------------------------------------------
+        //  Ferramenta: duplicar eletrodo p/ o PRÓXIMO Ra da tabela (desbaste)
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Botão "Duplicar eletrodo" (Carlos, 2026-07-21): parte de UM eletrodo já com GAP
+        /// aplicado (Ra conhecido — variável <see cref="RaVariableStore"/> ou feature "GAP:
+        /// ... - Ra: ...") e cria uma cópia com o GAP no PRÓXIMO Ra da escada (mais grosso =
+        /// desbaste, <see cref="RaColorMap.RoughingRaFor"/>), posicionada em TODAS as posições
+        /// onde esse eletrodo aparece na montagem (a mesma peça pode se repetir p/ cavidades
+        /// simétricas) — 1 clique gera o par desbaste/acabamento em cada posição repetida.
+        ///
+        /// NUNCA edita a peça original nem a ocorrência selecionada: copia o ARQUIVO no disco
+        /// (não o Documento já aberto/referenciado pela montagem — um SaveAs no doc já
+        /// referenciado redirecionaria as ocorrências existentes para o arquivo novo), abre a
+        /// cópia como documento separado, ajusta GAP/cor/nome/variável NELA, salva e fecha — só
+        /// então adiciona as ocorrências novas na montagem. ESCREVE um arquivo novo + a
+        /// montagem (novas ocorrências); não salva a montagem.
+        /// </summary>
+        public DuplicateElectrodeResult DuplicateElectrodeToNextGap(dynamic asmDoc, ElectrodeParams p)
+        {
+            var result = new DuplicateElectrodeResult();
+            if (_connector.Application == null)
+                throw new InvalidOperationException("Conecte o SolidEdgeConnector primeiro.");
+            if (asmDoc == null) throw new ArgumentNullException(nameof(asmDoc));
+
+            dynamic app = _connector.Application;
+            var ctx = new AssemblyContext(asmDoc);
+
+            OccurrenceInfo selected = CollectSelectedOccurrences(asmDoc, out int skipped).FirstOrDefault();
+            if (selected == null)
+            {
+                result.Message = "Nenhuma ocorrência de eletrodo selecionada. Na montagem, selecione a ocorrência do eletrodo " +
+                    "(a peça inteira, não uma face) já com GAP aplicado e tente de novo.";
+                Log.Warn("Duplicar eletrodo: " + result.Message);
+                return result;
+            }
+            if (skipped > 0)
+                Log.Warn($"Duplicar eletrodo: {skipped} item(ns) da seleção ignorado(s) (não são ocorrências).");
+
+            dynamic sourceDoc = selected.OccurrenceDocument;
+            string sourcePath;
+            try { sourcePath = (string)sourceDoc.FullName; }
+            catch (Exception ex)
+            {
+                result.Message = "Não consegui ler o caminho do arquivo da peça selecionada.";
+                Log.Warn("Duplicar eletrodo: " + result.Message + " " + ex.GetBaseException().Message);
+                return result;
+            }
+
+            if (!TryReadElectrodeRa(sourceDoc, out double currentRa, out string raSrc))
+            {
+                result.Message = $"Não achei o Ra de '{selected.Name}' (nem variável, nem feature de GAP nomeada) — " +
+                                  "aplique o GAP primeiro (botão 'Aplicar GAP').";
+                Log.Warn("Duplicar eletrodo: " + result.Message);
+                return result;
+            }
+            Log.Info($"Duplicar eletrodo: '{selected.Name}' Ra atual = {currentRa:0.0} ({raSrc}).");
+
+            RaGapPresets.Choice next = RaGapPresets.NextCoarser(currentRa, p.Material);
+            if (next == null)
+            {
+                result.Message = $"'{selected.Name}' já está no Ra mais grosso da tabela ({currentRa:0.0}) — não há passe de desbaste seguinte.";
+                Log.Warn("Duplicar eletrodo: " + result.Message);
+                return result;
+            }
+            Log.Info($"Duplicar eletrodo: próximo passe = {next.Label}.");
+
+            // Todas as posições onde ESSE MESMO arquivo aparece na montagem (não só a ocorrência
+            // selecionada) — cavidades repetidas (moldes multi-cavidade) usam o MESMO .par em
+            // várias posições. TryGetPlacement já devolve METROS/RADIANOS (mesma unidade do
+            // PutTransform/PutOrigin) — sem conversão aqui.
+            var placements = new List<(double x, double y, double z, double az)>();
+            foreach (var occ in ctx.GetOccurrences())
+            {
+                if (!SameDocument(occ, sourcePath)) continue;
+                if (!ctx.TryGetPlacement(occ, out double x, out double y, out double z, out double ax, out double ay, out double az))
+                {
+                    Log.Warn($"Duplicar eletrodo: transform de '{occ.Name}' ilegível — pulando essa posição.");
+                    continue;
+                }
+                placements.Add((x, y, z, az));
+            }
+            if (placements.Count == 0)
+            {
+                result.Message = "Não achei nenhuma posição válida (transform ilegível) para replicar.";
+                Log.Warn("Duplicar eletrodo: " + result.Message);
+                return result;
+            }
+            Log.Info($"Duplicar eletrodo: {placements.Count} posição(ões) da mesma peça na montagem.");
+
+            string newPath = NextAvailablePath(sourcePath, next.Ra);
+            dynamic newDoc = null;
+            try
+            {
+                System.IO.File.Copy(sourcePath, newPath);
+                Log.Info($"Duplicar eletrodo: cópia do arquivo -> {System.IO.Path.GetFileName(newPath)}");
+
+                newDoc = app.Documents.Open(newPath);
+                if (!AdjustGapOnDuplicate(newDoc, next))
+                {
+                    result.Message = "Copiei a peça, mas não consegui ajustar o GAP nela (veja o log). " +
+                                      "Arquivo: " + newPath + " — apague ou ajuste manualmente.";
+                    Log.Warn("Duplicar eletrodo: " + result.Message);
+                    try { newDoc.Close(false); } catch { }
+                    return result;
+                }
+                RaVariableStore.TryWrite(newDoc, next.Ra);
+                newDoc.Save();
+                newDoc.Close();
+                newDoc = null;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Duplicar eletrodo: falha ao processar a cópia — " + ex.GetBaseException().Message);
+                try { if (newDoc != null) newDoc.Close(false); } catch { }
+                result.Message = "Falha ao processar a cópia da peça — veja o log. Arquivo (pode ter ficado incompleto): " + newPath;
+                return result;
+            }
+
+            int placed = 0;
+            foreach (var t in placements)
+            {
+                try
+                {
+                    dynamic occ = asmDoc.Occurrences.AddByFilename(newPath);
+                    try { occ.PutTransform(t.x, t.y, t.z, 0.0, 0.0, t.az); }
+                    catch (Exception pe)
+                    {
+                        Log.Warn($"Duplicar eletrodo: PutTransform falhou ({pe.GetBaseException().Message}); tentando PutOrigin.");
+                        try { occ.PutOrigin(t.x, t.y, t.z); }
+                        catch (Exception pe2) { Log.Warn("Duplicar eletrodo: PutOrigin também falhou: " + pe2.GetBaseException().Message); }
+                    }
+                    placed++;
+                }
+                catch (Exception ex) { Log.Warn("Duplicar eletrodo: falha ao adicionar ocorrência — " + ex.GetBaseException().Message); }
+            }
+
+            result.Created = placed > 0;
+            result.NewPath = newPath;
+            result.InstanceCount = placed;
+            result.Message = result.Created
+                ? $"{placed}/{placements.Count} ocorrência(s) de '{System.IO.Path.GetFileName(newPath)}' criada(s) ({next.Label}), nas mesmas posições de '{selected.Name}'."
+                : "Copiei e ajustei a peça, mas não consegui posicionar nenhuma ocorrência na montagem — veja o log.";
+            return result;
+        }
+
+        /// <summary>Ocorrências (objetos COM crus, envolvidos em <see cref="OccurrenceInfo"/>) da
+        /// SelectSet atual — tolerante a itens que não são ocorrências (ex.: uma face
+        /// selecionada por engano). NUNCA falha silenciosamente, mesmo padrão de
+        /// <see cref="CollectSelectedFaces"/>.</summary>
+        private static List<OccurrenceInfo> CollectSelectedOccurrences(dynamic doc, out int skipped)
+        {
+            var result = new List<OccurrenceInfo>();
+            skipped = 0;
+            dynamic ss;
+            try { ss = doc.SelectSet; }
+            catch (Exception ex) { Log.Warn($"Duplicar eletrodo: doc.SelectSet inacessível: {ex.GetBaseException().Message}"); return result; }
+
+            int n = 0;
+            try { n = (int)ss.Count; }
+            catch (Exception ex) { Log.Warn($"Duplicar eletrodo: SelectSet.Count falhou: {ex.GetBaseException().Message}"); return result; }
+            Log.Info($"Duplicar eletrodo: SelectSet.Count={n}.");
+
+            for (int i = 1; i <= n; i++)
+            {
+                object item;
+                try { item = ss.Item(i); }
+                catch (Exception ex) { Log.Warn($"Duplicar eletrodo: SelectSet.Item({i}) falhou: {ex.GetBaseException().Message}"); continue; }
+                if (item == null) { skipped++; continue; }
+
+                dynamic occDoc = null; string name = null;
+                try { occDoc = ((dynamic)item).OccurrenceDocument; name = (string)((dynamic)item).Name; } catch { }
+                if (occDoc == null)
+                {
+                    skipped++;
+                    ComDiagnostics.DumpObject($"Duplicar eletrodo: SelectSet[{i}] não é ocorrência", item, 1);
+                    continue;
+                }
+                result.Add(new OccurrenceInfo(item, name ?? "<sem nome>", occDoc));
+            }
+            return result;
+        }
+
+        private static bool SameDocument(OccurrenceInfo occ, string sourcePath)
+        {
+            if (occ.OccurrenceDocument == null) return false;
+            try { return string.Equals((string)occ.OccurrenceDocument.FullName, sourcePath, StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
+        /// <summary>Ra atual do eletrodo: (1) variável <see cref="RaVariableStore"/>; (2) fallback —
+        /// parseia o nome da feature de GAP ("GAP: 0,10 - Ra: 1,6", formato de
+        /// <c>SurfaceBlockBuilder.TryNameGapFeature</c>) para peças criadas antes dessa variável existir.</summary>
+        private static bool TryReadElectrodeRa(dynamic partDoc, out double ra, out string source)
+        {
+            if (RaVariableStore.TryRead(partDoc, out ra)) { source = "variável"; return true; }
+
+            try
+            {
+                dynamic faceOffsets = partDoc.Models.Item(1).FaceOffsets;
+                int n = (int)faceOffsets.Count;
+                for (int i = 1; i <= n; i++)
+                {
+                    dynamic feat; try { feat = faceOffsets.Item(i); } catch { continue; }
+                    string name; try { name = (string)feat.Name; } catch { continue; }
+                    if (TryParseRaFromFeatureName(name, out ra)) { source = $"feature '{name}'"; return true; }
+                }
+            }
+            catch { /* sem Models/FaceOffsets — cai no "não achei" abaixo */ }
+
+            ra = 0; source = null;
+            return false;
+        }
+
+        private static readonly Regex RaNamePattern = new Regex(@"Ra:\s*([0-9]+(?:[.,][0-9]+)?)", RegexOptions.IgnoreCase);
+
+        private static bool TryParseRaFromFeatureName(string name, out double ra)
+        {
+            ra = 0;
+            if (string.IsNullOrEmpty(name)) return false;
+            var m = RaNamePattern.Match(name);
+            if (!m.Success) return false;
+            return double.TryParse(m.Groups[1].Value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out ra);
+        }
+
+        /// <summary>Caminho novo, evitando sobrescrever um arquivo já duplicado antes.</summary>
+        private static string NextAvailablePath(string sourcePath, double ra)
+        {
+            string dir = System.IO.Path.GetDirectoryName(sourcePath);
+            string baseName = System.IO.Path.GetFileNameWithoutExtension(sourcePath);
+            string ext = System.IO.Path.GetExtension(sourcePath);
+            string raTag = ra.ToString("0.0", CultureInfo.InvariantCulture);
+            string candidate = System.IO.Path.Combine(dir, $"{baseName}_Ra{raTag}{ext}");
+            int n = 1;
+            while (System.IO.File.Exists(candidate))
+                candidate = System.IO.Path.Combine(dir, $"{baseName}_Ra{raTag}_{++n}{ext}");
+            return candidate;
+        }
+
+        /// <summary>
+        /// Na peça JÁ COPIADA (arquivo separado, nunca a original): acha a feature de GAP
+        /// (<c>Model.FaceOffsets</c>), muda <c>FaceOffset.Distance</c> p/ o novo offset
+        /// (propriedade get/put double, CONFIRMADA no dump da typelib SE 2023 — não precisa de
+        /// InvokeMember), renomeia e repinta as faces dela (<see cref="ModelingHelpers.GetFeatureFaces"/>
+        /// já usado por <see cref="RecolorAndSave"/> nesta mesma classe). NUNCA lança.
+        /// </summary>
+        private static bool AdjustGapOnDuplicate(dynamic partDoc, RaGapPresets.Choice next)
+        {
+            dynamic feature = FindGapOffsetFeature(partDoc, out string foundBy);
+            if (feature == null)
+            {
+                Log.Warn("Duplicar eletrodo: não achei a feature de GAP (Model.FaceOffsets) na cópia.");
+                return false;
+            }
+            Log.Info($"Duplicar eletrodo: feature de GAP achada ({foundBy}).");
+
+            try
+            {
+                feature.Distance = -Math.Abs(next.GapMm) / 1000.0; // metros, negativo = encolhe
+                Log.Info($"Duplicar eletrodo: Distance ajustada para {next.GapMm:0.00}mm ({next.Label}).");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Duplicar eletrodo: feature.Distance = valor falhou — " + ex.GetBaseException().Message);
+                return false;
+            }
+
+            try { feature.Name = $"GAP: {next.GapMm:0.00} - Ra: {next.Ra:0.0}"; }
+            catch (Exception ex) { Log.Warn("Duplicar eletrodo: renomear a feature falhou (cosmético, segue) — " + ex.GetBaseException().Message); }
+
+            try
+            {
+                object[] faces = ModelingHelpers.GetFeatureFaces(feature);
+                ModelingHelpers.SetFacesColor(faces, next.Color.R, next.Color.G, next.Color.B);
+            }
+            catch (Exception ex) { Log.Warn("Duplicar eletrodo: repintar as faces falhou (cosmético, segue) — " + ex.GetBaseException().Message); }
+
+            return true;
+        }
+
+        private static dynamic FindGapOffsetFeature(dynamic partDoc, out string foundBy)
+        {
+            foundBy = null;
+            dynamic faceOffsets;
+            try { faceOffsets = partDoc.Models.Item(1).FaceOffsets; }
+            catch (Exception ex) { Log.Warn("Duplicar eletrodo: Model.FaceOffsets inacessível — " + ex.GetBaseException().Message); return null; }
+
+            int n = 0; try { n = (int)faceOffsets.Count; } catch { }
+            dynamic firstItem = null;
+            for (int i = 1; i <= n; i++)
+            {
+                dynamic feat; try { feat = faceOffsets.Item(i); } catch { continue; }
+                if (firstItem == null) firstItem = feat;
+                string name; try { name = (string)feat.Name; } catch { name = null; }
+                if (name != null && name.StartsWith("GAP:", StringComparison.OrdinalIgnoreCase)) { foundBy = $"por nome ('{name}')"; return feat; }
+            }
+            if (firstItem != null) { foundBy = $"única feature de GAP (de {n}, sem nome 'GAP:' — pega a 1ª)"; return firstItem; }
+            return null;
         }
     }
 }

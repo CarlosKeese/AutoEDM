@@ -70,15 +70,6 @@ namespace AutoEDM.Electrode
         /// editável (o operador ajusta o offset/gap na árvore). 2 = igOrdered.
         /// </summary>
         public bool SwitchToOrdered { get; set; } = true;
-
-        /// <summary>
-        /// GAP/Ra/cor escolhidos na lista suspensa do "Unir superfícies" (Carlos, 2026-07-17).
-        /// Null = só diagnostica as arestas abertas (comportamento antigo, sem aplicar nada).
-        /// Com valor: aplica o offset via <c>Model.FaceOffsets</c> (ORDENADO, editável depois —
-        /// NÃO <c>Constructions.OffsetSurfaces</c> em síncrono, que não permite reeditar o GAP)
-        /// e tenta pintar a superfície com a cor do Ra escolhido, então une ao bloco.
-        /// </summary>
-        public RaGapPresets.Choice UniteChoice { get; set; }
     }
 
     /// <summary>Resultado do dimensionamento SEM modelar — alimenta o pop-up e o resumo ao vivo.</summary>
@@ -591,7 +582,7 @@ namespace AutoEDM.Electrode
             int mode0 = 1; try { mode0 = (int)partDoc.ModelingMode; } catch { }
             Log.Info($"Unir superfícies: ModelingMode = {mode0} (1=síncrono, 2=ordenado). Passo atual = DIAGNÓSTICO das arestas abertas (read-only, não altera a peça).");
 
-            TryExtendStitchUnite(partDoc, result.Plan, opt, result);
+            TryExtendStitchUnite(partDoc, result.Plan, result);
             return result;
         }
 
@@ -601,10 +592,13 @@ namespace AutoEDM.Electrode
         // SÍNCRONO. "Costurar" (StitchSurfaces) NÃO é o recurso certo aqui — junta múltiplas
         // superfícies numa só; o que fecha a superfície de queima ao bloco é a booleana "Unir"
         // agindo direto entre o sólido do bloco e a superfície crua (encostada nele, GapMm=0).
-        // Só troca para Ordenado DEPOIS da união, e só por causa do GAP (FaceOffsets exige
-        // Ordenado) — o União em si roda em Síncrono.
+        //
+        // SEPARADO do GAP/cor (Carlos, 2026-07-21): "Unir superfícies" só faz a união — quando
+        // ela falha, o Carlos tem a opção de unir NA MÃO no SE (não precisa que o AutoEDM
+        // consiga); o botão "Aplicar GAP" (<see cref="ApplyGapToUnitedSurfaces"/>) entra depois,
+        // igual funcione o corpo mesclado tenha vindo daqui ou de uma união manual.
         private static void TryExtendStitchUnite(
-            dynamic partDoc, BlockOverSurfacesPlan plan, BlockOverSurfacesOptions opt, BlockOverSurfacesResult result)
+            dynamic partDoc, BlockOverSurfacesPlan plan, BlockOverSurfacesResult result)
         {
             dynamic blockModel;
             try { blockModel = partDoc.Models.Item(1); }
@@ -628,44 +622,77 @@ namespace AutoEDM.Electrode
             bool readyToUnite = DiagnoseOpenEdges(surf, blockBottomZmm, result);
             if (!readyToUnite) return;
 
-            if (opt.UniteChoice == null)
-            {
-                Log.Info("Unir: pronta p/ unir, mas nenhum GAP/Ra escolhido (opt.UniteChoice=null) — só diagnóstico, nada foi alterado.");
-                return;
-            }
-
-            // Cor ANTES de unir — pinta a CopySurface enquanto as faces ainda são referências
-            // frescas (o União pode invalidar as antigas e criar faces novas no sólido mesclado).
-            TryPaintSurface(surf, opt.UniteChoice.Color);
-
             bool united = TryUniteToBlock(partDoc, blockModel, surf);
             if (!united)
             {
-                Log.Warn("Unir: União falhou — GAP não aplicado (bloco/faixa/furos preservados, nada foi perdido).");
+                Log.Warn("Unir: União automática falhou — bloco/faixa/furos preservados, nada foi perdido. " +
+                         "Pode unir NA MÃO no SE e usar 'Aplicar GAP' depois no corpo já mesclado.");
                 return;
             }
             result.SurfacesUnited = true;
+            Log.Info("Unir: superfície unida ao bloco ✓ — use 'Aplicar GAP' para o offset/cor/nome.");
+        }
 
-            // GAP (offset de faísca) DEPOIS de unir, no sólido já mesclado. `Model.FaceOffsets`
-            // só existe em modelagem ORDENADA (Carlos, 2026-07-17: síncrono não permite reeditar
-            // o GAP depois) — troca AGORA, só para esse passo; o União ficou em Síncrono.
+        /// <summary>
+        /// Botão "Aplicar GAP" (Carlos, 2026-07-21): separado da união em si — roda tanto
+        /// depois de um "Unir superfícies" bem-sucedido quanto depois de uma união MANUAL feita
+        /// pelo Carlos direto no SE (o botão não precisa saber qual dos dois aconteceu). Aplica
+        /// o offset de faísca (<see cref="TryApplyGapOffset"/>), pinta a cor do Ra
+        /// (<see cref="TryPaintSurface"/>/<see cref="PaintFaces"/>), nomeia a feature
+        /// (<see cref="TryNameGapFeature"/>) e grava/atualiza o Ra na variável da peça
+        /// (<see cref="RaVariableStore"/> — usado depois por "Duplicar eletrodo").
+        ///
+        /// Fonte das faces de queima: (1) SELEÇÃO do usuário no corpo já mesclado (robusto —
+        /// funciona igual após união automática ou manual, sem depender de nenhuma heurística de
+        /// geometria); (2) se nada selecionado, cai no heurístico antigo (Z ≤ base do bloco no
+        /// corpo mesclado) — só serve de atalho quando este botão roda LOGO depois de um "Unir
+        /// superfícies" automático bem-sucedido na MESMA sessão.
+        /// </summary>
+        public BlockOverSurfacesResult ApplyGapToUnitedSurfaces(dynamic partDoc, RaGapPresets.Choice choice)
+        {
+            if (choice == null) throw new ArgumentNullException(nameof(choice));
+            var result = new BlockOverSurfacesResult { Plan = new BlockOverSurfacesPlan() };
+
+            dynamic blockModel;
+            try { blockModel = partDoc.Models.Item(1); }
+            catch (Exception e) { Log.Warn("Aplicar GAP: sem sólido na peça — " + e.GetBaseException().Message); return result; }
+
+            List<object> burnFaces = CollectSurfaceFaces(partDoc, out string src);
+            if (burnFaces.Count > 0)
+            {
+                Log.Info($"Aplicar GAP: {burnFaces.Count} face(s) de queima via {src}.");
+            }
+            else
+            {
+                object bottomFace = FindExtremePlanarFace(blockModel, false, out double blockBottomZmm);
+                if (bottomFace != null)
+                {
+                    burnFaces = CollectBodyFacesAtOrBelowZ(blockModel, blockBottomZmm);
+                    Log.Info($"Aplicar GAP: nada selecionado — {burnFaces.Count} face(s) via heurístico (Z ≤ {blockBottomZmm:0.0}mm, base do bloco).");
+                }
+            }
+            if (burnFaces.Count == 0)
+            {
+                result.Warnings.Add("Nenhuma face de queima achada — selecione, no corpo já unido, as faces que vieram da superfície de queima e tente de novo.");
+                Log.Warn("Aplicar GAP: " + result.Warnings[0]);
+                return result;
+            }
+
+            // FaceOffsets só existe em modelagem ORDENADA (síncrono não permite reeditar o GAP depois).
             int mode = 1; try { mode = (int)partDoc.ModelingMode; } catch { }
             if (mode != 2)
             {
-                try { partDoc.ModelingMode = 2; result.SwitchedToOrdered = true; Log.Info("Unir: alternado para ORDENADO só para o GAP (FaceOffsets não existe em síncrono)."); }
-                catch (Exception e) { Log.Warn("Unir: alternar p/ Ordenado (GAP) falhou — união ficou sem GAP: " + e.GetBaseException().Message); return; }
+                try { partDoc.ModelingMode = 2; result.SwitchedToOrdered = true; Log.Info("Aplicar GAP: alternado para ORDENADO (FaceOffsets não existe em síncrono)."); }
+                catch (Exception e) { Log.Warn("Aplicar GAP: alternar p/ Ordenado falhou — " + e.GetBaseException().Message); return result; }
             }
 
-            // REAQUIRE as faces de queima DO CORPO JÁ MESCLADO — as faces da `surf` ORIGINAL
-            // (capturadas antes do União) ficam obsoletas, a superfície foi CONSUMIDA pelo Attach
-            // (achado 2026-07-20, log `094346`: `FaceOffsets.AddEx` deu DISP_E_TYPEMISMATCH usando
-            // as faces antigas). O bloco tem base em `blockBottomZmm`; a queima ficava abaixo/na
-            // base, então as faces do corpo mesclado com Z ≤ base são a queima.
-            var mergedBurnFaces = CollectBodyFacesAtOrBelowZ(blockModel, blockBottomZmm);
-            Log.Info($"Unir: {mergedBurnFaces.Count} face(s) de queima reaquirida(s) do corpo mesclado (Z ≤ {blockBottomZmm:0.0}mm) p/ o GAP.");
+            PaintFaces(burnFaces, choice.Color);
 
-            object offsetFeature = TryApplyGapOffset(mergedBurnFaces, opt.UniteChoice.GapMm, blockModel);
+            object offsetFeature = TryApplyGapOffset(burnFaces, choice, blockModel);
             if (offsetFeature != null) { result.CreatedFeatures.Add(offsetFeature); result.SurfacesOffset = true; }
+
+            RaVariableStore.TryWrite(partDoc, choice.Ra);
+            return result;
         }
 
         /// <summary>
@@ -711,13 +738,21 @@ namespace AutoEDM.Electrode
         /// padrão do `AddThickenFeature`, que virava no-op silencioso em peça síncrona quando a
         /// feature era só-Ordenada) — então força SÍNCRONO aqui, ANTES de costurar/anexar, mesmo
         /// que o doc já esteja em Ordenado; só volta pra Ordenado DEPOIS, para o GAP (ver chamador).
+        ///
+        /// CORREÇÃO 2026-07-21 (Carlos): "Anexar" (`Model.Attach`) na prática falha com frequência
+        /// — inverteu a prioridade: `Model.BooleanFeatures.Add` (booleana REGISTRADA na árvore,
+        /// `Function=3`=`seBooleanUnite`) agora é a 1ª tentativa (<see cref="TryUniteViaBooleanFeature"/>),
+        /// `Attach` vira ALTERNATIVA só se a booleana falhar (<see cref="TryUniteViaAttach"/>). Também
+        /// passou a CONFERIR o `.Status` da feature devolvida em vez de assumir sucesso só por não
+        /// ter lançado — mesma armadilha do GAP (`FaceOffsets.AddEx`): a booleana pode "funcionar"
+        /// (não lança) e ainda assim marcar a feature como FALHOU.
         /// </summary>
         private static bool TryUniteToBlock(dynamic partDoc, dynamic blockModel, dynamic surf)
         {
             try
             {
                 int m = (int)partDoc.ModelingMode;
-                if (m != 1) { partDoc.ModelingMode = 1; Log.Info("Unir: alternado de volta pra SÍNCRONO (Costurar/Anexar não funcionam em Ordenado)."); }
+                if (m != 1) { partDoc.ModelingMode = 1; Log.Info("Unir: alternado de volta pra SÍNCRONO (Costurar/Anexar/Booleana não funcionam em Ordenado)."); }
             }
             catch (Exception e) { Log.Warn("Unir: checar/alternar p/ Síncrono falhou (seguindo mesmo assim) — " + e.GetBaseException().Message); }
 
@@ -748,7 +783,90 @@ namespace AutoEDM.Electrode
                 }
             }
 
-            // fpcSide NÃO é opcional (achado 2026-07-20, log `092656`) — tenta os 2 lados.
+            bool united = TryUniteViaBooleanFeature(model, tools);
+            if (!united)
+            {
+                Log.Warn("Unir: Model.BooleanFeatures.Add sem sucesso — tentando Model.Attach como alternativa.");
+                united = TryUniteViaAttach(model, tools);
+            }
+            if (!united) return false;
+
+            // Limpeza (Carlos, 2026-07-21): as superfícies usadas como FERRAMENTA já estão
+            // DENTRO do bloco (consumidas pela união/anexação síncrona — mesmo raciocínio já
+            // registrado acima: "a superfície é CONSUMIDA/reparentada pro corpo") — excluir deixa
+            // a árvore limpa em vez de acumular CopySurface/StitchSurface "fantasmas" sem uso.
+            TryDeleteUsedSurfaces(tool, surf);
+            return true;
+        }
+
+        /// <summary>
+        /// Exclui as superfícies usadas como ferramenta da união (Carlos, 2026-07-21: "poderiam
+        /// ser excluídas em seguida") — a geometria delas já está incorporada no bloco, mantê-las
+        /// só suja a árvore. `tool` pode ser IGUAL a `surf` (se a costura de consolidação falhou
+        /// e a união rodou direto na CopySurface crua) — nesse caso só exclui uma vez. NUNCA
+        /// lança: a exclusão é limpeza cosmética, não pode reverter uma união que já deu certo;
+        /// se falhar (ex.: já foi consumida/removida pela própria união), só loga e segue.
+        /// </summary>
+        private static void TryDeleteUsedSurfaces(dynamic tool, dynamic surf)
+        {
+            bool sameObject = ReferenceEquals(tool, surf);
+            if (!sameObject)
+            {
+                try { tool.Delete(); Log.Info("Unir: superfície de consolidação (StitchSurface) excluída — já incorporada ao bloco."); }
+                catch (Exception e) { Log.Warn("Unir: excluir a StitchSurface de consolidação falhou (cosmético, não desfaz a união) — " + e.GetBaseException().Message); }
+            }
+            try { surf.Delete(); Log.Info("Unir: superfície de queima original (CopySurface) excluída — já incorporada ao bloco."); }
+            catch (Exception e) { Log.Warn("Unir: excluir a CopySurface original falhou (cosmético, não desfaz a união — pode já ter sido consumida) — " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>
+        /// Booleana "Unir" REGISTRADA na árvore — método PREFERIDO (Carlos, 2026-07-21: "Anexar"
+        /// muitas vezes não funciona; o ideal é usar BooleanFeatures.Add). `Model.BooleanFeatures.Add
+        /// (NumberOfTools:int, Tools:VARIANT, Function:seBooleanUnite=3, [opt]PlaneSide)` — assinatura
+        /// CONFIRMADA no dump da typelib SE 2023 (`_IBooleanFeaturesAuto.Add`, 4 params + o [out] de
+        /// retorno). Ao contrário do `Attach` (retorna void, sem feature nenhuma), isso cria uma
+        /// `BooleanFeature` de verdade — dá p/ achar/nomear na árvore depois. Pega a coleção via
+        /// `InvokeMember` (GetProperty), NÃO acesso dinâmico (`blockModel.BooleanFeatures`) — achado
+        /// 2026-07-20 (log `091655`): o acesso dinâmico tenta QueryInterface p/ um tipo da PIA estática
+        /// do projeto (`Interop.SolidEdge` 219.0.0, mais velha que o SE 223 rodando) e dá E_NOINTERFACE;
+        /// `InvokeMember` passa direto pelo IDispatch ao vivo. CONFERE o `.Status` da feature devolvida
+        /// (mesma armadilha do GAP — `AddEx` não lança em feature que falha, só marca `.Status`; aqui
+        /// aplica-se o mesmo cuidado) — só conta como sucesso se o Status não vier FALHOU.
+        /// </summary>
+        private static bool TryUniteViaBooleanFeature(object model, System.Array tools)
+        {
+            const int seBooleanUnite = 3; // SolidEdgePart.BooleanFeatureConstants
+            try
+            {
+                object boolFeatures = model.GetType().InvokeMember(
+                    "BooleanFeatures", BindingFlags.GetProperty, null, model, null);
+                object[] args = { tools.Length, tools, seBooleanUnite, Type.Missing };
+                object feature = boolFeatures.GetType().InvokeMember(
+                    "Add", BindingFlags.InvokeMethod, null, boolFeatures, args);
+                string status = FeatureStatusText(feature);
+                if (status == "FALHOU")
+                {
+                    Log.Warn("Unir: Model.BooleanFeatures.Add criou a feature, mas o Status voltou FALHOU — não conto como união bem-sucedida.");
+                    return false;
+                }
+                Log.Info($"Unir: superfície UNIDA ao bloco (Model.BooleanFeatures.Add, seBooleanUnite) — Status {status}.");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Unir: Model.BooleanFeatures.Add falhou — " + e.GetBaseException().Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// "Anexar" (`Model.Attach`) — ALTERNATIVA (Carlos, 2026-07-21: deixou de ser a 1ª tentativa
+        /// porque costuma falhar). Não cria feature registrada (retorna `void`) — se unir por aqui,
+        /// não há o que nomear/conferir depois na árvore. `fpcSide` NÃO é opcional (achado
+        /// 2026-07-20, log `092656`) — tenta os 2 valores conhecidos de lado.
+        /// </summary>
+        private static bool TryUniteViaAttach(object model, System.Array tools)
+        {
             foreach (var side in new[] { 2 /* igRight */, 1 /* igLeft */ })
             {
                 try
@@ -760,28 +878,7 @@ namespace AutoEDM.Electrode
                 }
                 catch (Exception e) { Log.Warn($"Unir: Model.Attach (fpcSide={side}) falhou — " + e.GetBaseException().Message); }
             }
-
-            const int seBooleanUnite = 3; // SolidEdgePart.BooleanFeatureConstants (docs/api/constants.md)
-            try
-            {
-                // Pega a coleção via InvokeMember (GetProperty), NÃO acesso dinâmico
-                // (`blockModel.BooleanFeatures`) — achado no teste real 2026-07-20 (log `091655`):
-                // o acesso dinâmico tenta um QueryInterface p/ um tipo da PIA estática do projeto
-                // (`Interop.SolidEdge` 219.0.0, mais velha que o SE 223 rodando) e dá E_NOINTERFACE;
-                // `InvokeMember` passa direto pelo IDispatch ao vivo (mesmo caminho do SPY/ProbeSub).
-                object boolFeatures = model.GetType().InvokeMember(
-                    "BooleanFeatures", BindingFlags.GetProperty, null, model, null);
-                object[] args = { tools.Length, tools, seBooleanUnite, Type.Missing };
-                object feature = boolFeatures.GetType().InvokeMember(
-                    "Add", BindingFlags.InvokeMethod, null, boolFeatures, args);
-                Log.Info($"Unir: superfície UNIDA ao bloco (Model.BooleanFeatures.Add, seBooleanUnite) — Status {FeatureStatusText(feature)}.");
-                return true;
-            }
-            catch (Exception e)
-            {
-                Log.Warn("Unir: Model.BooleanFeatures.Add também falhou — " + e.GetBaseException().Message);
-                return false;
-            }
+            return false;
         }
 
         /// <summary>
@@ -803,8 +900,9 @@ namespace AutoEDM.Electrode
         /// TIPADO de tamanho 0) antes do array vazio; se as duas falharem, loga o TIPO .NET de cada
         /// argumento p/ o próximo round não precisar adivinhar de novo.
         /// </summary>
-        private static object TryApplyGapOffset(List<object> burnFaces, double gapMm, dynamic blockModel)
+        private static object TryApplyGapOffset(List<object> burnFaces, RaGapPresets.Choice choice, dynamic blockModel)
         {
+            double gapMm = choice.GapMm;
             System.Array farr = ToTypedFaceArray(burnFaces);
             if (farr.Length == 0) { Log.Warn("Unir (GAP): sem faces tipáveis — offset pulado."); return null; }
 
@@ -844,6 +942,7 @@ namespace AutoEDM.Electrode
                     object result = faceOffsets.GetType().InvokeMember(
                         "AddEx", BindingFlags.InvokeMethod, null, faceOffsets, args);
                     Log.Info($"Unir (GAP): offset {gapMm:0.00}mm aplicado (Ordenado — editável na árvore) — Status {FeatureStatusText(result)}.");
+                    TryNameGapFeature(result, choice);
                     return result;
                 }
                 catch (Exception e)
@@ -862,6 +961,28 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
+        /// Nomeia a feature do GAP na árvore (ex.: "GAP: 0,10 - Ra: 1,6") em vez de deixar o
+        /// nome genérico "FaceOffset1" (Carlos, 2026-07-20). `FaceOffset.Name` tem `put` (dump
+        /// confirma — não é só `DisplayName`, que é read-only), mas via `InvokeMember`
+        /// (`BindingFlags.SetProperty`) em vez de acesso dinâmico — mesmo motivo do
+        /// `BooleanFeatures` acima: `result` vem de outro `InvokeMember`, então não há garantia
+        /// de que o binder dinâmico resolva pela mesma interface. NUNCA lança — nome é
+        /// cosmético, não pode derrubar um GAP que já foi aplicado com sucesso.
+        /// </summary>
+        private static void TryNameGapFeature(object feature, RaGapPresets.Choice choice)
+        {
+            if (feature == null) return;
+            string name = $"GAP: {choice.GapMm:0.00} - Ra: {choice.Ra:0.0}";
+            try
+            {
+                feature.GetType().InvokeMember(
+                    "Name", BindingFlags.SetProperty, null, feature, new object[] { name });
+                Log.Info($"Unir (GAP): feature renomeada p/ \"{name}\".");
+            }
+            catch (Exception e) { Log.Warn($"Unir (GAP): renomear feature p/ \"{name}\" falhou (segue com o nome padrão) — " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>
         /// Pinta as faces da superfície de queima com a cor do Ra escolhido — tentativa
         /// DIRETA via `Face.Style.Diffuse{Red,Green,Blue}` (mesmo objeto confirmado p/ LEITURA
         /// em <see cref="AutoEDM.Selection.FaceStyleColorReader"/>; escrita ainda NÃO confirmada
@@ -872,7 +993,16 @@ namespace AutoEDM.Electrode
         {
             var faces = new List<object>();
             AddFacesFrom((object)surf, faces);
-            if (faces.Count == 0) { Log.Warn("Unir (cor): sem faces p/ pintar."); return; }
+            PaintFaces(faces, color);
+        }
+
+        /// <summary>Pinta uma lista de faces já resolvidas com a cor do Ra escolhido (extraído de
+        /// <see cref="TryPaintSurface"/> para ser reusado por <see cref="ApplyGapToUnitedSurfaces"/>
+        /// e pelo "Duplicar eletrodo", que já têm as faces em mãos via <c>FaceOffset.GetFacesToOffset</c>
+        /// — sem precisar de um objeto "superfície" para extrair faces de novo).</summary>
+        private static void PaintFaces(IReadOnlyList<object> faces, Color color)
+        {
+            if (faces == null || faces.Count == 0) { Log.Warn("Cor: sem faces p/ pintar."); return; }
 
             double r = color.R / 255.0, g = color.G / 255.0, b = color.B / 255.0;
             int ok = 0;
@@ -889,10 +1019,10 @@ namespace AutoEDM.Electrode
             }
 
             if (ok == faces.Count)
-                Log.Info($"Unir (cor): {ok}/{faces.Count} face(s) pintada(s) ✓ (RGB {color.R},{color.G},{color.B}).");
+                Log.Info($"Cor: {ok}/{faces.Count} face(s) pintada(s) ✓ (RGB {color.R},{color.G},{color.B}).");
             else
             {
-                Log.Warn($"Unir (cor): só {ok}/{faces.Count} face(s) pintada(s) — Style.Diffuse* pode ser SÓ LEITURA; dump p/ achar o setter certo:");
+                Log.Warn($"Cor: só {ok}/{faces.Count} face(s) pintada(s) — Style.Diffuse* pode ser SÓ LEITURA; dump p/ achar o setter certo:");
                 try { ComDiagnostics.LogMembers("Face.Style", (object)((dynamic)faces[0]).Style); } catch { }
             }
         }
@@ -1021,11 +1151,32 @@ namespace AutoEDM.Electrode
             return -1;
         }
 
-        /// <summary>Texto do Status de uma feature (se existir) — igFeatureOK=0x4877F5D6.</summary>
+        /// <summary>
+        /// Texto do Status de uma feature (se existir). CORREÇÃO 2026-07-20: o valor mágico
+        /// antigo (`0x4877F5D6`) estava ERRADO — nunca batia com nada, então todo log dessa
+        /// função sempre imprimia o hex cru em vez de "OK"/"FALHOU", escondendo o real
+        /// resultado. O valor CERTO (`FeatureFailed` em `BlankModeler.cs`, decimal
+        /// 1216476310/11): `igFeatureOK=1216476310=0x4881F496`,
+        /// `igFeatureFailed=1216476311=0x4881F497` (achado revendo o log real `102744`: o GAP
+        /// de 0,30mm/Ra 6,3 voltou 0x4881F497 = FALHOU, apesar do `AddEx` não ter lançado —
+        /// SE não lança em feature que falha, só marca o Status).
+        /// </summary>
         private static string FeatureStatusText(object feature)
         {
             if (feature == null) return "null";
-            try { uint s = unchecked((uint)(int)((dynamic)feature).Status); return s == 0x4877F5D6u ? "OK" : $"0x{s:X8}"; }
+            try
+            {
+                long s = Convert.ToInt64(((dynamic)feature).Status);
+                switch (s)
+                {
+                    case 1216476310L: return "OK";
+                    case 1216476311L: return "FALHOU";
+                    case 1216476312L: return "AVISO";
+                    case 1216476313L: return "SUPRIMIDA";
+                    case 1216476314L: return "REVERTIDA (rolled back)";
+                    default: return $"0x{s:X8}";
+                }
+            }
             catch { return "n/a"; }
         }
 
