@@ -9,7 +9,14 @@
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net472</TargetFramework>
+    <!--
+      net8.0-windows É SÓ PARA TESTES (AutoEDM.Core.Tests) — não muda o que roda no
+      Solid Edge. O add-in continua net472 (obrigatório: a SE hospeda .NET Framework
+      in-process). Revisão externa P3.1/A4 (docs/REVISAO-AutoEDM.md): sem um 2º TFM
+      não dá pra rodar nenhuma lógica pura (Ra, blank, nomenclatura) num test runner
+      atual sem o Solid Edge instalado.
+    -->
+    <TargetFrameworks>net472;net8.0-windows</TargetFrameworks>
     <RootNamespace>AutoEDM</RootNamespace>
     <AssemblyName>AutoEDM.Core</AssemblyName>
     <LangVersion>7.3</LangVersion>
@@ -17,9 +24,13 @@
     <Platforms>x64;AnyCPU</Platforms>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)'=='net472'">
     <Reference Include="Microsoft.CSharp" /> <!-- late binding (dynamic) -->
     <Reference Include="System.Drawing" />   <!-- Color (cor = Ra) -->
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" /> <!-- Color (cor = Ra) -->
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +40,8 @@
       CopySurfaces.Add. O resto do núcleo segue late-bound (dynamic).
     -->
     <PackageReference Include="Interop.SolidEdge" Version="219.0.0" />
+    <!-- Config/AutoEdmConfig.cs (config.json em %LOCALAPPDATA%, revisão A3) -->
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
 </Project>

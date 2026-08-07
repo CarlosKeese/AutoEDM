@@ -38,15 +38,18 @@ namespace AutoEDM.Electrode
 
         /// <summary>Uma combinação por Ra da escada de cores (<see cref="RaColorMap"/>), do
         /// mais grosso (maior Ra/GAP) para o mais fino, com o GAP tirado de
-        /// <see cref="RaOffsetTablePolicy"/> (mesma tabela usada em "Criar eletrodos").</summary>
-        public static IReadOnlyList<Choice> All(string material = "Cobre")
+        /// <see cref="RaOffsetTablePolicy"/> (mesma tabela usada em "Criar eletrodos").
+        /// <paramref name="colorMap"/>/<paramref name="offsetPolicy"/> nulos = paleta/tabela
+        /// de fábrica; o add-in passa as instâncias derivadas de <see cref="Config.AutoEdmConfig"/>
+        /// para a lista bater com o que "Criar eletrodos" está detectando/gravando.</summary>
+        public static IReadOnlyList<Choice> All(string material = "Cobre", RaColorMap colorMap = null, IOffsetPolicy offsetPolicy = null)
         {
-            var colorMap = new RaColorMap();
-            var offsetPolicy = new RaOffsetTablePolicy();
-            return colorMap.Entries
+            var map = colorMap ?? new RaColorMap();
+            var offset = offsetPolicy ?? new RaOffsetTablePolicy();
+            return map.Entries
                 .OrderByDescending(e => e.Ra)
                 .Select(e => new Choice(e.Ra,
-                    offsetPolicy.GetInwardOffsetMm(new ElectrodePass("", e.Ra), material),
+                    offset.GetInwardOffsetMm(new ElectrodePass("", e.Ra), material),
                     e.Color))
                 .ToList();
         }
@@ -54,10 +57,10 @@ namespace AutoEDM.Electrode
         /// <summary>A combinação cujo Ra mais se aproxima de <paramref name="ra"/> (tolerância
         /// 0,05 µm — ponto flutuante indo e vindo de uma string gravada na peça). Null se
         /// nenhuma bater (tabela vazia ou Ra fora de qualquer entrada conhecida).</summary>
-        public static Choice ClosestTo(double ra, string material = "Cobre")
+        public static Choice ClosestTo(double ra, string material = "Cobre", RaColorMap colorMap = null, IOffsetPolicy offsetPolicy = null)
         {
             Choice best = null; double bestDiff = double.MaxValue;
-            foreach (var c in All(material))
+            foreach (var c in All(material, colorMap, offsetPolicy))
             {
                 double diff = Math.Abs(c.Ra - ra);
                 if (diff < bestDiff) { bestDiff = diff; best = c; }
@@ -68,11 +71,12 @@ namespace AutoEDM.Electrode
         /// <summary>Combinação do PRÓXIMO Ra da escada acima de <paramref name="finishRa"/>
         /// (desbaste = Ra maior que o acabamento, confirmado com o Carlos) — usado por
         /// "Duplicar eletrodo". Null se já é o Ra mais grosso da tabela (não há próximo).</summary>
-        public static Choice NextCoarser(double finishRa, string material = "Cobre")
+        public static Choice NextCoarser(double finishRa, string material = "Cobre", RaColorMap colorMap = null, IOffsetPolicy offsetPolicy = null)
         {
-            double nextRa = new RaColorMap().RoughingRaFor(finishRa);
+            var map = colorMap ?? new RaColorMap();
+            double nextRa = map.RoughingRaFor(finishRa);
             if (Math.Abs(nextRa - finishRa) < 1e-6) return null; // já é o topo da escada
-            return ClosestTo(nextRa, material);
+            return ClosestTo(nextRa, material, colorMap, offsetPolicy);
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using AutoEDM.Diagnostics;
+using AutoEDM.Model;
 
 namespace AutoEDM.Selection
 {
@@ -12,8 +13,6 @@ namespace AutoEDM.Selection
     /// </summary>
     public static class FaceGeometry
     {
-        private static bool _diagLogged;
-
         /// <summary>
         /// Bounding box (AABB) da face no sistema local da peça, em mm. Tenta
         /// GetRange e, como alternativa, GetExactRange. Best-effort.
@@ -34,12 +33,14 @@ namespace AutoEDM.Selection
             // Cobre curvas de contorno; basta para agrupar detalhes por proximidade.
             if (TryRangeFromVertices(comFace, out minMm, out maxMm, ref err3)) return true;
 
-            if (!_diagLogged)
-            {
-                _diagLogged = true;
-                Log.Warn($"FaceGeometry: range indisponível — GetRange: {err1} | " +
-                         $"GetExactRange: {err2} | Vertices: {err3}");
-            }
+            // Achado 2026-07-22 (log `073330`, "Criar eletrodo manual" ainda não reconhecia a
+            // face selecionada): isto ANTES só logava a 1ª falha de TODO o processo (flag
+            // static `_diagLogged`) — qualquer falha seguinte (ex.: a face DESEMBRULHADA de
+            // CollectSelectedFaces, chamada logo depois da falha esperada na seleção CRUA)
+            // ficava muda, escondendo exatamente o diagnóstico que precisávamos. Falha total
+            // (os 3 métodos falharam) é sempre um evento excepcional — vale sempre logar.
+            Log.Warn($"FaceGeometry: range indisponível — GetRange: {err1} | " +
+                     $"GetExactRange: {err2} | Vertices: {err3}");
             return false;
         }
 
@@ -99,8 +100,8 @@ namespace AutoEDM.Selection
                 }
 
                 if (read == 0) { error = "nenhum ponto de vértice lido"; return false; }
-                minMm = new[] { mn[0] * 1000, mn[1] * 1000, mn[2] * 1000 };
-                maxMm = new[] { mx[0] * 1000, mx[1] * 1000, mx[2] * 1000 };
+                minMm = new[] { Units.MToMm(mn[0]), Units.MToMm(mn[1]), Units.MToMm(mn[2]) };
+                maxMm = new[] { Units.MToMm(mx[0]), Units.MToMm(mx[1]), Units.MToMm(mx[2]) };
                 return true;
             }
             catch (Exception ex)
@@ -137,8 +138,8 @@ namespace AutoEDM.Selection
                     return false;
                 }
 
-                minMm = new[] { mn[0] * 1000, mn[1] * 1000, mn[2] * 1000 };
-                maxMm = new[] { mx[0] * 1000, mx[1] * 1000, mx[2] * 1000 };
+                minMm = new[] { Units.MToMm(mn[0]), Units.MToMm(mn[1]), Units.MToMm(mn[2]) };
+                maxMm = new[] { Units.MToMm(mx[0]), Units.MToMm(mx[1]), Units.MToMm(mx[2]) };
                 return true;
             }
             catch (Exception ex)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using AutoEDM.Com;
 using AutoEDM.Diagnostics;
 using AutoEDM.Model;
 
@@ -72,10 +73,15 @@ namespace AutoEDM.Selection
         public IReadOnlyList<SelectedFace> SelectByColor(dynamic partDocument, dynamic application,
             Color target, int tolerancePerChannel = 8)
         {
-            IEnumerable<SelectedFace> all = EnumerateColoredFaces(partDocument, application);
-            var result = all
-                .Where(sf => OleColor.Matches(sf.DetectedColor, target, tolerancePerChannel))
-                .ToList();
+            var result = new List<SelectedFace>();
+            // Libera o RCW de toda face que NÃO sobrevive ao filtro (a maioria, numa peça
+            // real) — só a que casa fica em `result` e segue viva para o chamador (cópia/
+            // offset). Ver ComLifetime (revisão 2026-07-23, P1.1).
+            foreach (var sf in EnumerateColoredFaces(partDocument, application))
+            {
+                if (OleColor.Matches(sf.DetectedColor, target, tolerancePerChannel)) result.Add(sf);
+                else ComLifetime.Release(sf.ComFace);
+            }
             Log.Info($"Selecionadas {result.Count} face(s) em RGB({target.R},{target.G},{target.B}).");
             return result;
         }
@@ -110,8 +116,13 @@ namespace AutoEDM.Selection
                 int key = sf.DetectedColor.ToArgb();
                 seen[key] = seen.TryGetValue(key, out int c) ? c + 1 : 1;
 
+                // Libera o RCW de toda face SEM Ra mapeado (a maioria, numa peça real) — só
+                // as guardadas em algum FaceGroup seguem vivas para o chamador (cópia/offset).
                 if (!raColorMap.TryGetRa(sf.DetectedColor, out double ra, out Color matched))
+                {
+                    ComLifetime.Release(sf.ComFace);
                     continue;
+                }
                 if (!groups.TryGetValue(ra, out var g))
                     groups[ra] = g = new FaceGroup(matched, ra);
                 g.Faces.Add(sf);
@@ -212,19 +223,30 @@ namespace AutoEDM.Selection
             int mc;
             try { mc = (int)models.Count; } catch { return map; }
 
+            // Só o `map` (faceID string -> Color) sobrevive além deste método — todo objeto
+            // COM intermediário (Model, Features, Feature, Style, faces da feature) é
+            // liberado assim que a informação dele já foi extraída (ComLifetime, P1.1).
             for (int m = 1; m <= mc; m++)
             {
+                dynamic modelItem;
+                try { modelItem = models.Item(m); } catch { continue; }
                 dynamic fcoll;
-                try { fcoll = models.Item(m).Features; } catch { continue; }
+                try { fcoll = modelItem.Features; }
+                catch { ComLifetime.Release(modelItem); continue; }
                 int fc;
-                try { fc = (int)fcoll.Count; } catch { continue; }
+                try { fc = (int)fcoll.Count; }
+                catch { ComLifetime.Release(modelItem); continue; }
 
                 for (int i = 1; i <= fc; i++)
                 {
                     feats++;
                     dynamic feat; object style;
                     try { feat = fcoll.Item(i); style = feat.GetStyle(); } catch { continue; }
-                    if (!FaceStyleColorReader.TryReadStyleColor(style, out Color col)) continue;
+                    if (!FaceStyleColorReader.TryReadStyleColor(style, out Color col))
+                    {
+                        ComLifetime.Release(style); ComLifetime.Release(feat);
+                        continue;
+                    }
                     styled++;
 
                     List<dynamic> ffaces = GetFeatureFaces(feat);
@@ -239,9 +261,17 @@ namespace AutoEDM.Selection
                                  $"{ffaces.Count} face(s), 1º Face.ID={fid}.");
                     }
                     foreach (var fface in ffaces)
+                    {
                         try { map[Convert.ToString(((dynamic)fface).ID)] = col; } catch { }
+                        ComLifetime.Release(fface);
+                    }
+                    ComLifetime.Release(style);
+                    ComLifetime.Release(feat);
                 }
+                ComLifetime.Release(fcoll);
+                ComLifetime.Release(modelItem);
             }
+            ComLifetime.Release(models);
 
             if (feats > 0)
                 Log.Info($"Cor por FEATURE: {styled}/{feats} feature(s) com cor legível (feature.GetStyle) " +
@@ -294,13 +324,19 @@ namespace AutoEDM.Selection
             try { count = (int)models.Count; }
             catch { count = 0; }
 
+            // `body` sobrevive (o chamador guarda em `bodies` e lê as faces dele depois) —
+            // só o wrapper `Model` intermediário e a coleção `Models` são liberados aqui
+            // (ComLifetime, P1.1); `.Body` é uma referência COM própria, independente do RCW
+            // do `Model` que a devolveu.
             for (int i = 1; i <= count; i++) // 1-based
             {
-                dynamic body = null;
-                try { body = models.Item(i).Body; }
+                dynamic modelItem = null; dynamic body = null;
+                try { modelItem = models.Item(i); body = modelItem.Body; }
                 catch (Exception ex) { Log.Warn($"Model[{i}].Body indisponível: {ex.Message}"); }
                 if (body != null) yield return body;
+                ComLifetime.Release(modelItem);
             }
+            ComLifetime.Release(models);
         }
 
         private List<dynamic> GetAllFaces(dynamic body)
@@ -314,10 +350,18 @@ namespace AutoEDM.Selection
             foreach (var q in FaceQueryCandidates)
             {
                 var faces = ReadFaces(b, q);
-                if (faces != null && (best == null || faces.Count > best.Count))
+                if (faces == null) continue;
+                if (best == null || faces.Count > best.Count)
                 {
+                    // O candidato anterior perdeu — nenhuma face dele sobrevive, libera todas
+                    // (probing só roda quando ForcedFaceQueryType é null; ComLifetime, P1.1).
+                    if (best != null) foreach (var f in best) ComLifetime.Release(f);
                     best = faces;
                     bestQuery = q;
+                }
+                else
+                {
+                    foreach (var f in faces) ComLifetime.Release(f);
                 }
             }
 
@@ -330,9 +374,10 @@ namespace AutoEDM.Selection
 
         private static List<dynamic> ReadFaces(dynamic body, int queryType)
         {
+            dynamic facesCollection = null;
             try
             {
-                dynamic facesCollection = body.Faces[queryType];
+                facesCollection = body.Faces[queryType];
                 int count = (int)facesCollection.Count;
                 var list = new List<dynamic>(count);
                 for (int i = 1; i <= count; i++) // 1-based
@@ -342,6 +387,12 @@ namespace AutoEDM.Selection
             catch
             {
                 return null;
+            }
+            finally
+            {
+                // A COLEÇÃO em si nunca sobrevive além daqui — só os itens (Face) dela, já
+                // copiados pra `list` (ComLifetime, P1.1).
+                ComLifetime.Release(facesCollection);
             }
         }
     }

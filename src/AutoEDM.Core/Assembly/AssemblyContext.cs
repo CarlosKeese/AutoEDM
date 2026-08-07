@@ -81,14 +81,21 @@ namespace AutoEDM.Assembly
         /// <summary>
         /// Best-effort read of an occurrence origin (METROS) relative to the assembly.
         /// GetTransform devolve metros na API COM do Solid Edge — NÃO dividir por 1000
-        /// no chamador (PutOrigin também espera metros). Returns false if the method
-        /// shape isn't as expected on this SE version.
+        /// no chamador (PutOrigin também espera metros); use <see cref="Model.Units"/> se
+        /// precisar converter p/ mm. Returns false if the method shape isn't as expected
+        /// on this SE version.
+        ///
+        /// Out-params sufixados "M" (revisão 2026-07-23, docs/REVISAO-AutoEDM.md P1.2): este
+        /// era o ponto de maior risco do projeto p/ o erro silencioso de fator 1000 — a
+        /// assinatura antiga devolvia METROS sem nenhum sinal no nome (só um comentário),
+        /// então quem chamava tinha que lembrar de cabeça. O sufixo obriga a decisão a
+        /// aparecer no próprio ponto de captura (<c>out double xM</c>).
         /// </summary>
-        public bool TryGetOrigin(OccurrenceInfo occ, out double x, out double y, out double z)
+        public bool TryGetOrigin(OccurrenceInfo occ, out double xM, out double yM, out double zM)
         {
-            x = y = z = 0;
+            xM = yM = zM = 0;
             if (!TryReadTransform(occ, out double[] v)) return false;
-            x = v[0]; y = v[1]; z = v[2];
+            xM = v[0]; yM = v[1]; zM = v[2];
             return true;
         }
 
@@ -96,15 +103,16 @@ namespace AutoEDM.Assembly
         /// Best-effort read of an occurrence placement: origin (metros) + rotation
         /// angles (radianos), via GetTransform. Usado pelo relatório de coordenadas
         /// para (a) transladar para o zero-máquina e (b) sinalizar se há rotação.
+        /// Ver nota de unidades em <see cref="TryGetOrigin"/> — mesmo sufixo "M"/"Rad".
         /// </summary>
         public bool TryGetPlacement(OccurrenceInfo occ,
-            out double x, out double y, out double z,
-            out double ax, out double ay, out double az)
+            out double xM, out double yM, out double zM,
+            out double axRad, out double ayRad, out double azRad)
         {
-            x = y = z = ax = ay = az = 0;
+            xM = yM = zM = axRad = ayRad = azRad = 0;
             if (!TryReadTransform(occ, out double[] v)) return false;
-            x = v[0]; y = v[1]; z = v[2];
-            ax = v[3]; ay = v[4]; az = v[5];
+            xM = v[0]; yM = v[1]; zM = v[2];
+            axRad = v[3]; ayRad = v[4]; azRad = v[5];
             return true;
         }
 

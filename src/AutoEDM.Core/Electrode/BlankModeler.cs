@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using AutoEDM.Diagnostics;
+using AutoEDM.Model;
 
 namespace AutoEDM.Electrode
 {
@@ -20,6 +21,11 @@ namespace AutoEDM.Electrode
     /// Origem da peça = CENTRO da seção, na BASE do bloco (Z=0 local); o bloco sobe +Z.
     /// Assim, ao posicionar a ocorrência com PutOrigin(centro XY, fundo Z), a base do
     /// bloco encosta no fundo do bolsão e sobe em direção à superfície.
+    ///
+    /// Unidades (revisão 2026-07-23, docs/REVISAO-AutoEDM.md P1.2): todo parâmetro público
+    /// deste arquivo é em MILÍMETROS (sufixo Mm); a conversão para METROS (domínio da API do
+    /// Solid Edge) é feita com <see cref="Units.MmToM"/> logo antes de cada chamada COM — nunca
+    /// `/1000.0`/`/2000.0` soltos.
     /// </summary>
     public static class BlankModeler
     {
@@ -49,9 +55,9 @@ namespace AutoEDM.Electrode
             int planeIndex = 1, int extrudeSide = 2, double baseLiftMm = 0.0,
             double centerXmm = 0.0, double centerYmm = 0.0)
         {
-            double hx = sizeXmm / 2000.0, hy = sizeYmm / 2000.0; // metade da seção, em METROS
-            double h = heightMm / 1000.0;                        // altura em METROS
-            double cx = centerXmm / 1000.0, cy = centerYmm / 1000.0; // centro em METROS
+            double hx = Units.MmToM(sizeXmm) / 2.0, hy = Units.MmToM(sizeYmm) / 2.0; // metade da seção, em METROS
+            double h = Units.MmToM(heightMm);                        // altura em METROS
+            double cx = Units.MmToM(centerXmm), cy = Units.MmToM(centerYmm); // centro em METROS
 
             dynamic plane = partDoc.RefPlanes.Item(planeIndex);
             bool liftedPlane = false;
@@ -60,7 +66,7 @@ namespace AutoEDM.Electrode
                 try
                 {
                     plane = partDoc.RefPlanes.AddParallelByDistance(
-                        partDoc.RefPlanes.Item(planeIndex), baseLiftMm / 1000.0, 2, // 2 = igRight (+normal, sobe)
+                        partDoc.RefPlanes.Item(planeIndex), Units.MmToM(baseLiftMm), 2, // 2 = igRight (+normal, sobe)
                         Type.Missing, Type.Missing, Type.Missing);
                     liftedPlane = true;
                 }
@@ -116,9 +122,9 @@ namespace AutoEDM.Electrode
             int planeIndex = 1, int extrudeSide = 2, double baseLiftMm = 0.0,
             double centerXmm = 0.0, double centerYmm = 0.0)
         {
-            double r = diameterMm / 2000.0; // raio em METROS
-            double h = heightMm / 1000.0;
-            double cx = centerXmm / 1000.0, cy = centerYmm / 1000.0; // centro em METROS
+            double r = Units.MmToM(diameterMm) / 2.0; // raio em METROS
+            double h = Units.MmToM(heightMm);
+            double cx = Units.MmToM(centerXmm), cy = Units.MmToM(centerYmm); // centro em METROS
 
             dynamic plane = partDoc.RefPlanes.Item(planeIndex);
             bool liftedPlane = false;
@@ -127,7 +133,7 @@ namespace AutoEDM.Electrode
                 try
                 {
                     plane = partDoc.RefPlanes.AddParallelByDistance(
-                        partDoc.RefPlanes.Item(planeIndex), baseLiftMm / 1000.0, 2,
+                        partDoc.RefPlanes.Item(planeIndex), Units.MmToM(baseLiftMm), 2,
                         Type.Missing, Type.Missing, Type.Missing);
                     liftedPlane = true;
                 }
@@ -179,13 +185,13 @@ namespace AutoEDM.Electrode
             try
             {
                 double bandBaseZmm = bandTopZmm - bandHeightMm;
-                double hx = (blockXmm / 2.0 - marginMm) / 1000.0; // meia-seção (m)
-                double hy = (blockYmm / 2.0 - marginMm) / 1000.0;
-                double cx = centerXmm / 1000.0, cy = centerYmm / 1000.0;
-                double h = bandHeightMm / 1000.0;
+                double hx = Units.MmToM(blockXmm / 2.0 - marginMm); // meia-seção (m)
+                double hy = Units.MmToM(blockYmm / 2.0 - marginMm);
+                double cx = Units.MmToM(centerXmm), cy = Units.MmToM(centerYmm);
+                double h = Units.MmToM(bandHeightMm);
 
                 // Perna do chanfro limitada a ~40% do menor lado (não engolir a seção).
-                double leg = chamferLegMm / 1000.0;
+                double leg = Units.MmToM(chamferLegMm);
                 double maxLeg = Math.Min(2 * hx, 2 * hy) * 0.4;
                 if (leg > maxLeg) leg = maxLeg;
                 if (leg < 1e-5 || hx <= 0 || hy <= 0)
@@ -201,7 +207,7 @@ namespace AutoEDM.Electrode
                     try
                     {
                         plane = partDoc.RefPlanes.AddParallelByDistance(
-                            partDoc.RefPlanes.Item(1), bandBaseZmm / 1000.0, 2,
+                            partDoc.RefPlanes.Item(1), Units.MmToM(bandBaseZmm), 2,
                             Type.Missing, Type.Missing, Type.Missing);
                         lifted = true;
                     }
@@ -213,7 +219,7 @@ namespace AutoEDM.Electrode
                 }
 
                 Log.Info($"Faixa de medição: {blockXmm - 2 * marginMm:0.0}×{blockYmm - 2 * marginMm:0.0}×{bandHeightMm:0.0} mm " +
-                         $"(margem {marginMm:0.0}/lado), chanfro 45° {leg * 1000:0.0}mm no canto X+ Y−, base Z={bandBaseZmm:0.0}, topo Z={bandTopZmm:0.0}.");
+                         $"(margem {marginMm:0.0}/lado), chanfro 45° {Units.MToMm(leg):0.0}mm no canto X+ Y−, base Z={bandBaseZmm:0.0}, topo Z={bandTopZmm:0.0}.");
 
                 dynamic profileSet = partDoc.ProfileSets.Add();
                 dynamic profile = profileSet.Profiles.Add(plane);
@@ -284,9 +290,9 @@ namespace AutoEDM.Electrode
                     return null;
                 }
 
-                double r = radiusMm / 1000.0, cx = centerXmm / 1000.0, cy = centerYmm / 1000.0;
-                double chordY = chordDistMm / 1000.0, halfW = halfWidthMm / 1000.0;
-                double h = bandHeightMm / 1000.0;
+                double r = Units.MmToM(radiusMm), cx = Units.MmToM(centerXmm), cy = Units.MmToM(centerYmm);
+                double chordY = Units.MmToM(chordDistMm), halfW = Units.MmToM(halfWidthMm);
+                double h = Units.MmToM(bandHeightMm);
 
                 dynamic plane = partDoc.RefPlanes.Item(1);
                 bool lifted = false;
@@ -295,7 +301,7 @@ namespace AutoEDM.Electrode
                     try
                     {
                         plane = partDoc.RefPlanes.AddParallelByDistance(
-                            partDoc.RefPlanes.Item(1), bandBaseZmm / 1000.0, 2,
+                            partDoc.RefPlanes.Item(1), Units.MmToM(bandBaseZmm), 2,
                             Type.Missing, Type.Missing, Type.Missing);
                         lifted = true;
                     }
@@ -383,7 +389,7 @@ namespace AutoEDM.Electrode
                 double maxDia = Math.Min(blockXmm, blockYmm) - 2 * margin;
                 double dia = fix.ShaftDiameterLarge <= maxDia ? fix.ShaftDiameterLarge : fix.ShaftDiameterSmall;
                 bool tight = dia > maxDia;
-                double cx = centerXmm / 1000.0, cy = centerYmm / 1000.0; // centro do eixo (= centro do bloco), METROS
+                double cx = Units.MmToM(centerXmm), cy = Units.MmToM(centerYmm); // centro do eixo (= centro do bloco), METROS
                 Log.Info($"Eixo de fixação Ø{dia:0.#}×{fix.ShaftHeight:0.0} no topo (bloco {blockXmm:0.0}×{blockYmm:0.0}, topo Z={blockTopZmm:0.0})" +
                          (tight ? " [APERTADO na borda — confira]" : "") + ".");
 
@@ -391,7 +397,7 @@ namespace AutoEDM.Electrode
                 try
                 {
                     plane = partDoc.RefPlanes.AddParallelByDistance(
-                        partDoc.RefPlanes.Item(1), blockTopZmm / 1000.0, 2,
+                        partDoc.RefPlanes.Item(1), Units.MmToM(blockTopZmm), 2,
                         Type.Missing, Type.Missing, Type.Missing);
                 }
                 catch (Exception e) { Log.Warn($"Plano do topo p/ eixo falhou: {e.GetBaseException().Message}"); return null; }
@@ -400,7 +406,7 @@ namespace AutoEDM.Electrode
                 try
                 {
                     dynamic prof = ps.Profiles.Add(plane);
-                    prof.Circles2d.AddByCenterRadius(cx, cy, dia / 2000.0);
+                    prof.Circles2d.AddByCenterRadius(cx, cy, Units.MmToM(dia) / 2.0);
                     prof.End(1);
                     var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)prof };
                     // side=2: sobe +Z a partir do topo do bloco (protrusão, funde com o bloco).
@@ -408,7 +414,7 @@ namespace AutoEDM.Electrode
                     {
                         return ((object)partDoc.Models).GetType().InvokeMember("AddFiniteExtrudedProtrusion",
                             BindingFlags.InvokeMethod, null, partDoc.Models,
-                            new object[] { 1, arr, 2, fix.ShaftHeight / 1000.0 });
+                            new object[] { 1, arr, 2, Units.MmToM(fix.ShaftHeight) });
                     }, "Eixo (extrusão)");
                     Log.Info(FeatureFailed(shaft) ? "  Eixo: feature com Status FALHA." : $"  Eixo Ø{dia:0.#} criado ✓.");
                 }
@@ -614,7 +620,7 @@ namespace AutoEDM.Electrode
                 int mode = 1; try { mode = (int)doc.ModelingMode; } catch { }
 
                 dynamic plane = doc.RefPlanes.AddParallelByDistance(
-                    doc.RefPlanes.Item(1), planeZmm / 1000.0, 2, Type.Missing, Type.Missing, Type.Missing);
+                    doc.RefPlanes.Item(1), Units.MmToM(planeZmm), 2, Type.Missing, Type.Missing, Type.Missing);
 
                 object holeData;
                 if (threadDesc != null)
@@ -624,18 +630,18 @@ namespace AutoEDM.Electrode
                     // rosca. As props de rosca vão preenchidas NA MÃO: `ThreadDataByDescription`
                     // falha e deixa o HoleData incompleto → E_FAIL no AddSync; o preenchimento
                     // manual CRIOU o furo OK (Receita A dos Logs 55/58). Ver [[electrode-anatomy]].
-                    dynamic hd = doc.HoleDataCollection.Add(37, diaMm / 1000.0);
-                    FillThreadDataManual(hd, threadDesc, diaMm / 1000.0);
+                    dynamic hd = doc.HoleDataCollection.Add(37, Units.MmToM(diaMm));
+                    FillThreadDataManual(hd, threadDesc, Units.MmToM(diaMm));
                     holeData = (object)hd;
                 }
-                else holeData = doc.HoleDataCollection.Add(33, diaMm / 1000.0); // 33 = igRegularHole
+                else holeData = doc.HoleDataCollection.Add(33, Units.MmToM(diaMm)); // 33 = igRegularHole
 
                 ps = doc.ProfileSets.Add();
                 dynamic prof = ps.Profiles.Add(plane);
-                prof.Holes2d.Add(cxMm / 1000.0, cyMm / 1000.0);
+                prof.Holes2d.Add(Units.MmToM(cxMm), Units.MmToM(cyMm));
                 prof.End(1);
 
-                double depthM = depthMm / 1000.0;
+                double depthM = Units.MmToM(depthMm);
                 dynamic holes = doc.Models.Item(1).Holes;
                 if (mode == 2)
                     hole = (object)holes.AddFinite(prof, 1, depthM, holeData);
@@ -684,7 +690,7 @@ namespace AutoEDM.Electrode
                     string td = ""; try { td = (string)hd.ThreadDescription; } catch { }
                     if (nom > 0 || !string.IsNullOrEmpty(td))
                     {
-                        Log.Info($"  Rosca via tabela do SE: '{d}' → desc='{td}', Ønom={nom * 1000:0.#} mm (form métrico correto).");
+                        Log.Info($"  Rosca via tabela do SE: '{d}' → desc='{td}', Ønom={Units.MToMm(nom):0.#} mm (form métrico correto).");
                         populated = true; break;
                     }
                 }
@@ -700,10 +706,10 @@ namespace AutoEDM.Electrode
                 try { hd.SubType = "M6"; } catch { }
                 try { hd.Size = "M6"; } catch { }
                 try { hd.ThreadDescription = "M6x1.0"; } catch { }
-                try { hd.ThreadNominalDiameter = nominalMm / 1000.0; } catch { }
+                try { hd.ThreadNominalDiameter = Units.MmToM(nominalMm); } catch { }
                 try { hd.ThreadTapDrillDiameter = tapDrillM; } catch { }
-                try { hd.ThreadMinorDiameter = minorMm / 1000.0; } catch { }
-                Log.Warn($"  Rosca: tabela do SE não aceitou a descrição — preenchi na mão (M6×1,0, broca {tapDrillM * 1000:0.#}); CONFIRA o form na tela.");
+                try { hd.ThreadMinorDiameter = Units.MmToM(minorMm); } catch { }
+                Log.Warn($"  Rosca: tabela do SE não aceitou a descrição — preenchi na mão (M6×1,0, broca {Units.MToMm(tapDrillM):0.#}); CONFIRA o form na tela.");
             }
 
             // (3) LIGA a rosca — equivale ao checkbox "Rosca" da tela (Carlos, 2026-07-15: os

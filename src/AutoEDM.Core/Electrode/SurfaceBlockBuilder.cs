@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using AutoEDM.Com;
 using AutoEDM.Diagnostics;
+using AutoEDM.Model;
 using AutoEDM.Selection;
 
 namespace AutoEDM.Electrode
@@ -686,7 +687,7 @@ namespace AutoEDM.Electrode
                 catch (Exception e) { Log.Warn("Aplicar GAP: alternar p/ Ordenado falhou — " + e.GetBaseException().Message); return result; }
             }
 
-            PaintFaces(burnFaces, choice.Color);
+            FaceColorPainter.Paint(partDoc, burnFaces, choice.Color, choice.Ra);
 
             object offsetFeature = TryApplyGapOffset(burnFaces, choice, blockModel);
             if (offsetFeature != null) { result.CreatedFeatures.Add(offsetFeature); result.SurfacesOffset = true; }
@@ -911,7 +912,7 @@ namespace AutoEDM.Electrode
             catch (Exception e) { Log.Warn("Unir (GAP): Model.FaceOffsets inacessível — " + e.GetBaseException().Message); return null; }
             try { ComDiagnostics.LogSignatures(faceOffsets, "AddEx", "Add"); } catch { }
 
-            double offsetM = -Math.Abs(gapMm) / 1000.0;
+            double offsetM = -Units.MmToM(Math.Abs(gapMm));
             object lastArgs = null;
             Exception lastEx = null;
             // As 2 variantes de LiveRules (null vs array vazio tipado) deram o MESMO
@@ -980,51 +981,6 @@ namespace AutoEDM.Electrode
                 Log.Info($"Unir (GAP): feature renomeada p/ \"{name}\".");
             }
             catch (Exception e) { Log.Warn($"Unir (GAP): renomear feature p/ \"{name}\" falhou (segue com o nome padrão) — " + e.GetBaseException().Message); }
-        }
-
-        /// <summary>
-        /// Pinta as faces da superfície de queima com a cor do Ra escolhido — tentativa
-        /// DIRETA via `Face.Style.Diffuse{Red,Green,Blue}` (mesmo objeto confirmado p/ LEITURA
-        /// em <see cref="AutoEDM.Selection.FaceStyleColorReader"/>; escrita ainda NÃO confirmada
-        /// — 1ª tentativa). Se falhar, loga os membros do Style p/ achar o setter certo sem
-        /// adivinhar de novo. NUNCA lança — cor é secundária à união/GAP.
-        /// </summary>
-        private static void TryPaintSurface(dynamic surf, Color color)
-        {
-            var faces = new List<object>();
-            AddFacesFrom((object)surf, faces);
-            PaintFaces(faces, color);
-        }
-
-        /// <summary>Pinta uma lista de faces já resolvidas com a cor do Ra escolhido (extraído de
-        /// <see cref="TryPaintSurface"/> para ser reusado por <see cref="ApplyGapToUnitedSurfaces"/>
-        /// e pelo "Duplicar eletrodo", que já têm as faces em mãos via <c>FaceOffset.GetFacesToOffset</c>
-        /// — sem precisar de um objeto "superfície" para extrair faces de novo).</summary>
-        private static void PaintFaces(IReadOnlyList<object> faces, Color color)
-        {
-            if (faces == null || faces.Count == 0) { Log.Warn("Cor: sem faces p/ pintar."); return; }
-
-            double r = color.R / 255.0, g = color.G / 255.0, b = color.B / 255.0;
-            int ok = 0;
-            foreach (var f in faces)
-            {
-                try
-                {
-                    dynamic face = f;
-                    dynamic style = face.Style;
-                    style.DiffuseRed = r; style.DiffuseGreen = g; style.DiffuseBlue = b;
-                    ok++;
-                }
-                catch { /* tenta a próxima; resumo + dump abaixo */ }
-            }
-
-            if (ok == faces.Count)
-                Log.Info($"Cor: {ok}/{faces.Count} face(s) pintada(s) ✓ (RGB {color.R},{color.G},{color.B}).");
-            else
-            {
-                Log.Warn($"Cor: só {ok}/{faces.Count} face(s) pintada(s) — Style.Diffuse* pode ser SÓ LEITURA; dump p/ achar o setter certo:");
-                try { ComDiagnostics.LogMembers("Face.Style", (object)((dynamic)faces[0]).Style); } catch { }
-            }
         }
 
         /// <summary>

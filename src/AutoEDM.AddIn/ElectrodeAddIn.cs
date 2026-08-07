@@ -26,6 +26,9 @@ namespace AutoEDM.AddIn
         /// <summary>Application do Solid Edge (in-process).</summary>
         public SolidEdgeFramework.Application App { get; private set; }
 
+        /// <summary>Caminho do arquivo de log desta sessão, para mostrar ao usuário em mensagens de erro.</summary>
+        public string LogPath => _logSink?.FilePath;
+
         private FileLogSink _logSink;
 
         public override void OnConnection(SolidEdgeFramework.Application application,

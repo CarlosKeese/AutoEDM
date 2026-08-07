@@ -22,9 +22,11 @@ namespace AutoEDM.AddIn.UI
         /// variável Ra gravada na peça (<see cref="RaVariableStore"/> — escrita por "Criar
         /// eletrodo (manual)" a partir da cor detectada na seleção, ou por um "Aplicar GAP"
         /// anterior) para já abrir a lista na combinação certa em vez de sempre no topo (mais
-        /// grosso). Null = comportamento antigo (1º item da lista).
+        /// grosso). Null = comportamento antigo (1º item da lista). <paramref name="choices"/>
+        /// null = <see cref="RaGapPresets.All(string, RaColorMap, IOffsetPolicy)"/> de fábrica;
+        /// o add-in passa a lista derivada de <see cref="Config.AutoEdmConfig"/> (revisão A3).
         /// </summary>
-        public RaGapPickerForm(double? preselectRa = null)
+        public RaGapPickerForm(double? preselectRa = null, System.Collections.Generic.IReadOnlyList<RaGapPresets.Choice> choices = null)
         {
             Text = "AutoEDM — Aplicar GAP (GAP/Ra)";
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -36,7 +38,7 @@ namespace AutoEDM.AddIn.UI
             Controls.Add(lbl);
 
             _cbo = new ComboBox { Left = 12, Top = 36, Width = 260, DropDownStyle = ComboBoxStyle.DropDownList };
-            foreach (var choice in RaGapPresets.All()) _cbo.Items.Add(choice);
+            foreach (var choice in (choices ?? RaGapPresets.All())) _cbo.Items.Add(choice);
             int preselectIndex = 0;
             if (preselectRa.HasValue)
             {

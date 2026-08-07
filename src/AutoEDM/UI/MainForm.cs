@@ -300,7 +300,7 @@ namespace AutoEDM.UI
                 // Ecoa a tabela no log ao vivo e grava .txt + .csv.
                 foreach (var line in BurnReportFormatter.ToText(report).Split('\n'))
                     Log.Info(line.TrimEnd('\r'));
-                string path = BurnReportWriter.Save(report);
+                string path = BurnReportWriter.Save(report, ElectrodeNaming.ResolveProjectFolder(doc));
                 Log.Info($"Relatório salvo (.txt + .csv) em: {path}");
             });
 
@@ -315,7 +315,7 @@ namespace AutoEDM.UI
                 // Ecoa a folha no log ao vivo e grava .txt + .csv (1 linha/passe no CSV).
                 foreach (var line in ElectrodeSpecSheet.ToText(plan, p).Split('\n'))
                     Log.Info(line.TrimEnd('\r'));
-                string path = ElectrodeSpecSheetWriter.Save(plan, p);
+                string path = ElectrodeSpecSheetWriter.Save(plan, p, folder: ElectrodeNaming.ResolveProjectFolder(doc));
                 Log.Info($"Spec-sheet salva (.txt + .csv) em: {path}");
             });
 

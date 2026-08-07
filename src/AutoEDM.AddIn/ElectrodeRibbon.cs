@@ -3,6 +3,7 @@ using System.Windows.Forms;
 using SolidEdgeCommunity.AddIn;
 using AutoEDM.AddIn.UI;
 using AutoEDM.Com;
+using AutoEDM.Config;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Model;
@@ -18,7 +19,7 @@ namespace AutoEDM.AddIn
     public class ElectrodeRibbon : Ribbon
     {
         private const int CmdCriarEletrodos = 1; // Criar eletrodos + base
-        private const int CmdRelatorio = 2;      // Coordenadas de queima
+        private const int CmdCoordenadas = 2;    // Coordenadas: janela com os eletrodos SELECIONADOS (posição + GAP/Ra)
         private const int CmdAnalisarZ = 3;      // Analisar eletrodos por Z
         private const int CmdSpecSheet = 4;      // Ficha (spec-sheet)
         private const int CmdCriarBase = 5;       // Criar Base (ambiente de PEÇA)
@@ -44,7 +45,7 @@ namespace AutoEDM.AddIn
             {
                 case CmdCriarEletrodos: CriarEletrodos(); break;
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
-                case CmdRelatorio: GerarRelatorioCoordenadas(); break;
+                case CmdCoordenadas: AbrirCoordenadas(); break;
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
                 case CmdCriarBase: CriarBase(); break;
@@ -62,9 +63,9 @@ namespace AutoEDM.AddIn
         /// <summary>Analisa (NÃO-destrutivo) e propõe os eletrodos por nível de Z.</summary>
         private void AnalisarZ()
         {
-            Run("ANALISAR ELETRODOS (Z)", (connector, doc, p) =>
+            Run("ANALISAR ELETRODOS (Z)", DocKind.Assembly, (connector, doc, p) =>
             {
-                Selection.ZAnalysisResult res = new ElectrodeBuilder(connector).AnalyzeElectrodesByZ(doc, p);
+                Selection.ZAnalysisResult res = NewBuilder(connector).AnalyzeElectrodesByZ(doc, p);
                 MessageBox.Show(
                     $"{res.Electrodes.Count} eletrodo(s) proposto(s), por nível de Z.\n" +
                     $"({res.FlatFaces} piso / {res.SteepFaces} parede)\n\nVeja as posições no log.",
@@ -72,17 +73,13 @@ namespace AutoEDM.AddIn
             });
         }
 
-        /// <summary>Cria as peças de eletrodo com a base (holder) e as posiciona. ESCREVE na montagem.</summary>
+        /// <summary>Cria as peças de eletrodo (vazias) e as posiciona. ESCREVE na montagem. A
+        /// base (bloco/holder) é gerada depois, pela "Criar Base", sobre a geometria real.</summary>
         private void CriarEletrodos()
         {
-            if (!TryAssembly(out dynamic app, out dynamic doc)) return;
-
-            try
+            Run("CRIAR ELETRODOS", DocKind.Assembly, (connector, doc, p) =>
             {
-                Log.Info("===== CRIAR ELETRODOS + BASE (add-in) =====");
-                var connector = SolidEdgeConnector.Attach(app);
-                var p = new ElectrodeParams { ElectrodeName = "ELD" };
-                var builder = new ElectrodeBuilder(connector);
+                var builder = NewBuilder(connector);
 
                 // CONFERIR ANTES DE CRIAR (Log 57): mostra a queima detectada + as cores não
                 // mapeadas; se a maior região colorida não estiver mapeada, avisa. Assim o
@@ -94,14 +91,14 @@ namespace AutoEDM.AddIn
                         "Nenhum eletrodo detectado (sem cor de queima MAPEADA). Nada foi criado.\n\n" +
                         "Veja no log as cores encontradas — a queima pode estar numa cor fora do mapa.",
                         "AutoEDM — Criar eletrodos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    Log.Info("===== FIM (CRIAR ELETRODOS — nada detectado) =====");
+                    Log.Info("Criar eletrodos: nada detectado.");
                     return;
                 }
 
                 var icon = res.HasDominantUnmappedColor ? MessageBoxIcon.Warning : MessageBoxIcon.Question;
                 var confirm = MessageBox.Show(
                     res.DescribeBurnDetection() +
-                    "\n\nIsto vai CRIAR uma peça por eletrodo (com o bloco da base) na subpasta 'Eletrodos' " +
+                    "\n\nIsto vai CRIAR uma peça VAZIA por eletrodo (sem bloco/base ainda) na subpasta 'Eletrodos' " +
                     "ao lado da montagem e inseri-las posicionadas. A montagem NÃO será salva automaticamente.\n\n" +
                     "A queima detectada está CORRETA? Criar os eletrodos?",
                     "AutoEDM — Conferir antes de criar", MessageBoxButtons.YesNo, icon);
@@ -110,11 +107,10 @@ namespace AutoEDM.AddIn
                 int n = builder.CreateElectrodesWithBlank(doc, p);
                 MessageBox.Show(
                     $"{n} eletrodo(s) criado(s) e posicionado(s).\n\n" +
-                    "Revise, SALVE a montagem e copie as faces de queima em cada base.",
+                    "Revise, SALVE a montagem, edite cada peça em contexto, copie (Inter-Part Copy) as faces de " +
+                    "queima e use 'Criar Base' para gerar o bloco.",
                     "AutoEDM — Criar eletrodos", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Log.Info("===== FIM (CRIAR ELETRODOS) =====");
-            }
-            catch (Exception ex) { Fail("criar os eletrodos", ex); }
+            });
         }
 
         /// <summary>
@@ -123,51 +119,56 @@ namespace AutoEDM.AddIn
         /// clique na ocorrência e clique DE NOVO no mesmo ponto — ou segure Alt — para
         /// selecionar a FACE em vez da peça inteira; não existe um "modo" de seleção
         /// separado a ligar, é o comportamento nativo de seleção em 2 cliques do SE) e
-        /// clica este botão UMA vez por eletrodo. Cria e posiciona UMA peça com o bloco no
-        /// centro XY + Z mais fundo das faces escolhidas — mesmo pipeline do "Criar
-        /// eletrodos" automático. ESCREVE na montagem (não salva).
+        /// clica este botão UMA vez por eletrodo. Cria e posiciona UMA peça VAZIA (sem
+        /// bloco/base ainda) no centro XY + Z mais fundo das faces escolhidas — mesmo
+        /// pipeline do "Criar eletrodos" automático. ESCREVE na montagem (não salva).
         /// </summary>
         private void CriarEletrodoManual()
         {
-            if (!TryAssembly(out dynamic app, out dynamic doc)) return;
-            try
+            Run("CRIAR ELETRODO (MANUAL, da seleção)", DocKind.Assembly, (connector, doc, p) =>
             {
-                Log.Info("===== CRIAR ELETRODO (MANUAL, da seleção) (add-in) =====");
-                var connector = SolidEdgeConnector.Attach(app);
-                var p = new ElectrodeParams { ElectrodeName = "ELD" };
-                var builder = new ElectrodeBuilder(connector);
-
-                ManualElectrodeResult res = builder.CreateElectrodeFromSelection(doc, p);
+                ManualElectrodeResult res = NewBuilder(connector).CreateElectrodeFromSelection(doc, p);
                 MessageBox.Show(res.Message, "AutoEDM — Criar eletrodo (manual)", MessageBoxButtons.OK,
                     res.Created ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-                Log.Info("===== FIM (CRIAR ELETRODO MANUAL) =====");
-            }
-            catch (Exception ex) { Fail("criar o eletrodo manual", ex); }
+            });
         }
 
-        /// <summary>Relatório de coordenadas de queima (.txt + .csv). Somente leitura.</summary>
-        private void GerarRelatorioCoordenadas()
+        /// <summary>
+        /// Botão "Coordenadas" (ambiente de MONTAGEM, Carlos, 2026-08-04): SEM detecção
+        /// automática por cor — o usuário SELECIONA na montagem os eletrodos de interesse
+        /// (ocorrências) e clica. Abre uma janela com uma linha por eletrodo: a posição
+        /// (mesma leitura de "Propriedades de Ocorrência" no SE) e o GAP/Ra gravados na
+        /// peça (mesma fonte que "Duplicar eletrodo" usa). Somente leitura — não altera a
+        /// montagem nem as peças.
+        /// </summary>
+        private void AbrirCoordenadas()
         {
-            Run("RELATÓRIO DE COORDENADAS", (connector, doc, p) =>
+            Run("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, (connector, doc, p) =>
             {
-                BurnCoordinateReport report = new ElectrodeBuilder(connector).BuildBurnReport(doc, p);
-                Log.Info(BurnReportFormatter.ToText(report));
-                string path = BurnReportWriter.Save(report);
-                MessageBox.Show(
-                    $"Coordenadas geradas: {report.Coordinates.Count}\n" +
-                    $"Cavidade: {report.TargetOccurrenceName ?? "—"}\n\nArquivos (.txt e .csv):\n{path}",
-                    "AutoEDM — Coordenadas de queima", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                var items = NewBuilder(connector).ListSelectedElectrodes(doc);
+                if (items.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Nenhum eletrodo selecionado. Na montagem, selecione a(s) ocorrência(s) do(s) eletrodo(s) " +
+                        "(clique na peça, não numa face) e clique em \"Coordenadas\" de novo.",
+                        "AutoEDM — Coordenadas", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                using (var form = new ElectrodeListForm(items))
+                {
+                    form.ShowDialog();
+                }
             });
         }
 
         /// <summary>Folha de dados (spec-sheet) por eletrodo (.txt + .csv). Somente leitura.</summary>
         private void GerarSpecSheet()
         {
-            Run("FICHA DE ELETRODOS (spec-sheet)", (connector, doc, p) =>
+            Run("FICHA DE ELETRODOS (spec-sheet)", DocKind.Assembly, (connector, doc, p) =>
             {
-                ElectrodeBuildPlan plan = new ElectrodeBuilder(connector).PlanFromAssemblyDocument(doc, p);
+                ElectrodeBuildPlan plan = NewBuilder(connector).PlanFromAssemblyDocument(doc, p);
                 Log.Info(ElectrodeSpecSheet.ToText(plan, p));
-                string path = ElectrodeSpecSheetWriter.Save(plan, p);
+                string path = ElectrodeSpecSheetWriter.Save(plan, p, folder: ElectrodeNaming.ResolveProjectFolder(doc));
                 MessageBox.Show(
                     $"Ficha gerada para {plan.Regions.Count} detalhe(s).\n\nArquivos (.txt e .csv):\n{path}",
                     "AutoEDM — Ficha", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -183,19 +184,15 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void CriarBase()
         {
-            if (!TryPart(out dynamic app, out dynamic doc)) return;
-            try
+            Run("CRIAR BASE", DocKind.Part, (connector, doc, p) =>
             {
-                Log.Info("===== CRIAR BASE (add-in) =====");
-                // Garante o log de arquivo do add-in; o Core loga cada passo + o probe.
+                // O Core loga cada passo + o probe.
                 var builder = new SurfaceBlockBuilder();
-                using (var form = new BlockOverSurfacesForm(builder, (object)app, (object)doc))
+                using (var form = new BlockOverSurfacesForm(builder, (object)connector.Application, (object)doc))
                 {
                     form.ShowDialog();
                 }
-                Log.Info("===== FIM (CRIAR BASE) =====");
-            }
-            catch (Exception ex) { Fail("criar a base", ex); }
+            });
         }
 
         /// <summary>
@@ -209,10 +206,8 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void UnirSuperficies()
         {
-            if (!TryPart(out dynamic app, out dynamic doc)) return;
-            try
+            Run("UNIR SUPERFÍCIES", DocKind.Part, (connector, doc, p) =>
             {
-                Log.Info("===== UNIR SUPERFÍCIES (add-in) =====");
                 var builder = new SurfaceBlockBuilder();
                 BlockOverSurfacesResult res = builder.UniteSurfacesToBlock(doc, new BlockOverSurfacesOptions());
                 string msg = res.SurfacesUnited
@@ -221,9 +216,7 @@ namespace AutoEDM.AddIn
                       "Se preferir, una NA MÃO no SE e use 'Aplicar GAP' no corpo já mesclado.";
                 MessageBox.Show(msg, "AutoEDM — Unir superfícies", MessageBoxButtons.OK,
                     res.SurfacesUnited ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-                Log.Info("===== FIM (UNIR SUPERFÍCIES) =====");
-            }
-            catch (Exception ex) { Fail("unir as superfícies", ex); }
+            });
         }
 
         /// <summary>
@@ -237,14 +230,12 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void AplicarGap()
         {
-            if (!TryPart(out dynamic app, out dynamic doc)) return;
-            try
+            Run("APLICAR GAP", DocKind.Part, (connector, doc, p) =>
             {
-                Log.Info("===== APLICAR GAP (add-in) =====");
-
                 double? preselect = RaVariableStore.TryRead(doc, out double ra) ? (double?)ra : null;
+                var choices = RaGapPresets.All(p.Material, Config.BuildColorMap(), Config.BuildOffsetPolicy());
                 RaGapPresets.Choice chosen;
-                using (var picker = new RaGapPickerForm(preselect))
+                using (var picker = new RaGapPickerForm(preselect, choices))
                 {
                     if (picker.ShowDialog() != DialogResult.OK || picker.Chosen == null)
                     {
@@ -262,9 +253,7 @@ namespace AutoEDM.AddIn
                     : "Não apliquei o GAP.\n\n" + (res.Warnings.Count > 0 ? res.Warnings[0] : "Veja o log (linhas 'Aplicar GAP:').");
                 MessageBox.Show(msg, "AutoEDM — Aplicar GAP", MessageBoxButtons.OK,
                     res.SurfacesOffset ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-                Log.Info("===== FIM (APLICAR GAP) =====");
-            }
-            catch (Exception ex) { Fail("aplicar o GAP", ex); }
+            });
         }
 
         /// <summary>
@@ -278,20 +267,12 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void DuplicarEletrodo()
         {
-            if (!TryAssembly(out dynamic app, out dynamic doc)) return;
-            try
+            Run("DUPLICAR ELETRODO", DocKind.Assembly, (connector, doc, p) =>
             {
-                Log.Info("===== DUPLICAR ELETRODO (add-in) =====");
-                var connector = SolidEdgeConnector.Attach(app);
-                var p = new ElectrodeParams { ElectrodeName = "ELD" };
-                var builder = new ElectrodeBuilder(connector);
-
-                DuplicateElectrodeResult res = builder.DuplicateElectrodeToNextGap(doc, p);
+                DuplicateElectrodeResult res = NewBuilder(connector).DuplicateElectrodeToNextGap(doc, p);
                 MessageBox.Show(res.Message, "AutoEDM — Duplicar eletrodo", MessageBoxButtons.OK,
                     res.Created ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-                Log.Info("===== FIM (DUPLICAR ELETRODO) =====");
-            }
-            catch (Exception ex) { Fail("duplicar o eletrodo", ex); }
+            });
         }
 
         /// <summary>
@@ -399,48 +380,58 @@ namespace AutoEDM.AddIn
 
         // -------------------------------------------------------------- infra
 
-        /// <summary>Boilerplate comum dos comandos SOMENTE LEITURA: valida montagem, conecta, roda.</summary>
-        private void Run(string title, Action<SolidEdgeConnector, object, ElectrodeParams> body)
+        /// <summary>Tipo de documento exigido por um comando (= SolidEdgeFramework.DocumentTypeConstants).</summary>
+        private enum DocKind { Assembly = 3, Part = 1 } // igAssemblyDocument / igPartDocument
+
+        /// <summary>
+        /// Boilerplate comum aos comandos que exigem MONTAGEM ou PEÇA ativa: valida o
+        /// tipo de documento, conecta, loga início/fim e envolve qualquer exceção em
+        /// <see cref="Fail"/> — nenhuma exceção sobe direto pro Solid Edge por esquecimento
+        /// de try/catch (achado A1 da revisão do add-in). Os 3 comandos de
+        /// diagnóstico/gravador (IniciarLeitura/GravarLeitura/InspecionarSelecao) aceitam
+        /// QUALQUER tipo de documento e têm fluxo próprio (ConfirmDocParaGravacao) — ficam
+        /// fora deste wrapper de propósito.
+        /// </summary>
+        private void Run(string title, DocKind kind, Action<SolidEdgeConnector, dynamic, ElectrodeParams> body)
         {
-            if (!TryAssembly(out dynamic app, out dynamic doc)) return;
+            if (!TryDoc(kind, out dynamic app, out dynamic doc)) return;
             try
             {
                 Log.Info($"===== {title} (add-in) =====");
-                var connector = SolidEdgeConnector.Attach(app);
-                var p = new ElectrodeParams { ElectrodeName = "ELD" };
-                body(connector, (object)doc, p);
+                body(SolidEdgeConnector.Attach(app), doc, LoadParams());
                 Log.Info($"===== FIM ({title}) =====");
             }
             catch (Exception ex) { Fail(title.ToLowerInvariant(), ex); }
         }
 
-        private static bool TryAssembly(out dynamic app, out dynamic doc)
-        {
-            app = ElectrodeAddIn.Current?.App;
-            doc = null;
-            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return false; }
-            doc = app.ActiveDocument;
-            if (doc == null || (int)doc.Type != 3) // 3 = igAssemblyDocument
-            {
-                MessageBox.Show(
-                    "Abra uma MONTAGEM (.asm) ativa (a cavidade no zero-máquina) para usar esta ferramenta.",
-                    "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
-            }
-            return true;
-        }
+        /// <summary>
+        /// Configuração do usuário (revisão A3, docs/REVISAO-AutoEDM.md): lida uma vez por
+        /// sessão do add-in de %LOCALAPPDATA%\AutoEDM\config.json (criado com os defaults de
+        /// sempre se ainda não existir). Prefixo do eletrodo, tabela de Ra e mapa de cor de
+        /// queima passam a vir daqui em vez de fixos no código.
+        /// </summary>
+        private static AutoEdmConfig _config;
+        private static AutoEdmConfig Config => _config ?? (_config = AutoEdmConfig.LoadOrCreateDefault());
 
-        /// <summary>Valida que o documento ativo é uma PEÇA (.par) — para "Criar Base"/"Unir superfícies".</summary>
-        private static bool TryPart(out dynamic app, out dynamic doc)
+        private static ElectrodeParams LoadParams() => Config.ToElectrodeParams();
+
+        /// <summary>Novo <see cref="ElectrodeBuilder"/> já com a tabela de Ra e o mapa de cor
+        /// desta configuração — sem isso, a detecção de queima e o cálculo de GAP usariam
+        /// sempre a paleta de fábrica mesmo com um config.json customizado.</summary>
+        private static ElectrodeBuilder NewBuilder(SolidEdgeConnector connector) =>
+            new ElectrodeBuilder(connector, offsetPolicy: Config.BuildOffsetPolicy(), raColorMap: Config.BuildColorMap());
+
+        private static bool TryDoc(DocKind kind, out dynamic app, out dynamic doc)
         {
             app = ElectrodeAddIn.Current?.App;
             doc = null;
             if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return false; }
             doc = app.ActiveDocument;
-            if (doc == null || (int)doc.Type != 1) // 1 = igPartDocument
+            if (doc == null || (int)doc.Type != (int)kind)
             {
-                MessageBox.Show(
-                    "Abra uma PEÇA (.par) ativa, com as faces de queima já copiadas nela, para usar esta ferramenta.",
+                MessageBox.Show(kind == DocKind.Assembly
+                    ? "Abra uma MONTAGEM (.asm) ativa (a cavidade no zero-máquina) para usar esta ferramenta."
+                    : "Abra uma PEÇA (.par) ativa, com as faces de queima já copiadas nela, para usar esta ferramenta.",
                     "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
@@ -477,7 +468,11 @@ namespace AutoEDM.AddIn
         private static void Fail(string what, Exception ex)
         {
             Log.Error($"Falha ao {what}.", ex);
-            MessageBox.Show(ex.GetBaseException().Message, "AutoEDM — erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            string logPath = ElectrodeAddIn.Current?.LogPath;
+            string detail = string.IsNullOrEmpty(logPath)
+                ? "Detalhes técnicos no log em %LOCALAPPDATA%\\AutoEDM\\logs."
+                : $"Detalhes técnicos no log:\n{logPath}";
+            MessageBox.Show($"Não foi possível {what}.\n\n{detail}", "AutoEDM — erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

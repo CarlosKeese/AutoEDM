@@ -31,8 +31,8 @@
     </group>
     <group name="Relatórios">
       <button id="2" size="large" label="Coordenadas"
-              screentip="Relatório de coordenadas de queima"
-              supertip="Gera a tabela de coordenadas de queima (zero-máquina) por detalhe/eletrodo, em .txt e .csv. Não altera a montagem."
+              screentip="Lista os eletrodos SELECIONADOS: posição + GAP/Ra"
+              supertip="Na montagem, selecione a(s) ocorrência(s) do(s) eletrodo(s) de interesse e clique. Abre uma janela com a posição de cada um (mesma leitura de 'Propriedades de Ocorrência' no SE) e o GAP/Ra gravados na peça. Não altera nada."
               imageId="2" showLabel="true" />
       <button id="4" size="large" label="Ficha (spec-sheet)"
               screentip="Folha de dados dos eletrodos"

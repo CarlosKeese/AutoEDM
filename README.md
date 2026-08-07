@@ -125,7 +125,7 @@ Detalhes completos em [`docs/COM_INTEGRATION.md`](docs/COM_INTEGRATION.md) e [`d
 
 1. **Clone e build:**
    ```powershell
-   git clone https://github.com/seu-usuario/AutoEDM.git
+   git clone https://github.com/CarlosKeese/AutoEDM.git
    cd AutoEDM
    dotnet build AutoEDM.sln -c Debug
    ```
