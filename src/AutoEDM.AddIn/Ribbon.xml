@@ -52,6 +52,10 @@
               screentip="GAP + cor + nome no corpo já unido (ambiente de PEÇA)"
               supertip="Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
               imageId="1" showLabel="true" />
+      <button id="14" size="large" label="Alojamento de O’ring"
+              screentip="Canal de anel O’ring pela ISO 3601 (ambiente de PEÇA)"
+              supertip="Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
+              imageId="1" showLabel="true" />
     </group>
     <group name="Diagnóstico">
       <button id="6" size="large" label="Inspecionar seleção"
@@ -61,6 +65,10 @@
       <button id="8" size="large" label="Iniciar leitura de ação manual"
               screentip="Gravador: snapshot ANTES da sua ação manual"
               supertip="Clique ANTES de fazer a ação à mão no SE. Tira uma foto das features/superfícies existentes. Depois de criar 'Limite'/costura/estender/mover, clique em 'Gravar log da leitura' para o AutoEDM dumpar exatamente o que você criou."
+              imageId="3" showLabel="true" />
+      <button id="13" size="large" label="Sonda de rosca (M6)"
+              screentip="Diagnóstico: por que o furo M6 sai sem rosca"
+              supertip="Cria uma PEÇA NOVA descartável (não salva) com um bloco e cinco furos M6 lado a lado, cada um por uma receita diferente da API de rosca do Solid Edge (tabela legada x base de furos nova; rosca física pedida na criação x depois; síncrono x ordenado). O log traz o HoleData completo, o Status da feature e o código de erro da rosca física. Olhe a peça, veja qual furo saiu com a hélice CORTADA e mande o log — é assim que a receita certa entra no 'Criar Base'."
               imageId="3" showLabel="true" />
       <button id="9" size="large" label="Gravar log da leitura"
               screentip="Gravador: diff + dump das features novas"

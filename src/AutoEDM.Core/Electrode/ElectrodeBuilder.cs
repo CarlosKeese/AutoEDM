@@ -1387,8 +1387,31 @@ namespace AutoEDM.Electrode
                     if (TryReadElectrodeRa(partDoc, out double ra, out string raSrc)) item.Ra = ra;
                     else item.Notes.Add("Ra não encontrado (nem variável, nem feature de GAP)");
 
-                    if (TryReadElectrodeGapMm(partDoc, out double gap, out string gapSrc)) item.GapMm = gap;
-                    else item.Notes.Add("GAP não encontrado (feature Model.FaceOffsets)");
+                    // A MESMA feature de GAP dá as duas colunas seguintes (o offset aplicado e
+                    // as faces de queima que a área de secção mede) — acha uma vez só, em vez de
+                    // varrer Model.FaceOffsets duas vezes por eletrodo.
+                    dynamic gapFeature = FindGapOffsetFeature(partDoc, out string gapSrc);
+                    if (gapFeature == null)
+                    {
+                        // A feature de GAP é quem situa o plano da secção — sem ela as DUAS
+                        // colunas ficam vazias, então o motivo tem de dizer isso de uma vez.
+                        item.Notes.Add("GAP não encontrado (feature Model.FaceOffsets) — sem ele também não dá para medir a secção");
+                    }
+                    else
+                    {
+                        if (TryReadElectrodeGapMm(gapFeature, out double gap)) item.GapMm = gap;
+                        else item.Notes.Add("GAP não lido (FaceOffset.Distance)");
+
+                        if (TryReadBurnSectionAreaCm2(partDoc, gapFeature, out double areaCm2, out double zMidMm, out string areaErr))
+                        {
+                            item.BurnAreaCm2 = areaCm2;
+                            item.SectionZMm = zMidMm;
+                        }
+                        else
+                        {
+                            item.Notes.Add("área da secção não calculada: " + areaErr);
+                        }
+                    }
                 }
                 else
                 {
@@ -1403,18 +1426,15 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>GAP atual do eletrodo (mm): lê <c>FaceOffset.Distance</c> (metros, negativo =
-        /// encolhe) da mesma feature que <see cref="FindGapOffsetFeature"/> acha para "Duplicar
-        /// eletrodo" — o valor REAL aplicado, não uma reinterpretação do nome da feature.</summary>
-        private static bool TryReadElectrodeGapMm(dynamic partDoc, out double gapMm, out string source)
+        /// encolhe) da feature que <see cref="FindGapOffsetFeature"/> acha — o valor REAL
+        /// aplicado, não uma reinterpretação do nome da feature.</summary>
+        private static bool TryReadElectrodeGapMm(dynamic gapFeature, out double gapMm)
         {
-            gapMm = 0; source = null;
-            dynamic feature = FindGapOffsetFeature(partDoc, out string foundBy);
-            if (feature == null) return false;
+            gapMm = 0;
             try
             {
-                double distanceM = (double)feature.Distance;
+                double distanceM = (double)gapFeature.Distance;
                 gapMm = Math.Abs(Units.MToMm(distanceM));
-                source = foundBy;
                 return true;
             }
             catch (Exception ex)
@@ -1422,6 +1442,34 @@ namespace AutoEDM.Electrode
                 Log.Warn("Coordenadas: ler feature.Distance falhou — " + ex.GetBaseException().Message);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Área da secção de queima (cm²) do eletrodo: corte horizontal no MEIO da altura das
+        /// faces da feature de GAP — ou seja, do corpo JÁ subdimensionado pelo offset, que é o
+        /// que a peça .par realmente tem. Só leitura (malha via <c>Face.GetFacetData</c>, nenhuma
+        /// geometria criada). Ver <see cref="SectionAreaCalculator"/>.
+        ///
+        /// As faces da feature de GAP dizem só ONDE cortar; quem é malhado é o CORPO
+        /// (<c>Models.Item(1).Body</c>), que é fechado por construção — as faces do GAP são as
+        /// que o usuário selecionou em "Aplicar GAP" e podem não dar a volta no eletrodo, que era
+        /// a causa da coluna sair vazia em alguns eletrodos (Carlos, 2026-09-02).
+        /// </summary>
+        private static bool TryReadBurnSectionAreaCm2(dynamic partDoc, dynamic gapFeature,
+            out double areaCm2, out double zMidMm, out string error)
+        {
+            areaCm2 = 0; zMidMm = 0;
+            object[] faces;
+            try { faces = ModelingHelpers.GetFeatureFaces(gapFeature); }
+            catch (Exception ex) { error = "faces da feature de GAP inacessíveis — " + ex.GetBaseException().Message; return false; }
+
+            if (faces == null || faces.Length == 0) { error = "feature de GAP sem faces"; return false; }
+
+            object body = null;
+            try { body = (object)partDoc.Models.Item(1).Body; }
+            catch (Exception ex) { Log.Warn("Coordenadas: corpo do eletrodo inacessível (malhando só as faces de GAP) — " + ex.GetBaseException().Message); }
+
+            return SectionAreaCalculator.TryMidSectionAreaCm2(faces, body, out areaCm2, out zMidMm, out error);
         }
 
         /// <summary>Ocorrências (objetos COM crus, envolvidos em <see cref="OccurrenceInfo"/>) da

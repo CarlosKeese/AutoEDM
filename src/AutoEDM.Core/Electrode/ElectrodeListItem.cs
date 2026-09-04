@@ -34,6 +34,16 @@ namespace AutoEDM.Electrode
         /// <summary>Ra (µm) gravado na peça (variável ou nome da feature de GAP). Null = não achado.</summary>
         public double? Ra { get; set; }
 
+        /// <summary>
+        /// Área da SECÇÃO DE QUEIMA (cm²): corte horizontal no MEIO da altura das faces
+        /// onde o GAP foi aplicado, medido no corpo já offsetado
+        /// (<see cref="AutoEDM.Selection.SectionAreaCalculator"/>). Null = não calculada.
+        /// </summary>
+        public double? BurnAreaCm2 { get; set; }
+
+        /// <summary>Z (mm, local da peça) do plano de corte usado na área acima. Só para o log/diagnóstico.</summary>
+        public double? SectionZMm { get; set; }
+
         /// <summary>Avisos por linha (ex.: posição/Gap/Ra não encontrados).</summary>
         public List<string> Notes { get; } = new List<string>();
     }

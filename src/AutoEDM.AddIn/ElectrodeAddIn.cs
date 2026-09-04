@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using SolidEdgeCommunity.AddIn;
@@ -36,7 +36,7 @@ namespace AutoEDM.AddIn
             SolidEdgeFramework.AddIn AddInInstance)
         {
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 9; // incrementar ao mudar a ribbon (v9 = + Aplicar GAP + Duplicar eletrodo; Unir superfícies só une agora)
+            AddInEx.GuiVersion = 11; // incrementar ao mudar a ribbon (v11 = + Alojamento de O’ring no grupo Peça)
 
             Current = this;
             App = application;
@@ -62,12 +62,31 @@ namespace AutoEDM.AddIn
         /// memória era pré-correção). Ver [[autoedm-decisions]].</summary>
         private static string BuildStamp()
         {
+            // O CAMINHO entra no carimbo, não só o nome: a SE carrega o add-in do CodeBase
+            // registrado (%LOCALAPPDATA%\AutoEDM\addin), e não da pasta de build. Sem o
+            // caminho, um log de build velho é indistinguível de um novo — foi assim que uma
+            // rodada de teste inteira se perdeu em 2026-09-04, lendo o log do DLL anterior.
             string One(System.Reflection.Assembly a)
             {
-                try { return $"{System.IO.Path.GetFileName(a.Location)} @ {System.IO.File.GetLastWriteTime(a.Location):yyyy-MM-dd HH:mm:ss}"; }
+                try { return $"{a.Location} @ {System.IO.File.GetLastWriteTime(a.Location):yyyy-MM-dd HH:mm:ss}"; }
                 catch { return a?.GetName()?.Name ?? "?"; }
             }
-            return One(typeof(ElectrodeAddIn).Assembly) + "  |  " + One(typeof(AutoEDM.Electrode.SurfaceBlockBuilder).Assembly);
+            // Versão do PACOTE (InformationalVersion, gravada por Directory.Build.props com
+            // -p:AutoEdmVersion). A AssemblyVersion é fixa em 1.0.0.0 por causa do registro
+            // COM, então só este carimbo diz qual release a máquina instalou.
+            string ver;
+            try
+            {
+                var attr = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
+                    typeof(ElectrodeAddIn).Assembly, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
+                ver = attr?.InformationalVersion ?? "?";
+                // O SDK anexa a revisão do git: "2026.8.14+<sha de 40 chars>". Encurta o
+                // sha para 7 — continua identificando o commit e cabe numa linha de log.
+                int plus = ver.IndexOf('+');
+                if (plus > 0 && ver.Length > plus + 8) ver = ver.Substring(0, plus + 8);
+            }
+            catch { ver = "?"; }
+            return $"v{ver}  |  " + One(typeof(ElectrodeAddIn).Assembly) + "  |  " + One(typeof(AutoEDM.Electrode.SurfaceBlockBuilder).Assembly);
         }
 
         public override void OnConnectToEnvironment(SolidEdgeFramework.Environment environment, bool firstTime)

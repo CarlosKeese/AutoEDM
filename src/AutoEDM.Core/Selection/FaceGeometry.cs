@@ -63,6 +63,20 @@ namespace AutoEDM.Selection
             return false;
         }
 
+        /// <summary>
+        /// Executa um método COM que devolve DOIS pontos por parâmetro de SAÍDA — SAFEARRAY de 3
+        /// doubles em METROS, convertidos aqui para mm. É a forma de <c>GetRange</c>,
+        /// <c>GetExactRange</c> (Face/Body) e também de <c>Edge.GetEndPoints</c>, daí ser público:
+        /// <see cref="EdgeGeometry"/> reusa este executor em vez de reescrever o
+        /// <see cref="ParameterModifier"/> by-ref (sem ele os [out] voltam vazios — Log 8/9).
+        /// </summary>
+        public static bool TryTwoPointOutMm(object com, string method,
+            out double[] aMm, out double[] bMm, out string error)
+        {
+            error = null;
+            return TryRange(com, method, out aMm, out bMm, ref error);
+        }
+
         private static bool TryRangeFromVertices(object comFace,
             out double[] minMm, out double[] maxMm, ref string error)
         {

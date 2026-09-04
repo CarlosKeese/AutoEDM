@@ -57,17 +57,60 @@ namespace AutoEDM.Register
                         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                         "AutoEDM", "addin");
                     Directory.CreateDirectory(deployDir);
-                    int copied = 0, locked = 0;
-                    foreach (string f in Directory.GetFiles(srcDir, "*.dll"))
-                    {
-                        try { File.Copy(f, Path.Combine(deployDir, Path.GetFileName(f)), true); copied++; }
-                        catch { locked++; }
-                    }
-                    Console.WriteLine($"Deploy: {copied} dll(s) -> {deployDir}" +
-                        (locked > 0 ? $"  ({locked} travado(s): feche a SE para atualizar o add-in)" : ""));
 
                     string deployedDll = Path.Combine(deployDir, "AutoEDM.AddIn.dll");
                     string codeBase = "file:///" + deployedDll.Replace('\\', '/');
+
+                    // Se o pacote FOI EXTRAÍDO dentro do próprio deployDir, cada File.Copy
+                    // seria origem == destino: lança, cai no catch e reportaria "travado",
+                    // mandando o usuário fechar uma SE que nem está aberta. Nada a copiar.
+                    if (SamePath(srcDir, deployDir))
+                    {
+                        Console.WriteLine("Deploy: rodando de dentro de " + deployDir + " — nada a copiar.");
+                    }
+                    else
+                    {
+                        // Copia TUDO menos os .pdb (não só *.dll): assim qualquer arquivo que
+                        // passe a acompanhar o add-in (.config, template, ícone) vai junto em
+                        // vez de ficar para trás em silêncio. Leva o próprio Register.exe, o
+                        // que torna o deployDir autossuficiente para desinstalar depois.
+                        int copied = 0, locked = 0;
+                        bool addInCopied = false;
+                        foreach (string f in Directory.GetFiles(srcDir))
+                        {
+                            if (f.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase)) continue;
+                            string name = Path.GetFileName(f);
+                            try
+                            {
+                                File.Copy(f, Path.Combine(deployDir, name), true);
+                                copied++;
+                                if (name.Equals("AutoEDM.AddIn.dll", StringComparison.OrdinalIgnoreCase)) addInCopied = true;
+                            }
+                            catch { locked++; }
+                        }
+                        Console.WriteLine($"Deploy: {copied} arquivo(s) -> {deployDir}" +
+                            (locked > 0 ? $"  ({locked} travado(s))" : ""));
+
+                        // Se o dll principal não pôde ser sobrescrito, o deploy continua com o
+                        // binário ANTIGO. Registrar e sair com 0 aqui seria o pior desfecho: o
+                        // usuário vê "instalado com sucesso" e segue rodando a versão velha.
+                        if (!addInCopied)
+                        {
+                            Console.Error.WriteLine();
+                            Console.Error.WriteLine("FALHA: AutoEDM.AddIn.dll está EM USO — o add-in NÃO foi atualizado.");
+                            Console.Error.WriteLine("Feche o Solid Edge por completo e rode de novo.");
+                            return 1;
+                        }
+                    }
+
+                    // Sem o dll no destino não adianta registrar: a SE carregaria um CodeBase
+                    // inexistente e o add-in sumiria da ribbon sem erro visível.
+                    if (!File.Exists(deployedDll))
+                    {
+                        Console.Error.WriteLine("FALHA: " + deployedDll + " não existe.");
+                        Console.Error.WriteLine("Feche o Solid Edge e rode o instalador de novo.");
+                        return 1;
+                    }
 
                     using (RegistryKey k = classes.CreateSubKey(@"CLSID\" + clsid))
                     {
@@ -112,7 +155,7 @@ namespace AutoEDM.Register
 
                     Console.WriteLine("Add-in REGISTRADO no usuário (HKCU), sem admin.");
                     Console.WriteLine("  CLSID:    " + clsid);
-                    Console.WriteLine("  CodeBase: " + asm.Location);
+                    Console.WriteLine("  CodeBase: " + deployedDll); // o que a SE vai carregar, não a pasta de origem
                     Console.WriteLine("Reinicie a Solid Edge. Aba 'AutoEDM' > 'Criar eletrodos'.");
                     Console.WriteLine("Para remover: AutoEDM.Register.exe /u");
                 }
@@ -123,6 +166,19 @@ namespace AutoEDM.Register
                 Console.Error.WriteLine("FALHA: " + ex.Message);
                 return 1;
             }
+        }
+
+        /// <summary>Compara duas pastas ignorando barra final, caixa e caminho relativo.</summary>
+        private static bool SamePath(string a, string b)
+        {
+            try
+            {
+                return string.Equals(
+                    Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar),
+                    Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
         }
 
         private static void TryDelete(RegistryKey parent, string subkey)

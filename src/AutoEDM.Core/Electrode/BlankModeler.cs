@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using AutoEDM.Diagnostics;
@@ -487,7 +487,9 @@ namespace AutoEDM.Electrode
                     d1x = -c; d1y = -c; d2x = c; d2y = c;
                     layout = "diagonal 45°";
                 }
-                Log.Info($"Furos (ModelingMode={mode}): M6 ROSCADO (broca Ø{fix.CenterTapDrillDiameter:0.#})×{fix.CenterHoleDepth:0.#} + " +
+                Log.Info($"Furos (ModelingMode={mode}): {fix.CenterThread} ROSCADO — broca Ø{fix.CenterTapDrillDiameter:0.#}, " +
+                         $"furo {fix.CenterHoleDepth:0.#} (até o ombro, ponta {fix.CenterBottomAngle:0.#}°), " +
+                         $"rosca {fix.CenterThreadDepth:0.#}, chanfro {fix.CenterChamferSetback:0.##}×{fix.CenterChamferAngle:0.#}° + " +
                          $"2×Ø{fix.DowelDiameter:0.#}×{fix.DowelDepth:0.#} @ {fix.DowelCenterDistance:0.#} ({layout}); bloco {blockXmm:0.0}×{blockYmm:0.0}.");
 
                 // RAIZ dos furos (log 2026-07-15): o `Holes.AddSync` do M6 DESCONECTA o proxy
@@ -501,9 +503,11 @@ namespace AutoEDM.Electrode
 
                 LogBodiesDiag(partDoc); // diagnóstico: quantos corpos (surface copiada + bloco?)
 
-                // Central = M6 ROSCADO (Receita A). Se a rosca não vingar, refaz como Ø5 simples
-                // (broca de rosca; o operador tapea) em doc FRESCO — nunca perde o furo central.
-                object m6 = HoleAt(app, topZmm, fix.CenterTapDrillDiameter, fix.CenterHoleDepth, centerXmm + 0.0, centerYmm + 0.0, "M6 roscado", "M6x1.0");
+                // Central = M6 ROSCADO. A designação vai como o SE a conhece na base de furos
+                // ("M6"); "M6x1.0" NÃO existe em tabela nenhuma do SE (o passo grosso é o "M6"
+                // seco). Se a rosca não vingar, refaz como Ø5 simples (broca de rosca; o
+                // operador tapea) em doc FRESCO — nunca perde o furo central.
+                object m6 = HoleAt(app, topZmm, fix.CenterTapDrillDiameter, fix.CenterHoleDepth, centerXmm + 0.0, centerYmm + 0.0, "M6 roscado", fix.CenterThread, fix);
                 if (m6 == null || FeatureFailed(m6))
                 {
                     Log.Warn("  M6 roscado não vingou — refazendo o furo central como Ø5 simples (broca de rosca).");
@@ -609,8 +613,10 @@ namespace AutoEDM.Electrode
         /// o proxy da peça (RPC_E_DISCONNECTED). Corta side=1 (–normal, p/ dentro). Loga a
         /// coordenada e o Status. Apaga o esboço. Não lança (furo é secundário ao bloco).
         /// </summary>
+        /// <param name="tap">Só para furo ROSCADO: profundidade da rosca, ângulo de ponta de
+        /// broca e chanfro de entrada. Nulo = defaults do <see cref="FixationPattern"/>.</param>
         private static object HoleAt(dynamic app, double planeZmm, double diaMm, double depthMm,
-            double cxMm, double cyMm, string label, string threadDesc = null)
+            double cxMm, double cyMm, string label, string threadDesc = null, FixationPattern tap = null)
         {
             object hole = null;
             dynamic ps = null;
@@ -625,13 +631,8 @@ namespace AutoEDM.Electrode
                 object holeData;
                 if (threadDesc != null)
                 {
-                    // Furo ROSCADO: o RECURSO DE FURAÇÃO renderiza a rosca (Carlos, 2026-07-15:
-                    // "o furo central é M6, use a rosca"). HoleData igTappedHole=37, Ø = broca de
-                    // rosca. As props de rosca vão preenchidas NA MÃO: `ThreadDataByDescription`
-                    // falha e deixa o HoleData incompleto → E_FAIL no AddSync; o preenchimento
-                    // manual CRIOU o furo OK (Receita A dos Logs 55/58). Ver [[electrode-anatomy]].
-                    dynamic hd = doc.HoleDataCollection.Add(37, Units.MmToM(diaMm));
-                    FillThreadDataManual(hd, threadDesc, Units.MmToM(diaMm));
+                    dynamic hd = NewTappedHoleData(doc, threadDesc, diaMm, tap ?? new FixationPattern());
+                    if (hd == null) return null; // sem HoleData de rosca não adianta furar: cai no fallback Ø5
                     holeData = (object)hd;
                 }
                 else holeData = doc.HoleDataCollection.Add(33, Units.MmToM(diaMm)); // 33 = igRegularHole
@@ -641,23 +642,32 @@ namespace AutoEDM.Electrode
                 prof.Holes2d.Add(Units.MmToM(cxMm), Units.MmToM(cyMm));
                 prof.End(1);
 
+                // Furo roscado usa a variante `…Ex`, cujo último argumento é bPhysicalThread:
+                // pedir a hélice NA CRIAÇÃO é o caminho oficial (o `CreatePhysicalThread` depois
+                // do furo só remenda). Furo liso segue no Add/AddSync de sempre.
                 double depthM = Units.MmToM(depthMm);
+                bool tapped = threadDesc != null;
                 dynamic holes = doc.Models.Item(1).Holes;
                 if (mode == 2)
-                    hole = (object)holes.AddFinite(prof, 1, depthM, holeData);
+                    hole = tapped
+                        ? (object)holes.AddFiniteEx(prof, 1, depthM, holeData, true)
+                        : (object)holes.AddFinite(prof, 1, depthM, holeData);
                 else
                 {
                     var arr = new SolidEdgePart.Profile[] { (SolidEdgePart.Profile)prof };
-                    hole = (object)holes.AddSync(1, arr, 1, 13, (object)depthM, holeData); // side=1 (–normal), 13 = igFinite
+                    hole = tapped // side=1 (–normal), 13 = igFinite
+                        ? (object)holes.AddSyncEx(1, arr, 1, 13, (object)depthM, holeData, true)
+                        : (object)holes.AddSync(1, arr, 1, 13, (object)depthM, holeData);
                 }
 
                 try { plane.Visible = false; } catch { }
                 if (FeatureFailed(hole)) Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — feature com Status FALHA.");
                 else                     Log.Info($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm — ok.");
 
-                // Rosca FÍSICA (corte real da hélice) — separado do ThreadSetting acima, que só
-                // liga a ANOTAÇÃO/desenho. Só faz sentido no furo roscado (threadDesc != null).
-                if (threadDesc != null && hole != null && !FeatureFailed(hole)) TryEnablePhysicalThread(hole);
+                // Se o AddSyncEx não cortou a hélice, tenta de novo pela propriedade da feature
+                // (é o mesmo pedido por outra porta) e LOGA o código de erro decodificado.
+                if (tapped && hole != null && !FeatureFailed(hole) && !PhysicalThreadOn(hole))
+                    TryEnablePhysicalThread(hole);
             }
             catch (Exception e) { Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm falhou: {e.GetBaseException().Message}"); }
             finally { if (ps != null) { try { ps.Delete(); } catch { } } }
@@ -665,67 +675,223 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
-        /// Preenche as props de rosca do HoleData NA MÃO (M&lt;nominal&gt;×&lt;passo&gt;, ISO
-        /// métrica). Necessário porque <c>ThreadDataByDescription("M6")</c> falha e deixa o
-        /// HoleData incompleto (Size=7/Ønom=0) → E_FAIL no AddSync; com os valores na mão o
-        /// furo roscado é criado (Receita A, Logs 55/58). Cada set é tolerante (COM varia por
-        /// versão). Diâmetro menor interno ISO: D1 = D − 1,0825·P. Ver [[electrode-anatomy]].
+        /// HoleData de furo ROSCADO, na receita decodificada de um furo M6 que o Carlos fez À
+        /// MÃO no Solid Edge (SPY 2026-09-03, log <c>AutoEDM_20260903_085129</c>).
+        ///
+        /// A armadilha que fez o M6 sair sem rosca por meses: <b><c>HoleType</c> de um furo
+        /// roscado é <c>igRegularHole (33)</c>, NÃO <c>igTappedHole (37)</c></b>. O 37 é um
+        /// valor de <c>TreatmentType</c> — é ELE que liga a rosca. Passando 37 como HoleType, o
+        /// SE recusa em SILÊNCIO e cai nos DEFAULTS SALVOS do diálogo de furo do usuário: o log
+        /// de 2026-09-03 mostra o HoleData voltando <c>HoleType=36</c> (rebaixado),
+        /// <c>TreatmentType=44</c> (nenhum) e o furo saindo Ø6,0 com rebaixo Ø6,9 — furo em que
+        /// NÃO cabe macho M6. Daí também o <c>IgnoreSavedDefaultValues=true</c>: sem ele o SE
+        /// mistura os defaults do diálogo no que a gente pediu.
+        ///
+        /// A forma do furo (Carlos, 2026-09-03), tudo vindo do <see cref="FixationPattern"/>:
+        ///   * fundo com PONTA DE BROCA — <c>BottomAngle</c> (118°, ângulo total) +
+        ///     <c>VBottomDimType = igVBottomDimToFlat (145)</c>, ou seja, a profundidade do furo
+        ///     é medida até o OMBRO e o cone fica abaixo dela (é como o ferramenteiro mede);
+        ///   * ROSCA MAIS CURTA que o furo — <c>ThreadDepthMethod = igFinite (13)</c> +
+        ///     <c>ThreadDepth</c> (6 mm) contra 10 mm de furo: o macho não vai até o fundo;
+        ///   * CHANFRO de entrada 0,5 × 45° — params StartChamfer do <c>AddEx</c>, conferidos
+        ///     depois com <c>GetStartChamfer</c> e refeitos por <c>SetStartChamfer</c> se o SE
+        ///     tiver ignorado.
+        /// ATENÇÃO às unidades: recuo do chanfro em METROS, mas os ÂNGULOS (BottomAngle,
+        /// chanfro, countersink) em GRAUS — só <c>ThreadTaperAngle</c> é radiano no HoleData.
+        ///
+        /// Caminho 1 = <c>AddEx</c> pela BASE DE FUROS (<c>Preferences\Holes\ISO Metric.xlsx</c>,
+        /// aba Threaded): Standard = nome do .xlsx, SubType = "Standard Thread", Size = "M6".
+        /// É de lá que vêm passo (1,0) e Ø menor (4,917) — a tabela LEGADA (HOLES.TXT), que o
+        /// <c>ThreadDataByDescription</c> usa, não tem passo nenhum.
+        /// Caminho 2 (fallback) = <c>Add</c> de 21 params com os mesmos valores na mão, para
+        /// instalações cujo standard/base seja outro. Ver [[electrode-anatomy]].
         /// </summary>
-        private static void FillThreadDataManual(dynamic hd, string desc, double tapDrillM)
+        private static dynamic NewTappedHoleData(dynamic doc, string threadDesc, double tapDrillMm, FixationPattern tap)
         {
-            // (1) VIA TABELA DE ROSCAS DO SE — `ThreadDataByDescription` é PROPRIEDADE settable
-            //     (write-only String). O BlankBoxProbe a chamava como MÉTODO
-            //     (`hd.ThreadDataByDescription("M6")`) → "erro ao chamar"; o CERTO é ATRIBUIR.
-            //     Atribuir popula o FORM métrico correto + Standard/SubType/diâmetros da tabela.
-            //     (O fill manual só de diâmetros, SEM o standard, saía TRAPEZOIDAL + Ø10 — Log
-            //     2026-07-15.) Testa variantes de designação até uma popular. Ver [[electrode-anatomy]].
-            bool populated = false;
-            foreach (var d in new[] { desc, "M6x1", "M6 x 1", "M6x1.0", "M6 x 1.0", "M6" })
+            double nominalMm = ThreadNominalMm(threadDesc, tapDrillMm);
+            object hdc;
+            try { hdc = (object)doc.HoleDataCollection; }
+            catch (Exception e) { Log.Warn("  Rosca: HoleDataCollection indisponível: " + e.GetBaseException().Message); return null; }
+
+            // (1) pela base de furos — AddEx(37 params; tudo [opt] depois do HoleType).
+            // 1 HoleType, 2 Standard, 3 SubType, 4 Size, 5 Fit, 6 HoleDiameter,
+            // 7 CounterboreDiameter, 8 CounterboreDepth, 9 CountersinkDiameter,
+            // 10 CountersinkAngle, 11 BottomAngle, 12 TreatmentType, 13 TaperMethod, 14 Taper,
+            // 15 ThreadMinorDiameter, 16 ThreadDepthMethod, 17 ThreadDepth, 18 VBottomDimType,
+            // 19 TaperDimType, 20 CounterboreProfileLocationType, 21 TaperLValue, 22 TaperRValue,
+            // 23 ThreadExternalDiameter, 24 ThreadDescription, 25 IgnoreSavedDefaultValues,
+            // 26 ThreadDiameterOption, 27 ThreadTapDrillDiameter, 28 HeadClearance,
+            // 29 StartChamferOn, 30 StartChamferSetback, 31 StartChamferAngle.
+            try
             {
-                if (string.IsNullOrEmpty(d)) continue;
+                var args = new object[31];
+                for (int i = 0; i < args.Length; i++) args[i] = Type.Missing;
+                args[0] = 33;                                   // HoleType = igRegularHole
+                args[1] = "ISO Metric";                         // Standard = nome do .xlsx da base
+                args[2] = "Standard Thread";                    // SubType (aba Threaded)
+                args[3] = threadDesc;                           // Size ("M6")
+                args[4] = "Close (H12)";                        // Fit
+                args[5] = Units.MmToM(nominalMm);               // HoleDiameter = NOMINAL (fura no Ø da broca)
+                args[10] = tap.CenterBottomAngle;               // BottomAngle — ponta de broca, em GRAUS
+                args[11] = 37;                                  // TreatmentType = igTappedHole  ← liga a rosca
+                args[15] = 13;                                  // ThreadDepthMethod = igFinite
+                args[16] = Units.MmToM(tap.CenterThreadDepth);  // ThreadDepth (rosca mais curta que o furo)
+                args[17] = 145;                                 // VBottomDimType = igVBottomDimToFlat (cota no ombro)
+                args[24] = true;                                // IgnoreSavedDefaultValues
+                args[25] = 0;                                   // ThreadDiameterOption = seTapDrillDiameter
+                args[26] = Units.MmToM(tapDrillMm);             // ThreadTapDrillDiameter
+                args[28] = 1;                                   // StartChamferOn
+                args[29] = Units.MmToM(tap.CenterChamferSetback);
+                args[30] = tap.CenterChamferAngle;              // em GRAUS
+                object hd = hdc.GetType().InvokeMember("AddEx", BindingFlags.InvokeMethod, null, hdc, args);
+                if (hd != null && TapConfirmed(hd, threadDesc, "base de furos (AddEx)"))
+                {
+                    EnsureStartChamfer(hd, tap);
+                    return EnableThreadAnnotation(hd);
+                }
+            }
+            catch (Exception e) { Log.Warn("  Rosca: AddEx (base de furos) falhou: " + e.GetBaseException().Message); }
+
+            // (2) fallback — Add(21 params) com os valores na mão. Ø menor interno ISO:
+            // D1 = D − 1,0825·P; passo assumido = o grosso da bitola. O Add não tem os params
+            // de chanfro, então ele entra depois por SetStartChamfer.
+            try
+            {
+                double pitchMm = CoarsePitchMm(nominalMm);
+                var args = new object[21];
+                for (int i = 0; i < args.Length; i++) args[i] = Type.Missing;
+                args[0] = 33;                                          // HoleType = igRegularHole
+                args[1] = Units.MmToM(nominalMm);                      // HoleDiameter
+                args[6] = tap.CenterBottomAngle;                       // BottomAngle (GRAUS)
+                args[7] = 37;                                          // TreatmentType = igTappedHole
+                args[10] = Units.MmToM(nominalMm - 1.0825 * pitchMm);  // ThreadMinorDiameter
+                args[11] = 13;                                         // ThreadDepthMethod = igFinite
+                args[12] = Units.MmToM(tap.CenterThreadDepth);         // ThreadDepth
+                args[13] = 145;                                        // VBottomDimType = igVBottomDimToFlat
+                args[19] = threadDesc;                                 // ThreadDescription
+                args[20] = true;                                       // IgnoreSavedDefaultValues
+                object hd = hdc.GetType().InvokeMember("Add", BindingFlags.InvokeMethod, null, hdc, args);
+                if (hd == null) { Log.Warn("  Rosca: Add devolveu null."); return null; }
+                dynamic d = hd;
+                try { d.ThreadDiameterOption = 0; } catch { }                          // seTapDrillDiameter
+                try { d.ThreadTapDrillDiameter = Units.MmToM(tapDrillMm); } catch { }
+                TapConfirmed(hd, threadDesc, "valores na mão (Add)");
+                EnsureStartChamfer(hd, tap);
+                return EnableThreadAnnotation(hd);
+            }
+            catch (Exception e) { Log.Warn("  Rosca: Add (valores na mão) falhou: " + e.GetBaseException().Message); return null; }
+        }
+
+        /// <summary>
+        /// Confere o chanfro de entrada com <c>GetStartChamfer([out] on, [out] setback, [out]
+        /// angle)</c> — os três são [out], então precisam do <see cref="ParameterModifier"/>
+        /// by-ref, mesma armadilha do <c>Face.GetRange</c> — e refaz por
+        /// <c>SetStartChamfer(on, setback, angle)</c> se o SE não tiver aplicado (o
+        /// <c>Add</c> de 21 params nem tem esses parâmetros). Nunca lança: chanfro é acabamento.
+        /// </summary>
+        private static void EnsureStartChamfer(object hd, FixationPattern tap)
+        {
+            int on = 0; double setback = 0, angle = 0;
+            try
+            {
+                object[] args = { 0, 0.0, 0.0 };
+                var mod = new ParameterModifier(3);
+                mod[0] = true; mod[1] = true; mod[2] = true;
+                hd.GetType().InvokeMember("GetStartChamfer", BindingFlags.InvokeMethod, null, hd, args,
+                    new[] { mod }, null, null);
+                on = Convert.ToInt32(args[0]); setback = Convert.ToDouble(args[1]); angle = Convert.ToDouble(args[2]);
+            }
+            catch (Exception e) { Log.Warn("  Chanfro: GetStartChamfer falhou: " + e.GetBaseException().Message); }
+
+            bool ok = on != 0 && Math.Abs(Units.MToMm(setback) - tap.CenterChamferSetback) < 0.01;
+            if (!ok)
+            {
                 try
                 {
-                    hd.ThreadDataByDescription = d;                       // ATRIBUIÇÃO (não chamada)
-                    double nom = 0; try { nom = (double)hd.ThreadNominalDiameter; } catch { }
-                    string td = ""; try { td = (string)hd.ThreadDescription; } catch { }
-                    if (nom > 0 || !string.IsNullOrEmpty(td))
-                    {
-                        Log.Info($"  Rosca via tabela do SE: '{d}' → desc='{td}', Ønom={Units.MToMm(nom):0.#} mm (form métrico correto).");
-                        populated = true; break;
-                    }
+                    hd.GetType().InvokeMember("SetStartChamfer", BindingFlags.InvokeMethod, null, hd,
+                        new object[] { 1, Units.MmToM(tap.CenterChamferSetback), tap.CenterChamferAngle });
+                    Log.Info($"  Chanfro de entrada aplicado por SetStartChamfer: {tap.CenterChamferSetback:0.##} × {tap.CenterChamferAngle:0.#}°.");
+                    return;
                 }
-                catch (Exception e) { Log.Warn($"  Rosca: ThreadDataByDescription='{d}' falhou: {e.GetBaseException().Message}"); }
+                catch (Exception e) { Log.Warn("  Chanfro: SetStartChamfer falhou: " + e.GetBaseException().Message); return; }
             }
+            Log.Info($"  Chanfro de entrada: {Units.MToMm(setback):0.##} × {angle:0.#}° (ligado={on}).");
+        }
 
-            // (2) FALLBACK manual (M6×1,0 ISO) — sem a tabela, o FORM pode não sair métrico.
-            if (!populated)
-            {
-                double nominalMm = 6.0, pitchMm = 1.0;
-                double minorMm = nominalMm - 1.0825 * pitchMm; // D1 interno ISO
-                try { hd.Standard = "ISO Metric"; } catch { }
-                try { hd.SubType = "M6"; } catch { }
-                try { hd.Size = "M6"; } catch { }
-                try { hd.ThreadDescription = "M6x1.0"; } catch { }
-                try { hd.ThreadNominalDiameter = Units.MmToM(nominalMm); } catch { }
-                try { hd.ThreadTapDrillDiameter = tapDrillM; } catch { }
-                try { hd.ThreadMinorDiameter = Units.MmToM(minorMm); } catch { }
-                Log.Warn($"  Rosca: tabela do SE não aceitou a descrição — preenchi na mão (M6×1,0, broca {Units.MToMm(tapDrillM):0.#}); CONFIRA o form na tela.");
-            }
+        /// <summary>
+        /// Confere que o HoleData saiu MESMO roscado e loga o que o SE devolveu. O sinal que
+        /// importa é <c>TreatmentType == 37</c> (igTappedHole): com 44 (igNone) o furo é liso,
+        /// por mais que Standard/SubType/Size estejam preenchidos.
+        /// </summary>
+        private static bool TapConfirmed(object hd, string threadDesc, string via)
+        {
+            int holeType = -1, treatment = -1;
+            double dia = 0, drill = 0, threadDepth = 0, bottom = 0;
+            try { holeType = Convert.ToInt32(((dynamic)hd).HoleType); } catch { }
+            try { treatment = Convert.ToInt32(((dynamic)hd).TreatmentType); } catch { }
+            try { dia = Convert.ToDouble(((dynamic)hd).HoleDiameter); } catch { }
+            try { drill = Convert.ToDouble(((dynamic)hd).ThreadTapDrillDiameter); } catch { }
+            try { threadDepth = Convert.ToDouble(((dynamic)hd).ThreadDepth); } catch { }
+            try { bottom = Convert.ToDouble(((dynamic)hd).BottomAngle); } catch { }
+            bool ok = treatment == 37;
+            string msg = $"  Rosca {threadDesc} via {via}: HoleType={holeType} (33=comum), TreatmentType={treatment} " +
+                         $"(37=ROSCADO, 44=nenhum), Ø={Units.MToMm(dia):0.###}, broca={Units.MToMm(drill):0.###}, " +
+                         $"prof. rosca={Units.MToMm(threadDepth):0.#}, ponta={bottom:0.#}°.";
+            if (ok) Log.Info(msg); else Log.Warn(msg + " NÃO ficou roscado.");
+            return ok;
+        }
 
-            // (3) LIGA a rosca — equivale ao checkbox "Rosca" da tela (Carlos, 2026-07-15: os
-            //     dados saíam certos mas o furo NÃO renderizava roscado, checkbox desmarcado).
-            //     ThreadSetting = igRegularThread(164) = "Standard Thread"; igNone(44) = sem rosca.
-            try { hd.ThreadSetting = 164; Log.Info("  Rosca LIGADA (ThreadSetting=igRegularThread)."); }
+        /// <summary>Liga a ANOTAÇÃO de rosca (checkbox "Rosca" do diálogo) — igRegularThread=164.</summary>
+        private static dynamic EnableThreadAnnotation(object hd)
+        {
+            try { ((dynamic)hd).ThreadSetting = 164; }
             catch (Exception e) { Log.Warn("  Rosca: ThreadSetting=igRegularThread falhou: " + e.GetBaseException().Message); }
+            return (dynamic)hd;
+        }
+
+        /// <summary>Ø nominal (mm) a partir da designação métrica ("M6" -> 6). Cai no Ø da
+        /// broca +1 se a designação não for métrica reconhecível.</summary>
+        private static double ThreadNominalMm(string desc, double tapDrillMm)
+        {
+            if (!string.IsNullOrEmpty(desc) && (desc[0] == 'M' || desc[0] == 'm'))
+            {
+                string digits = desc.Substring(1).Split('x', 'X', ' ')[0].Replace(',', '.');
+                double v;
+                if (double.TryParse(digits, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out v) && v > 0) return v;
+            }
+            return tapDrillMm + 1.0;
+        }
+
+        /// <summary>Passo grosso ISO da bitola (mm) — só para o fallback sem a base de furos.</summary>
+        private static double CoarsePitchMm(double nominalMm)
+        {
+            if (nominalMm <= 3.5) return 0.5;
+            if (nominalMm <= 4.5) return 0.7;
+            if (nominalMm <= 5.5) return 0.8;
+            if (nominalMm <= 7.0) return 1.0;   // M6
+            if (nominalMm <= 9.0) return 1.25;  // M8
+            if (nominalMm <= 11.0) return 1.5;  // M10
+            if (nominalMm <= 13.0) return 1.75; // M12
+            return 2.0;
+        }
+
+        /// <summary>true se a feature já está com a rosca FÍSICA (hélice) ligada.</summary>
+        private static bool PhysicalThreadOn(object hole)
+        {
+            try { return Convert.ToBoolean(((dynamic)hole).CreatePhysicalThread); }
+            catch { return false; }
         }
 
         /// <summary>
         /// Liga a rosca FÍSICA (corte real da hélice no sólido) — achado 2026-07-17: um furo
         /// roscado gravado pela UI tinha `ThreadSetting=igRegularThread` (liga só a
-        /// ANOTAÇÃO/desenho, ver <see cref="FillThreadDataManual"/>) mas `CreatePhysicalThread
+        /// ANOTAÇÃO/desenho, ver <see cref="NewTappedHoleData"/>) mas `CreatePhysicalThread
         /// = False`, e o Carlos confirmou que esse furo saiu SEM rosca física no sólido — a
-        /// causa raiz do M6 "não sai roscado". A propriedade é READ-ONLY (sem "put" no dump);
-        /// o mutador é este método `CreatePhysicalThreadAndReturnStatus(bool, [out]
+        /// causa raiz do M6 "não sai roscado". Usado agora só como REMENDO: o caminho
+        /// principal é pedir a hélice na criação, no `bPhysicalThread` do `AddSyncEx`.
+        /// (`CreatePhysicalThread` TEM put no dump; este método só vem junto com o código
+        /// de erro.) `CreatePhysicalThreadAndReturnStatus(bool, [out]
         /// PhysicalThreadErrorCode*)` — [out] por ParameterModifier, mesmo padrão de
         /// <see cref="AutoEDM.Selection.FaceGeometry"/>. NUNCA lança (rosca física é secundária
         /// ao furo em si).

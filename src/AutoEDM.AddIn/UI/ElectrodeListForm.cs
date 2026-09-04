@@ -19,7 +19,7 @@ namespace AutoEDM.AddIn.UI
         {
             Text = $"AutoEDM — Coordenadas ({(items?.Count ?? 0)} eletrodo(s))";
             StartPosition = FormStartPosition.CenterParent;
-            ClientSize = new Size(760, 420);
+            ClientSize = new Size(880, 420);
             MinimumSize = new Size(560, 260);
 
             var grid = new DataGridView
@@ -43,7 +43,10 @@ namespace AutoEDM.AddIn.UI
             grid.Columns.Add("Az", "Rot. Z (°)");
             grid.Columns.Add("Gap", "GAP (mm)");
             grid.Columns.Add("Ra", "Ra (µm)");
+            grid.Columns.Add("Area", "Secção (cm²)");
             grid.Columns.Add("Notes", "Observações");
+            grid.Columns["Area"].ToolTipText =
+                "Área da secção de queima: corte horizontal no meio da altura das faces com GAP aplicado.";
             foreach (DataGridViewColumn c in grid.Columns)
                 if (c.Name != "Name" && c.Name != "Notes")
                     c.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
@@ -58,8 +61,9 @@ namespace AutoEDM.AddIn.UI
                     it.PositionKnown ? it.AzDeg.ToString("0.0") : "—",
                     it.GapMm.HasValue ? it.GapMm.Value.ToString("0.00") : "—",
                     it.Ra.HasValue ? it.Ra.Value.ToString("0.0") : "—",
+                    it.BurnAreaCm2.HasValue ? it.BurnAreaCm2.Value.ToString("0.000") : "—",
                     string.Join(" | ", it.Notes));
-                if (!it.PositionKnown || !it.GapMm.HasValue || !it.Ra.HasValue)
+                if (!it.PositionKnown || !it.GapMm.HasValue || !it.Ra.HasValue || !it.BurnAreaCm2.HasValue)
                     grid.Rows[row].DefaultCellStyle.ForeColor = Color.FromArgb(160, 90, 0);
             }
             Controls.Add(grid);

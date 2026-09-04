@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -67,6 +68,14 @@ namespace AutoEDM.Electrode
         public double ChamferLegMm { get; set; } = 3.0;
 
         /// <summary>
+        /// FECHAR SOZINHO os vãos laterais (X,Y) da superfície de queima, com "Limite"
+        /// (<c>Constructions.SurfaceByBoundaries.Add</c>), um patch por contorno aberto — o passo
+        /// que o Carlos fazia à mão antes de cada "Unir". Desligue para voltar ao comportamento
+        /// antigo (só diagnosticar e bloquear).
+        /// </summary>
+        public bool AutoCloseSideGaps { get; set; } = true;
+
+        /// <summary>
         /// Após unir, ALTERNAR para modelamento ORDENADO (item 7) — deixa a feature de união
         /// editável (o operador ajusta o offset/gap na árvore). 2 = igOrdered.
         /// </summary>
@@ -120,6 +129,8 @@ namespace AutoEDM.Electrode
     {
         public BlockOverSurfacesPlan Plan;
         public bool BlockCreated, BandCreated, SurfacesOffset, SurfacesUnited, FixationApplied, SwitchedToOrdered;
+        /// <summary>Vãos laterais (X,Y) fechados automaticamente com "Limite" nesta rodada.</summary>
+        public int SideGapsPatched;
         /// <summary>Features criadas, na ordem de criação (o Cleanup apaga em ordem reversa).</summary>
         public readonly List<object> CreatedFeatures = new List<object>();
         /// <summary>Contagens ANTES do build (o Cleanup apaga o que passou disso, via doc RE-ADQUIRIDO —
@@ -581,9 +592,12 @@ namespace AutoEDM.Electrode
             result.Plan.BlockHmm = opt.BlockHeightMm;
 
             int mode0 = 1; try { mode0 = (int)partDoc.ModelingMode; } catch { }
-            Log.Info($"Unir superfícies: ModelingMode = {mode0} (1=síncrono, 2=ordenado). Passo atual = DIAGNÓSTICO das arestas abertas (read-only, não altera a peça).");
+            Log.Info($"Unir superfícies: ModelingMode = {mode0} (1=síncrono, 2=ordenado). " +
+                     (opt.AutoCloseSideGaps
+                        ? "Vãos laterais X,Y: FECHAMENTO AUTOMÁTICO ligado (um 'Limite' por contorno aberto)."
+                        : "Vãos laterais X,Y: fechamento automático DESLIGADO — só diagnóstico."));
 
-            TryExtendStitchUnite(partDoc, result.Plan, result);
+            TryExtendStitchUnite(partDoc, result.Plan, result, opt);
             return result;
         }
 
@@ -598,8 +612,17 @@ namespace AutoEDM.Electrode
         // ela falha, o Carlos tem a opção de unir NA MÃO no SE (não precisa que o AutoEDM
         // consiga); o botão "Aplicar GAP" (<see cref="ApplyGapToUnitedSurfaces"/>) entra depois,
         // igual funcione o corpo mesclado tenha vindo daqui ou de uma união manual.
+        //
+        // FECHAMENTO AUTOMÁTICO DOS VÃOS (2026-09-02): o "Limite" que o Carlos fazia à mão entre
+        // o diagnóstico e a união agora é tentado pelo código — <see cref="TryCloseSideGaps"/>
+        // encadeia as arestas abertas em contornos (<see cref="OpenEdgeLoops"/>) e cria um
+        // `SurfaceByBoundaries.Add` por vão. O patch nasce como superfície de construção SEPARADA,
+        // então a CopySurface continua com as MESMAS arestas laminares — quem realmente fecha o
+        // conjunto é a COSTURA (superfície + patches), e é a costura que vale re-diagnosticar.
+        // Por isso a costura saiu de dentro de TryUniteToBlock e virou passo próprio aqui.
         private static void TryExtendStitchUnite(
-            dynamic partDoc, BlockOverSurfacesPlan plan, BlockOverSurfacesResult result)
+            dynamic partDoc, BlockOverSurfacesPlan plan, BlockOverSurfacesResult result,
+            BlockOverSurfacesOptions opt)
         {
             dynamic blockModel;
             try { blockModel = partDoc.Models.Item(1); }
@@ -620,10 +643,64 @@ namespace AutoEDM.Electrode
             if (surfCreated) result.CreatedFeatures.Add(surf);
             Log.Info($"Unir: superfície de queima = {surfSrc}.");
 
-            bool readyToUnite = DiagnoseOpenEdges(surf, blockBottomZmm, result);
-            if (!readyToUnite) return;
+            // Costurar/anexar/booleana são operações SÍNCRONAS (e o patch de "Limite" também) —
+            // força o modo ANTES de mexer em geometria, não só na hora de unir.
+            ForceSynchronous(partDoc);
 
-            bool united = TryUniteToBlock(partDoc, blockModel, surf);
+            OpenEdgeScan scan = CollectOpenEdges(surf);
+            bool readyToUnite = DiagnoseOpenEdges(scan, blockBottomZmm, result, "diagnóstico");
+
+            var patches = new List<object>();
+            if (!readyToUnite)
+            {
+                if (!opt.AutoCloseSideGaps)
+                {
+                    Log.Info("Unir: fechamento automático dos vãos DESLIGADO (AutoCloseSideGaps=false) — feche com 'Limite' na peça e rode de novo.");
+                    result.Warnings.Add("Vãos X,Y abertos e fechamento automático desligado — feche com 'Limite' e rode de novo.");
+                    return;
+                }
+
+                result.SideGapsPatched = TryCloseSideGaps(partDoc, scan.Edges, patches);
+                result.CreatedFeatures.AddRange(patches);
+
+                if (patches.Count == 0)
+                {
+                    // Sem nenhum patch a costura não fecharia nada — e costurar CONSOME as
+                    // superfícies de entrada, o que só atrapalharia a próxima tentativa manual.
+                    Log.Warn("Unir: não consegui fechar nenhum vão automaticamente — feche com 'Limite' na peça e rode de novo (nada foi alterado).");
+                    result.Warnings.Add("Vãos X,Y abertos que o fechamento automático não resolveu — feche com 'Limite' (ver log) e rode de novo.");
+                    return;
+                }
+            }
+
+            // A costura consolida superfície + patches num corpo só; é ela que fecha de verdade.
+            var intermediates = new List<object>();
+            dynamic tool = TryConsolidateStitch(partDoc, surf, patches, intermediates);
+            result.CreatedFeatures.AddRange(intermediates);
+
+            if (!readyToUnite)
+            {
+                // Vale re-diagnosticar SÓ o que a costura produziu (na CopySurface crua as
+                // arestas seguiriam laminares mesmo com os patches criados, ver nota acima).
+                if (ReferenceEquals((object)tool, (object)surf))
+                {
+                    Log.Warn("Unir: os vãos foram fechados com 'Limite', mas a COSTURA falhou — os patches ficam na peça. " +
+                             "Costure/una na mão no SE e use 'Aplicar GAP' depois.");
+                    result.Warnings.Add($"{patches.Count} vão(s) fechado(s) com 'Limite', mas a costura falhou — termine a união na mão.");
+                    return;
+                }
+                readyToUnite = DiagnoseOpenEdges(CollectOpenEdges(tool), blockBottomZmm, result, "após fechar os vãos + costurar");
+                if (!readyToUnite)
+                {
+                    result.Warnings.Add($"Ainda há vão(ões) X,Y abertos depois de fechar {patches.Count} contorno(s) — ver log; feche o restante com 'Limite' e rode de novo.");
+                    return;
+                }
+                Log.Info($"Unir: {patches.Count} vão(s) lateral(is) fechado(s) automaticamente — superfície pronta p/ unir.");
+            }
+
+            var used = new List<object>(patches);
+            used.AddRange(intermediates);
+            bool united = TryUniteToBlock(partDoc, blockModel, tool, surf, used);
             if (!united)
             {
                 Log.Warn("Unir: União automática falhou — bloco/faixa/furos preservados, nada foi perdido. " +
@@ -748,40 +825,22 @@ namespace AutoEDM.Electrode
         /// ter lançado — mesma armadilha do GAP (`FaceOffsets.AddEx`): a booleana pode "funcionar"
         /// (não lança) e ainda assim marcar a feature como FALHOU.
         /// </summary>
-        private static bool TryUniteToBlock(dynamic partDoc, dynamic blockModel, dynamic surf)
+        private static bool TryUniteToBlock(dynamic partDoc, dynamic blockModel, dynamic tool,
+            dynamic surf, List<object> patches)
         {
-            try
-            {
-                int m = (int)partDoc.ModelingMode;
-                if (m != 1) { partDoc.ModelingMode = 1; Log.Info("Unir: alternado de volta pra SÍNCRONO (Costurar/Anexar/Booleana não funcionam em Ordenado)."); }
-            }
-            catch (Exception e) { Log.Warn("Unir: checar/alternar p/ Síncrono falhou (seguindo mesmo assim) — " + e.GetBaseException().Message); }
+            ForceSynchronous(partDoc);
 
             object model = (object)blockModel;
 
-            dynamic tool = surf;
-            try
-            {
-                var stitchCol = (SolidEdgePart.StitchSurfaces)partDoc.Constructions.StitchSurfaces;
-                System.Array surfArr = new SolidEdgePart.CopySurface[] { (SolidEdgePart.CopySurface)surf };
-                tool = stitchCol.Add(surfArr.Length, ref surfArr, true, Type.Missing);
-                Log.Info("Unir: superfície costurada (consolida as próprias faces — sem patch de rim).");
-            }
-            catch (Exception e) { Log.Warn("Unir: costura de consolidação falhou (seguindo com a superfície crua) — " + e.GetBaseException().Message); }
-
             // SAFEARRAY(IDispatch) — precisa ser TIPADO, não `object[]` (vira SAFEARRAY(VARIANT) →
             // DISP_E_TYPEMISMATCH, achado no teste real 2026-07-20, log `091655`). `tool` pode ser
-            // StitchSurface (se a costura acima funcionou) ou a CopySurface crua (se falhou).
-            System.Array tools;
-            try { tools = new SolidEdgePart.StitchSurface[] { (SolidEdgePart.StitchSurface)tool }; }
-            catch
+            // StitchSurface (se a costura funcionou) ou a CopySurface crua (se falhou).
+            string toolType;
+            System.Array tools = ToTypedSurfaceArray(new List<object> { (object)tool }, out toolType);
+            if (tools == null || tools.Length == 0)
             {
-                try { tools = new SolidEdgePart.CopySurface[] { (SolidEdgePart.CopySurface)tool }; }
-                catch (Exception e)
-                {
-                    Log.Warn("Unir: ferramenta não tipável (nem StitchSurface, nem CopySurface, E_NOINTERFACE) — " + e.GetBaseException().Message);
-                    return false;
-                }
+                Log.Warn("Unir: ferramenta não tipável (nem StitchSurface, nem CopySurface, nem SurfaceByBoundary — E_NOINTERFACE).");
+                return false;
             }
 
             bool united = TryUniteViaBooleanFeature(model, tools);
@@ -796,8 +855,100 @@ namespace AutoEDM.Electrode
             // DENTRO do bloco (consumidas pela união/anexação síncrona — mesmo raciocínio já
             // registrado acima: "a superfície é CONSUMIDA/reparentada pro corpo") — excluir deixa
             // a árvore limpa em vez de acumular CopySurface/StitchSurface "fantasmas" sem uso.
-            TryDeleteUsedSurfaces(tool, surf);
+            TryDeleteUsedSurfaces(tool, surf, patches);
             return true;
+        }
+
+        /// <summary>
+        /// Garante modelagem SÍNCRONA antes de qualquer operação de superfície (Costurar,
+        /// "Limite", Anexar, booleana) — o documento pode chegar em Ordenado de um run anterior
+        /// que trocou de modo para o GAP. NUNCA lança (segue mesmo assim e o log mostra).
+        /// </summary>
+        private static void ForceSynchronous(dynamic partDoc)
+        {
+            try
+            {
+                int m = (int)partDoc.ModelingMode;
+                if (m != 1) { partDoc.ModelingMode = 1; Log.Info("Unir: alternado de volta pra SÍNCRONO (Limite/Costurar/Anexar/Booleana não funcionam em Ordenado)."); }
+            }
+            catch (Exception e) { Log.Warn("Unir: checar/alternar p/ Síncrono falhou (seguindo mesmo assim) — " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>
+        /// Costura de consolidação: junta a superfície de queima com os patches dos vãos
+        /// (<see cref="TryCloseSideGaps"/>) num corpo de superfície só. Sem patch nenhum, é a
+        /// mesma costura de sempre (consolida as próprias faces soltas da CopySurface — passo do
+        /// processo manual do Carlos, ver CORREÇÃO #4 em <see cref="TryUniteToBlock"/>).
+        /// Devolve a StitchSurface ou, se a costura falhar, a própria <paramref name="surf"/>.
+        /// </summary>
+        private static dynamic TryConsolidateStitch(dynamic partDoc, dynamic surf, List<object> patches,
+            List<object> intermediates)
+        {
+            var pieces = new List<object> { (object)surf };
+            if (patches != null) pieces.AddRange(patches);
+
+            string elemType;
+            System.Array arr = ToTypedSurfaceArray(pieces, out elemType);
+            if (arr == null || arr.Length != pieces.Count)
+            {
+                // Plano B do array MISTO: CopySurface e SurfaceByBoundary são interfaces
+                // interop DIFERENTES e não têm base comum, então um SAFEARRAY(IDispatch) tipado
+                // com as duas não existe. Saída: copiar TODAS as faces (superfície + patches)
+                // numa CopySurface nova — array de Face é homogêneo e já é caminho validado.
+                dynamic merged = TryCopySurfaceOfAllFaces(partDoc, pieces);
+                if (merged != null)
+                {
+                    if (intermediates != null) intermediates.Add((object)merged); // p/ a limpeza pós-união
+                    pieces = new List<object> { (object)merged };
+                    arr = ToTypedSurfaceArray(pieces, out elemType);
+                }
+            }
+            if (arr == null || arr.Length != pieces.Count)
+            {
+                Log.Warn($"Unir: não deu para montar o array tipado das {pieces.Count} superfície(s) p/ costurar — seguindo com a superfície crua.");
+                return surf;
+            }
+
+            try
+            {
+                var stitchCol = (SolidEdgePart.StitchSurfaces)partDoc.Constructions.StitchSurfaces;
+                object stitched = stitchCol.Add(arr.Length, ref arr, true, Type.Missing);
+                if (stitched == null) { Log.Warn("Unir: costura devolveu null — seguindo com a superfície crua."); return surf; }
+                Log.Info($"Unir: {pieces.Count} superfície(s) costurada(s) como {elemType} ({FeatureStatusText(stitched)}).");
+                return stitched;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Unir: costura de consolidação falhou (seguindo com a superfície crua) — " + e.GetBaseException().Message);
+                return surf;
+            }
+        }
+
+        /// <summary>
+        /// Uma CopySurface nova com TODAS as faces das superfícies dadas — usada quando o array
+        /// misto (CopySurface + SurfaceByBoundary) não pode ser tipado. Best-effort: devolve null
+        /// e loga se não der.
+        /// </summary>
+        private static dynamic TryCopySurfaceOfAllFaces(dynamic partDoc, List<object> pieces)
+        {
+            var faces = new List<object>();
+            foreach (object p in pieces) AddFacesFrom(p, faces);
+            if (faces.Count == 0) { Log.Warn("Unir: superfície + patches não deram faces p/ a CopySurface de consolidação."); return null; }
+
+            try
+            {
+                var col = (SolidEdgePart.CopySurfaces)partDoc.Constructions.CopySurfaces;
+                System.Array farr = ToTypedFaceArray(faces);
+                if (farr.Length == 0) return null;
+                object copy = col.Add(farr.Length, ref farr, Type.Missing, Type.Missing);
+                if (copy != null) Log.Info($"Unir: CopySurface de consolidação criada com {farr.Length} face(s) (superfície + patches).");
+                return copy;
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Unir: CopySurface de consolidação (superfície + patches) falhou — " + e.GetBaseException().Message);
+                return null;
+            }
         }
 
         /// <summary>
@@ -808,7 +959,7 @@ namespace AutoEDM.Electrode
         /// lança: a exclusão é limpeza cosmética, não pode reverter uma união que já deu certo;
         /// se falhar (ex.: já foi consumida/removida pela própria união), só loga e segue.
         /// </summary>
-        private static void TryDeleteUsedSurfaces(dynamic tool, dynamic surf)
+        private static void TryDeleteUsedSurfaces(dynamic tool, dynamic surf, List<object> patches)
         {
             bool sameObject = ReferenceEquals(tool, surf);
             if (!sameObject)
@@ -818,6 +969,15 @@ namespace AutoEDM.Electrode
             }
             try { surf.Delete(); Log.Info("Unir: superfície de queima original (CopySurface) excluída — já incorporada ao bloco."); }
             catch (Exception e) { Log.Warn("Unir: excluir a CopySurface original falhou (cosmético, não desfaz a união — pode já ter sido consumida) — " + e.GetBaseException().Message); }
+
+            // Os patches dos vãos (mesma lógica): a geometria deles entrou na costura/união.
+            // Muitos já terão sido consumidos — falhar aqui é normal, por isso só loga.
+            if (patches == null) return;
+            foreach (object p in patches)
+            {
+                try { ((dynamic)p).Delete(); }
+                catch (Exception e) { Log.Info("Unir: patch de vão não excluído (provavelmente já consumido pela costura) — " + e.GetBaseException().Message); }
+            }
         }
 
         /// <summary>
@@ -855,7 +1015,10 @@ namespace AutoEDM.Electrode
             }
             catch (Exception e)
             {
-                Log.Warn("Unir: Model.BooleanFeatures.Add falhou — " + e.GetBaseException().Message);
+                // O tipo do array de ferramentas entra no log: o E_NOINTERFACE recorrente aqui
+                // (que joga a união pro `Attach`) ainda não tem causa confirmada, e saber COM QUE
+                // tipo ele acontece é o que falta pra fechar o diagnóstico numa rodada real.
+                Log.Warn($"Unir: Model.BooleanFeatures.Add falhou (ferramenta = {tools.Length}× {tools.GetType().GetElementType()?.Name ?? "?"}) — " + e.GetBaseException().Message);
                 return false;
             }
         }
@@ -992,19 +1155,82 @@ namespace AutoEDM.Electrode
         /// <see cref="TryUniteToBlock"/>). Equivale a "Exibir Arestas Não-Costuradas". Não modela.
         /// Devolve TRUE se não há vãos VERTICAIS (X,Y).
         /// </summary>
-        private static bool DiagnoseOpenEdges(dynamic surf, double blockBottomZmm, BlockOverSurfacesResult result)
+        private static bool DiagnoseOpenEdges(OpenEdgeScan scan, double blockBottomZmm,
+            BlockOverSurfacesResult result, string phase)
         {
-            // A CopySurface não expõe `.Body` (Log 2026-07-16). Pego as FACES (surf.Faces[1], que
-            // já funciona) e, de cada face, suas arestas. Uma aresta de FRONTEIRA (aberta) pertence
-            // a UMA só face, então aparece UMA vez ao varrer as faces (sem dupla contagem); as
-            // internas (costuradas, 2 faces) aparecem 2× mas são filtradas por EdgeFaceCount!=1.
+            List<OpenEdge> open = scan.Edges;
+
+            int vertical = 0, horizontal = 0, shown = 0;
+            double vTopZ = double.NegativeInfinity, vBotZ = double.PositiveInfinity;
+            foreach (OpenEdge e in open)
+            {
+                if (e.MinMm == null) continue;
+                if (e.IsVertical) { vertical++; vTopZ = Math.Max(vTopZ, e.MaxMm[2]); vBotZ = Math.Min(vBotZ, e.MinMm[2]); }
+                else horizontal++;
+                if (shown++ < 40) Log.Info($"  aresta aberta: Z {e.MinMm[2]:0.0}→{e.MaxMm[2]:0.0} mm ({(e.IsVertical ? "VERTICAL (vão lateral X,Y)" : "horizontal (rim)")}).");
+            }
+
+            Log.Info($"Unir ({phase}): {open.Count} aresta(s) ABERTA(s) — {horizontal} horizontal(is) (rim topo/fundo), {vertical} vertical(is) (vãos laterais X,Y a fechar).");
+
+            if (vertical == 0)
+            {
+                // REGRESSÃO CORRIGIDA (2026-09-02, log `165510` vs `074935`): quando NENHUMA
+                // aresta pôde ser classificada (o `Edge.Faces.Count` não é legível por late
+                // binding em vários tipos de superfície — ver `EdgeFaceCount`), a versão anterior
+                // deste método travava o botão em "não dá p/ afirmar que está fechada" e a união
+                // nunca era tentada. O diagnóstico é um ATALHO para avisar de vão evidente, não
+                // um pré-requisito: sem vão vertical DETECTADO, segue para a união — quem decide
+                // se a geometria serve é o próprio comando de união, como sempre foi.
+                if (open.Count == 0)
+                    Log.Info($"Unir ({phase}): nenhuma aresta pôde ser classificada ({scan.Visited} visitada(s), {scan.UnknownFaceCount} sem contagem de faces) — diagnóstico INCONCLUSIVO, seguindo para a união assim mesmo (rim Z≈{blockBottomZmm:0.0}mm).");
+                else
+                    Log.Info($"Unir: sem vãos VERTICAIS (X,Y) — pronta p/ unir ao bloco (rim Z≈{blockBottomZmm:0.0}mm).");
+                return true;
+            }
+
+            Log.Info($"Unir: há {vertical} aresta(s) VERTICAL(is) aberta(s) (Z {vBotZ:0.0}→{vTopZ:0.0}) = VÃOS laterais em X,Y.");
+            result.Warnings.Add($"Superfície ABERTA nas laterais: {vertical} vão(s) X,Y (ver log).");
+            return false;
+        }
+
+        /// <summary>
+        /// Resultado da varredura das arestas: as abertas achadas + o que NÃO deu para ler. Os
+        /// contadores importam tanto quanto a lista — "0 arestas abertas" pode significar
+        /// "superfície fechada" ou "não consegui classificar nada", e o diagnóstico precisa
+        /// distinguir os dois (ver <see cref="DiagnoseOpenEdges"/>).
+        /// </summary>
+        private sealed class OpenEdgeScan
+        {
+            public readonly List<OpenEdge> Edges = new List<OpenEdge>();
+            public int Visited, UnknownFaceCount, NoRange, NoEndPoints;
+        }
+
+        /// <summary>Uma aresta ABERTA da superfície de queima + a geometria já lida do COM.</summary>
+        private sealed class OpenEdge
+        {
+            public object Com;
+            public double[] MinMm, MaxMm;     // bbox (mm)
+            public double[] StartMm, EndMm;   // extremidades (mm) — null se GetEndPoints falhou
+            public bool IsVertical;
+        }
+
+        /// <summary>
+        /// Arestas ABERTAS (laminares) da superfície: as que pertencem a UMA só face. A
+        /// CopySurface não expõe `.Body` (Log 2026-07-16), então varre as FACES (surf.Faces[1],
+        /// que já funciona) e, de cada face, suas arestas — uma aresta de fronteira aparece UMA
+        /// vez (sem dupla contagem); as internas (costuradas, 2 faces) aparecem 2× mas são
+        /// filtradas por <see cref="EdgeFaceCount"/> != 1.
+        /// </summary>
+        private static OpenEdgeScan CollectOpenEdges(dynamic surf)
+        {
+            var scan = new OpenEdgeScan();
             var faces = new List<object>();
             AddFacesFrom((object)surf, faces);
-            if (faces.Count == 0) { Log.Warn("Unir: a superfície de queima não deu faces p/ analisar as arestas."); return false; }
+            if (faces.Count == 0) { Log.Warn("Unir: a superfície não deu faces p/ analisar as arestas."); return scan; }
 
             const double zTol = 0.05; // mm — abaixo disso a aresta é "horizontal"
-            int visits = 0, open = 0, vertical = 0, horizontal = 0, unknownFaceCount = 0, shown = 0;
-            double vTopZ = double.NegativeInfinity, vBotZ = double.PositiveInfinity;
+            var seenIds = new HashSet<int>();
+
             foreach (var f in faces)
             {
                 dynamic fedges; try { fedges = ((dynamic)f).Edges; } catch { continue; }
@@ -1012,31 +1238,158 @@ namespace AutoEDM.Electrode
                 for (int i = 1; i <= ne; i++)
                 {
                     object e; try { e = fedges.Item(i); } catch { continue; }
-                    visits++;
+                    scan.Visited++;
                     int nf = EdgeFaceCount(e);
-                    if (nf < 0) { unknownFaceCount++; continue; }
-                    if (nf != 1) continue;                       // costurada (2+ faces) — não é fronteira
-                    open++;
-                    if (!FaceGeometry.TryGetRangeMm(e, out double[] mn, out double[] mx)) continue;
-                    bool isVert = (mx[2] - mn[2]) > zTol;
-                    if (isVert) { vertical++; vTopZ = Math.Max(vTopZ, mx[2]); vBotZ = Math.Min(vBotZ, mn[2]); }
-                    else horizontal++;
-                    if (shown++ < 40) Log.Info($"  aresta aberta: Z {mn[2]:0.0}→{mx[2]:0.0} mm ({(isVert ? "VERTICAL (vão lateral X,Y)" : "horizontal (rim)")}).");
+                    if (nf < 0) { scan.UnknownFaceCount++; continue; }
+                    if (nf != 1) continue;
+
+                    // Rede contra dupla contagem quando o Edge.ID está disponível (aresta que
+                    // apareça por 2 caminhos entraria 2× e quebraria o encadeamento do contorno).
+                    int id;
+                    if (TryEdgeId(e, out id) && !seenIds.Add(id)) continue;
+
+                    double[] mn, mx;
+                    if (!FaceGeometry.TryGetRangeMm(e, out mn, out mx)) { scan.NoRange++; continue; }
+
+                    var oe = new OpenEdge
+                    {
+                        Com = e,
+                        MinMm = mn,
+                        MaxMm = mx,
+                        IsVertical = (mx[2] - mn[2]) > zTol
+                    };
+
+                    double[] s, en; string err;
+                    if (EdgeGeometry.TryGetEndPointsMm(e, out s, out en, out err)) { oe.StartMm = s; oe.EndMm = en; }
+                    else scan.NoEndPoints++;
+
+                    scan.Edges.Add(oe);
                 }
             }
 
-            Log.Info($"Unir (diagnóstico de fechamento): {faces.Count} face(s), {visits} aresta(s) visitada(s), {open} ABERTA(s) — {horizontal} horizontal(is) (rim topo/fundo), {vertical} vertical(is) (vãos laterais X,Y a fechar)." +
-                     (unknownFaceCount > 0 ? $" ({unknownFaceCount} sem contagem de faces)" : ""));
+            Log.Info($"Unir: {faces.Count} face(s), {scan.Visited} aresta(s) visitada(s), {scan.Edges.Count} ABERTA(s)." +
+                     (scan.UnknownFaceCount > 0 ? $" ({scan.UnknownFaceCount} sem contagem de faces)" : "") +
+                     (scan.NoRange > 0 ? $" ({scan.NoRange} sem bbox)" : "") +
+                     (scan.NoEndPoints > 0 ? $" ({scan.NoEndPoints} sem extremidades — não entram no fechamento automático)" : ""));
+            return scan;
+        }
 
-            if (vertical == 0)
+        private static bool TryEdgeId(object edge, out int id)
+        {
+            id = 0;
+            try { id = (int)((dynamic)edge).ID; return true; }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Fecha os VÃOS laterais (X,Y) sozinho — o "Limite" que o Carlos fazia à mão antes de
+        /// cada união. Encadeia as arestas abertas em contornos (<see cref="OpenEdgeLoops"/>) e
+        /// cria um <c>Constructions.SurfaceByBoundaries.Add</c> por contorno FECHADO que tenha
+        /// aresta vertical; contorno todo horizontal é o RIM de topo/fundo e é deixado em paz
+        /// (fechá-lo taparia a superfície de queima).
+        ///
+        /// Assinatura confirmada no dump da typelib SE 2023 (`_ISurfaceByBoundariesAuto.Add`):
+        /// <c>Add(NumberOfEdges:int, [in,out] EdgesArray:SAFEARRAY(IDispatch), [opt]NumberOfExcludeEdges,
+        /// [opt]ExcludeEdgesArray, [opt]Tangent) → SurfaceByBoundary</c>. Chamada por
+        /// <c>InvokeMember</c> com <see cref="ParameterModifier"/> by-ref DE PROPÓSITO: a PIA
+        /// estática (Interop.SolidEdge 219, mais velha que o SE 223) declara o array de arestas
+        /// como `out Array&amp;` — parâmetro só-de-saída, que NÃO levaria as arestas para dentro
+        /// da chamada. O by-ref do late binding serve para [in,out] e [out].
+        ///
+        /// NUNCA lança: qualquer vão que não feche vira log + aviso, e o caminho manual continua
+        /// valendo (o Carlos fecha o resto com 'Limite' e roda de novo).
+        /// </summary>
+        private static int TryCloseSideGaps(dynamic partDoc, List<OpenEdge> open, List<object> patches)
+        {
+            var segments = new List<OpenEdgeSegment>();
+            foreach (OpenEdge e in open)
             {
-                Log.Info($"Unir: sem vãos VERTICAIS (X,Y) — pronta p/ unir ao bloco (rim Z≈{blockBottomZmm:0.0}mm).");
-                return true;
+                if (e.StartMm == null || e.EndMm == null) continue; // sem extremidades não dá p/ encadear
+                segments.Add(new OpenEdgeSegment
+                {
+                    Com = e.Com,
+                    StartMm = e.StartMm,
+                    EndMm = e.EndMm,
+                    ZMinMm = e.MinMm[2],
+                    ZMaxMm = e.MaxMm[2],
+                    IsVertical = e.IsVertical
+                });
+            }
+            if (segments.Count == 0)
+            {
+                Log.Warn("Unir: nenhuma aresta aberta com extremidades legíveis — fechamento automático dos vãos não é possível nesta superfície.");
+                return 0;
             }
 
-            Log.Info($"Unir: há {vertical} aresta(s) VERTICAL(is) aberta(s) (Z {vBotZ:0.0}→{vTopZ:0.0}) = VÃOS laterais em X,Y. Feche cada vão com 'Limite' (SurfaceByBoundaries) na peça e rode de novo.");
-            result.Warnings.Add($"Superfície ABERTA nas laterais: {vertical} vão(s) X,Y a fechar com 'Limite' (ver log) antes de unir.");
-            return false;
+            List<OpenEdgeLoop> loops = OpenEdgeLoops.Chain(segments, OpenEdgeLoops.DefaultJoinToleranceMm);
+            int gaps = 0, patched = 0;
+            foreach (OpenEdgeLoop loop in loops)
+            {
+                string kind = loop.IsSideGap ? "VÃO LATERAL (fechar)"
+                    : loop.Closed ? "rim fechado (não mexer)" : "contorno ABERTO (não fecha sozinho)";
+                Log.Info($"  contorno: {loop.Describe()} — {kind}.");
+                if (!loop.IsSideGap) continue;
+                gaps++;
+                if (TryPatchLoop(partDoc, loop, patches)) patched++;
+            }
+
+            if (gaps == 0) Log.Warn("Unir: as arestas verticais abertas não formaram nenhum contorno FECHADO — nada a fechar automaticamente (ver contornos acima).");
+            else Log.Info($"Unir: {patched}/{gaps} vão(s) lateral(is) fechado(s) com 'Limite'.");
+            return patched;
+        }
+
+        /// <summary>Cria UM patch ("Limite") sobre o contorno. Devolve false (com log) se falhar.</summary>
+        private static bool TryPatchLoop(dynamic partDoc, OpenEdgeLoop loop, List<object> patches)
+        {
+            object col;
+            try { col = (object)partDoc.Constructions.SurfaceByBoundaries; }
+            catch (Exception e) { Log.Warn("Unir: Constructions.SurfaceByBoundaries indisponível — " + e.GetBaseException().Message); return false; }
+
+            // ARMADILHA do array `ref`: reusar o MESMO System.Array em duas chamadas corrompe a
+            // segunda ("não foi possível converter argumento 0"). Um array NOVO por patch.
+            var edges = new List<object>();
+            foreach (OpenEdgeSegment s in loop.Segments) if (s.Com != null) edges.Add(s.Com);
+            System.Array arr = ToTypedEdgeArray(edges);
+            if (arr.Length == 0) { Log.Warn("Unir: as arestas do vão não expõem a interface Edge (E_NOINTERFACE) — patch não criado."); return false; }
+
+            object patch = TryAddSurfaceByBoundary(col, arr, useExplicitOptionals: false);
+            if (patch == null)
+            {
+                // 2ª tentativa com os opcionais EXPLÍCITOS: o `Attach` já mostrou que "opcional"
+                // no dump nem sempre é opcional na prática (DISP_E_PARAMNOTOPTIONAL).
+                patch = TryAddSurfaceByBoundary(col, ToTypedEdgeArray(edges), useExplicitOptionals: true);
+            }
+            if (patch == null) return false;
+
+            string status = FeatureStatusText(patch);
+            if (status == "FALHOU")
+            {
+                Log.Warn($"Unir: patch do vão criado mas com Status FALHOU ({loop.Describe()}) — apagando.");
+                TryDeleteFeature(patch);
+                return false;
+            }
+            patches.Add(patch);
+            Log.Info($"Unir: vão fechado com 'Limite' ({arr.Length} aresta(s), Status {status}).");
+            return true;
+        }
+
+        private static object TryAddSurfaceByBoundary(object col, System.Array edgeArr, bool useExplicitOptionals)
+        {
+            object[] args = useExplicitOptionals
+                ? new object[] { edgeArr.Length, edgeArr, 0, new SolidEdgeGeometry.Edge[0], false }
+                : new object[] { edgeArr.Length, edgeArr, Type.Missing, Type.Missing, Type.Missing };
+            var mod = new ParameterModifier(args.Length);
+            mod[1] = true; // EdgesArray é [in,out] — precisa ir by-ref, senão não entra na chamada
+            try
+            {
+                return col.GetType().InvokeMember("Add", BindingFlags.InvokeMethod, null, col, args,
+                    new[] { mod }, CultureInfo.InvariantCulture, null);
+            }
+            catch (Exception e)
+            {
+                Log.Warn($"Unir: SurfaceByBoundaries.Add ({(useExplicitOptionals ? "opcionais explícitos" : "opcionais omitidos")}) falhou — " + e.GetBaseException().Message);
+                return null;
+            }
         }
 
         /// <summary>Maior Z (mm) entre os corpos criados ALÉM da baseline (topo do corpo novo).</summary>
@@ -1289,6 +1642,60 @@ namespace AutoEDM.Electrode
             foreach (var f in faces) { try { list.Add((SolidEdgeGeometry.Face)f); } catch { fail++; } }
             if (fail > 0) Log.Warn($"Unir: {fail}/{faces.Count} face(s) não expõem a interface Face (E_NOINTERFACE) — ignoradas.");
             return list.ToArray();
+        }
+
+        /// <summary>Array TIPADO de arestas p/ o `SurfaceByBoundaries.Add` (mesma regra das faces).</summary>
+        private static System.Array ToTypedEdgeArray(List<object> edges)
+        {
+            var list = new List<SolidEdgeGeometry.Edge>(edges.Count);
+            int fail = 0;
+            foreach (var e in edges) { try { list.Add((SolidEdgeGeometry.Edge)e); } catch { fail++; } }
+            if (fail > 0) Log.Warn($"Unir: {fail}/{edges.Count} aresta(s) não expõem a interface Edge (E_NOINTERFACE) — ignoradas.");
+            return list.ToArray();
+        }
+
+        /// <summary>
+        /// Array TIPADO de SUPERFÍCIES de construção. Cada tipo de superfície é uma interface
+        /// interop DIFERENTE e sem base comum (CopySurface, StitchSurface, SurfaceByBoundary),
+        /// então um SAFEARRAY(IDispatch) misto não existe: aqui procura-se UM tipo que sirva para
+        /// TODOS os itens. Devolve null quando não há (o chamador tem plano B — ver
+        /// <see cref="TryConsolidateStitch"/>).
+        /// </summary>
+        private static System.Array ToTypedSurfaceArray(List<object> surfaces, out string elementType)
+        {
+            elementType = null;
+            if (surfaces == null || surfaces.Count == 0) return null;
+
+            foreach (string type in new[] { "CopySurface", "StitchSurface", "SurfaceByBoundary" })
+            {
+                System.Array arr = TryBuildSurfaceArray(surfaces, type);
+                if (arr != null) { elementType = type; return arr; }
+            }
+            Log.Warn($"Unir: as {surfaces.Count} superfície(s) não cabem num array de um tipo só (mistura de CopySurface/StitchSurface/SurfaceByBoundary).");
+            return null;
+        }
+
+        private static System.Array TryBuildSurfaceArray(List<object> surfaces, string type)
+        {
+            try
+            {
+                if (type == "CopySurface")
+                {
+                    var a = new SolidEdgePart.CopySurface[surfaces.Count];
+                    for (int i = 0; i < surfaces.Count; i++) a[i] = (SolidEdgePart.CopySurface)surfaces[i];
+                    return a;
+                }
+                if (type == "StitchSurface")
+                {
+                    var a = new SolidEdgePart.StitchSurface[surfaces.Count];
+                    for (int i = 0; i < surfaces.Count; i++) a[i] = (SolidEdgePart.StitchSurface)surfaces[i];
+                    return a;
+                }
+                var b = new SolidEdgePart.SurfaceByBoundary[surfaces.Count];
+                for (int i = 0; i < surfaces.Count; i++) b[i] = (SolidEdgePart.SurfaceByBoundary)surfaces[i];
+                return b;
+            }
+            catch { return null; } // E_NOINTERFACE: esse tipo não serve p/ todos — tenta o próximo
         }
 
         private static System.Array ToTypedBodyArray(object body)

@@ -15,8 +15,29 @@ namespace AutoEDM.Electrode
         /// <summary>Diâmetro do furo-guia da rosca central (broca de M6 ≈ 5,0 mm).</summary>
         public double CenterTapDrillDiameter { get; set; } = 5.0;
 
-        /// <summary>Profundidade do furo central M6 na BASE (mm) — Carlos: Ø5 × 8 mm, cego.</summary>
-        public double CenterHoleDepth { get; set; } = 8.0;
+        /// <summary>
+        /// Profundidade do FURO central (mm), medida até o OMBRO — a ponta cônica da broca
+        /// fica ABAIXO disso (Carlos, 2026-09-03: "altura do furo 10 mm").
+        /// </summary>
+        public double CenterHoleDepth { get; set; } = 10.0;
+
+        /// <summary>
+        /// Profundidade da ROSCA (mm) — menor que <see cref="CenterHoleDepth"/> de propósito:
+        /// o macho não chega ao fundo do furo (Carlos, 2026-09-03: "altura da rosca 6 mm").
+        /// </summary>
+        public double CenterThreadDepth { get; set; } = 6.0;
+
+        /// <summary>
+        /// Ângulo da PONTA DA BROCA no fundo do furo cego (graus, ângulo total). 118° é a
+        /// broca helicoidal padrão. A API do SE recebe este ângulo em GRAUS.
+        /// </summary>
+        public double CenterBottomAngle { get; set; } = 118.0;
+
+        /// <summary>Chanfro de entrada do furo central: recuo em mm (0,5 × 45°).</summary>
+        public double CenterChamferSetback { get; set; } = 0.5;
+
+        /// <summary>Chanfro de entrada do furo central: ângulo em GRAUS (0,5 × 45°).</summary>
+        public double CenterChamferAngle { get; set; } = 45.0;
 
         /// <summary>Diâmetro dos dois furos de pino.</summary>
         public double DowelDiameter { get; set; } = 4.0;

@@ -54,3 +54,6 @@ desktop.ini
 ## Python cache
 __pycache__/
 *.pyc
+
+## Pacotes de distribuição gerados por tools/pack.ps1
+dist/

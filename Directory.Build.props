@@ -1,0 +1,33 @@
+<Project>
+
+  <!--
+    Versão única de todos os assemblies do AutoEDM.
+
+    AssemblyVersion fica FIXO em 1.0.0.0 de propósito. O registro por usuário grava
+    uma subchave InprocServer32\<AssemblyVersion> (src/AutoEDM.Register/Program.cs);
+    se a AssemblyVersion subisse a cada release, cada atualização deixaria no HKCU do
+    usuário uma subchave órfã apontando para um CodeBase antigo, e o lixo acumularia
+    instalação após instalação.
+
+    Quem identifica o build é FileVersion/InformationalVersion — aparece no log do
+    add-in (ElectrodeAddIn.BuildStamp), que é o que se pede num suporte remoto para
+    saber QUAL pacote a máquina está rodando.
+
+    Passe a versão no build:  dotnet build -c Release -p:AutoEdmVersion=2026.8.14
+    (tools/pack.ps1 já faz isso com a data do dia).
+
+    Detalhe do AutoEDM.AddIn.dll: ele usa <Win32Resource> (os bitmaps da ribbon), o
+    que SUBSTITUI o recurso de version info do Windows — Propriedades > Detalhes
+    aparece em branco nesse dll, e é esperado. A versão está nos atributos
+    gerenciados, que é de onde o BuildStamp lê. O Register.exe tem version info
+    normal, então dá para conferir a versão do pacote por ele.
+  -->
+  <PropertyGroup>
+    <AutoEdmVersion Condition="'$(AutoEdmVersion)' == ''">0.0.0</AutoEdmVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>$(AutoEdmVersion).0</FileVersion>
+    <InformationalVersion>$(AutoEdmVersion)</InformationalVersion>
+    <Version>$(AutoEdmVersion)</Version>
+  </PropertyGroup>
+
+</Project>

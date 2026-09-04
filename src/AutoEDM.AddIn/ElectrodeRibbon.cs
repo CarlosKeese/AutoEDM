@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows.Forms;
 using SolidEdgeCommunity.AddIn;
 using AutoEDM.AddIn.UI;
@@ -8,6 +8,7 @@ using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Model;
 using AutoEDM.Reporting;
+using AutoEDM.Sealing;
 
 namespace AutoEDM.AddIn
 {
@@ -30,6 +31,8 @@ namespace AutoEDM.AddIn
         private const int CmdCriarEletrodoManual = 10; // Criar 1 eletrodo a partir da seleção manual de faces
         private const int CmdAplicarGap = 11;       // GAP + cor + nome no corpo já unido (ambiente de PEÇA)
         private const int CmdDuplicarEletrodo = 12; // Duplicar eletrodo(s) selecionado(s) p/ o próximo Ra da tabela
+        private const int CmdDiagRosca = 13;        // Sonda da rosca M6 (peça descartável)
+        private const int CmdAlojamentoORing = 14;  // Alojamento de anel O'ring (janela modeless)
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -53,6 +56,8 @@ namespace AutoEDM.AddIn
                 case CmdAplicarGap: AplicarGap(); break;
                 case CmdDuplicarEletrodo: DuplicarEletrodo(); break;
                 case CmdInspecionar: InspecionarSelecao(); break;
+                case CmdDiagRosca: DiagnosticarRosca(); break;
+                case CmdAlojamentoORing: AlojamentoORing(); break;
                 case CmdIniciarLeitura: IniciarLeitura(); break;
                 case CmdGravarLeitura: GravarLeitura(); break;
             }
@@ -210,10 +215,14 @@ namespace AutoEDM.AddIn
             {
                 var builder = new SurfaceBlockBuilder();
                 BlockOverSurfacesResult res = builder.UniteSurfacesToBlock(doc, new BlockOverSurfacesOptions());
+                string gaps = res.SideGapsPatched > 0
+                    ? $"{res.SideGapsPatched} vão(s) lateral(is) fechado(s) automaticamente com 'Limite'.\n\n"
+                    : "";
                 string msg = res.SurfacesUnited
-                    ? "Superfície unida ao bloco ✓. Confira no modelo — depois use 'Aplicar GAP' para o offset/cor.\n\nDetalhe no log (linhas 'Unir:')."
-                    : "Não uni as superfícies ao bloco ainda.\n\nVeja o log (linhas 'Unir:') para o ponto exato — o bloco/faixa/furos NÃO foram tocados. " +
+                    ? gaps + "Superfície unida ao bloco ✓. Confira no modelo — depois use 'Aplicar GAP' para o offset/cor.\n\nDetalhe no log (linhas 'Unir:')."
+                    : gaps + "Não uni as superfícies ao bloco ainda.\n\nVeja o log (linhas 'Unir:') para o ponto exato — o bloco/faixa/furos NÃO foram tocados. " +
                       "Se preferir, una NA MÃO no SE e use 'Aplicar GAP' no corpo já mesclado.";
+                if (res.Warnings.Count > 0) msg += "\n\n⚠ " + string.Join("\n⚠ ", res.Warnings);
                 MessageBox.Show(msg, "AutoEDM — Unir superfícies", MessageBoxButtons.OK,
                     res.SurfacesUnited ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             });
@@ -376,6 +385,92 @@ namespace AutoEDM.AddIn
                 Log.Info("===== FIM (INSPECIONAR SELEÇÃO) =====");
             }
             catch (Exception ex) { Fail("inspecionar a seleção", ex); }
+        }
+
+        /// <summary>
+        /// SONDA DA ROSCA M6 (diagnóstico): cria uma peça DESCARTÁVEL com um bloco e quatro
+        /// furos M6, um por receita de API, e loga tudo (HoleData completo, Status da feature,
+        /// CreatePhysicalThread, código de erro da rosca física e o Ø REAL medido de cada
+        /// cilindro). Roda numa peça própria de propósito — um Holes.AddSync que falha envenena
+        /// o proxy do documento e derrubaria a furação que já funciona no fluxo do eletrodo.
+        /// Também confere a opção GLOBAL de exibição de rosca do SE: com ela desligada, mesmo o
+        /// furo roscado certo desenha liso. Ver <see cref="AutoEDM.Electrode.ThreadProbe"/>.
+        /// </summary>
+        private void DiagnosticarRosca()
+        {
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+
+            var confirm = MessageBox.Show(
+                "Isto vai CRIAR uma PEÇA NOVA (descartável, não salva) com um bloco 120×40×15 e quatro furos M6 — " +
+                "cada um por uma receita diferente da API de rosca.\n\n" +
+                "Depois: olhe a peça e me diga em qual X a rosca saiu CORTADA de verdade\n" +
+                "(1=-42  2=-14  3=+14  4=+42 mm) e me mande o log.\n\nContinuar?",
+                "AutoEDM — Sonda de rosca M6", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirm != DialogResult.Yes) { Log.Info("Sonda de rosca cancelada pelo usuário."); return; }
+
+            try
+            {
+                bool displayOff = ThreadProbe.ThreadedDisplayIsOff(app);
+                ThreadProbe.RunM6Matrix(app);
+
+                // A exibição de rosca é uma OPÇÃO DO APLICATIVO, não do documento: mexer nela
+                // muda o Solid Edge inteiro do usuário, então só com o "sim" dele.
+                if (displayOff)
+                {
+                    var liga = MessageBox.Show(
+                        "A opção GLOBAL do Solid Edge \"exibir roscas\" está DESLIGADA nesta instalação.\n\n" +
+                        "Com ela desligada, um furo roscado CORRETO aparece liso na tela — dá para confundir " +
+                        "com \"a rosca não foi criada\".\n\n" +
+                        "Ligar agora? (é uma opção do Solid Edge inteiro, não só desta peça)",
+                        "AutoEDM — exibição de rosca", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    if (liga == DialogResult.Yes) ThreadProbe.EnableThreadedDisplay(app);
+                    else Log.Info("Exibição de rosca deixada DESLIGADA a pedido do usuário.");
+                }
+
+                MessageBox.Show(
+                    "Sonda concluída. Na peça nova, os quatro furos M6 (X = -42, -14, +14, +42 mm):\n\n" +
+                    "1 (-42): base de furos + rosca só como anotação\n" +
+                    "2 (-14): base de furos + hélice pedida na CRIAÇÃO (AddSyncEx)\n" +
+                    "3 (+14): base de furos + hélice pedida DEPOIS do furo\n" +
+                    "4 (+42): valores na mão, sem a base de furos\n\n" +
+                    "O log traz o Ø REAL medido de cada furo — o esperado é 5,0 mm (broca de M6), não 6,0.\n\n" +
+                    "Diga qual saiu com a hélice CORTADA e mande o log (%LOCALAPPDATA%\\AutoEDM\\logs).",
+                    "AutoEDM — Sonda de rosca M6", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) { Fail("rodar a sonda de rosca M6", ex); }
+        }
+
+        /// <summary>
+        /// Alojamento de anel O'ring (ambiente de PEÇA). Abre a janela MODELESS — a única do
+        /// add-in — porque o fluxo é "selecione uma face, depois uma aresta" e uma janela modal
+        /// congelaria o Solid Edge justamente na hora de clicar no modelo.
+        ///
+        /// A janela é guardada num campo estático: um Form modeless que sai de escopo é
+        /// coletado e some da tela sem erro nenhum. Se já estiver aberta, traz para a frente
+        /// em vez de abrir uma segunda.
+        /// </summary>
+        private static ORingGrooveForm _oringForm;
+
+        private void AlojamentoORing()
+        {
+            if (!TryDoc(DocKind.Part, out dynamic app, out dynamic doc)) return;
+            try
+            {
+                if (_oringForm != null && !_oringForm.IsDisposed)
+                {
+                    _oringForm.BringToFront();
+                    _oringForm.Activate();
+                    return;
+                }
+
+                Log.Info("===== ALOJAMENTO DE O'RING (janela aberta) =====");
+                var catalog = ORingCatalog.LoadOrCreateDefault();
+                _oringForm = new ORingGrooveForm((object)app, catalog);
+                _oringForm.FormClosed += (s, e) => { _oringForm = null; Log.Info("===== FIM (ALOJAMENTO DE O'RING) ====="); };
+                _oringForm.Show();
+            }
+            catch (Exception ex) { Fail("abrir o alojamento de O'ring", ex); }
         }
 
         // -------------------------------------------------------------- infra

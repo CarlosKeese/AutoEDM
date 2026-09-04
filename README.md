@@ -135,6 +135,10 @@ Detalhes completos em [`docs/COM_INTEGRATION.md`](docs/COM_INTEGRATION.md) e [`d
    src\AutoEDM.Register\bin\Debug\net472\AutoEDM.Register.exe
    # reabra o Solid Edge → aba "AutoEDM" → "Criar eletrodos"
    ```
+   O `Register.exe` copia os binários para `%LOCALAPPDATA%\AutoEDM\addin` e registra
+   o add-in a partir de lá — o Solid Edge trava o dll do *deploy*, não o de `bin\`,
+   então dá para recompilar com a SE aberta. Só é preciso fechar a SE para
+   **atualizar** o add-in.
 
 3. **Crie um novo comando no add-in:**
    - Adicione um botão na ribbon em `src/AutoEDM.AddIn/`.
@@ -143,6 +147,36 @@ Detalhes completos em [`docs/COM_INTEGRATION.md`](docs/COM_INTEGRATION.md) e [`d
 
 4. **Use o núcleo no seu próprio projeto:**
    Referencie `AutoEDM.Core.dll` e use classes como `SolidEdgeConnector`, `FaceSelector`, `RegionSplitter`, `ElectrodeBuilder` etc.
+
+---
+
+## Distribuição (instalar em outra máquina)
+
+O add-in é COM in-process com registro **por usuário** (`HKCU`), então não há MSI nem `regasm`: o pacote é um **ZIP portátil** que instala sem senha de administrador.
+
+**Gerar o pacote:**
+
+```powershell
+pwsh tools\pack.ps1              # versão = data de hoje, ex. dist\AutoEDM-2026.8.14.zip
+pwsh tools\pack.ps1 -Version 2026.8.20
+```
+
+O script compila em Release, remove `*.pdb`, junta `instalar.cmd` / `desinstalar.cmd` / `LEIAME.txt` (de [`tools/dist/`](tools/dist/)) e zipa. A versão vira `FileVersion`/`InformationalVersion` e aparece na primeira linha do log do add-in — é assim que se descobre num suporte remoto qual build a máquina está rodando. A `AssemblyVersion` fica fixa em `1.0.0.0` de propósito: ver [`Directory.Build.props`](Directory.Build.props).
+
+**Instalar na máquina de destino:** fechar o Solid Edge → extrair numa pasta do usuário (**nunca** em `Arquivos de Programas`) → dois cliques em `instalar.cmd` → abrir o Solid Edge.
+
+O `instalar.cmd` faz três coisas que importam: recusa rodar com a SE aberta (os dll ficariam travados e o usuário continuaria na versão antiga achando que atualizou), roda `Unblock-File` nos binários (ZIP vindo de e-mail/rede/download carrega o *Mark of the Web* e o CLR se recusa a carregá-lo in-process — o add-in some da ribbon **sem erro nenhum**, é a causa nº 1 de "instalei e não apareceu") e chama o `AutoEDM.Register.exe`.
+
+| Operação | Como |
+|---|---|
+| Atualizar | Fechar a SE, extrair a versão nova, rodar `instalar.cmd` de novo (não precisa desinstalar antes) |
+| Remover | Fechar a SE e rodar `desinstalar.cmd` (= `AutoEDM.Register.exe /u`) |
+| Config do usuário | `%LOCALAPPDATA%\AutoEDM\config.json` — criado sozinho no 1º uso com os defaults |
+| Logs para suporte | `%LOCALAPPDATA%\AutoEDM\logs` — a 1ª linha traz versão + carimbo dos binários carregados |
+
+**Requisitos na máquina:** Solid Edge 2023+ (x64) e .NET Framework 4.7.2, que já vem no Windows 10 1803+ e no Windows 11.
+
+Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `Register.exe`; MSI/Inno com GPO só se o parque passar de ~10 máquinas.
 
 ---
 
