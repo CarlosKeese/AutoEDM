@@ -37,8 +37,11 @@ assumes they exist. `references/discovery.md` describes what each one must do.
 
 ## Non-negotiable constraints (predict these errors before they happen)
 
-- **Units are METERS** in the geometry/modeling API. 20 mm = `0.020`. Convert
-  ranges ×1000 for mm.
+- **Lengths are METERS** in the geometry/modeling API. 20 mm = `0.020`. Convert
+  ranges ×1000 for mm. **Angles have no single rule** — `Occurrence.GetTransform`
+  returns radians, but `HoleData.BottomAngle`/`CountersinkAngle`/chamfer angles are
+  **degrees** (`118`, not `2.06`), while `HoleData.ThreadTaperAngle` is radians in
+  the same object. Check the property, never the object.
 - **Collections are 1-based** (`.Item(1)`, `.Count`).
 - **x64 only** — SE 2023/2026 are 64-bit; a 32-bit build won't connect.
 - **STA thread required** — run automation on `[STAThread]` (a WinForms UI thread
@@ -55,12 +58,16 @@ assumes they exist. `references/discovery.md` describes what each one must do.
   (`ComInterop.GetActiveObject("SolidEdge.Application")`) — `Marshal.GetActiveObject`
   is gone in modern .NET, so P/Invoke `ole32`/`oleaut32`.
 
-Four more constraints earn their own explanation because they cause silent wrong
-results rather than exceptions:
+These earn their own explanation because they cause silent wrong results rather than
+exceptions:
 
 - **A feature `Add` that returns without throwing may still have failed.** SE reports
   feature failure through `.Status`, not through an HRESULT. Check
   `feature.Status == igFeatureOK (1216476310)` after every `Add`, comparing as uint32.
+  **SE does not roll a failed feature back** — it stays in PathFinder, red. A retry
+  loop that only tests the return value for null leaves the user a trail of junk to
+  clean by hand, so `Delete()` any returned feature whose `.Status` is failed before
+  the next attempt.
 - **`[out]` parameters come back empty in late binding unless you mark them by-ref**
   with a `ParameterModifier`. `Face.GetRange` and `Occurrence.GetTransform` both
   return plausible all-zero values otherwise — an all-zero transform reads as "at the
@@ -74,11 +81,57 @@ results rather than exceptions:
   the sketch and the feature in the *other* environment — geometry the user then cannot
   delete. So never "try the other mode" as a fallback: read `ModelingMode` (sync=1,
   ordered=2) and call only that mode's family. If it refuses, say so and let the human
-  decide to switch the document.
-- **`.Type` on a Face/Edge is the TOPOLOGY kind, never the shape.** `Face.Type` is
+  decide to switch the document. A fallback that dirties the user's part is not a
+  fallback.
+- **Never set `ModelingMode` on the user's document — declare the environment instead.**
+  This is the strongest form of the rule above, and it earned its place twice on the same
+  project (2026-09-08). Every command should name the one environment its features belong
+  to and *refuse* in the other; switching mid-operation breaks two ways at once:
+  1. **Orphan sketches.** `ProfileSets` only ever makes an *ordered* sketch. Feed it to a
+     *synchronous* feature and the sketch is stranded under PathFinder's "Ordered" node with
+     no owner — the UI will not delete it, so the user cannot clean their own part. A single
+     multi-item run left a pile of them.
+  2. **Dead face proxies.** Changing the mode makes SE rebuild the body, so every
+     `Face`/`Edge` read *before* the switch is a stale proxy afterwards. A command that
+     collected the user's selection, switched to ordered, then painted/offset those faces
+     failed with a bare `E_FAIL` that pointed nowhere near the real cause.
+  The two exceptions: a document **your own code just created** (a throwaway probe part),
+  and a switch the user explicitly asked for in that click.
+- **Disable the command in the wrong environment, don't just fail in it.** The environment
+  check belongs in the UI, not only at the bottom of the call stack — a greyed-out button
+  teaches the constraint, an error dialog after the fact only reports it. In a ribbon add-in
+  this is `RibbonControl.Enabled` (see `references/addin-ribbon.md`); keep the click-time
+  check too, as the state can be one poll stale.
+- **A successful `Add` can hand back an object you never asked for.** Two mechanisms,
+  usually together. First, enums like `FeaturePropertyConstants` are one flat namespace
+  shared by dozens of properties, so a value that is legal *somewhere* is accepted
+  *anywhere* — pass it to the wrong property and SE substitutes something else instead
+  of erroring. Second, SE merges the user's **saved dialog defaults** into your object
+  unless you pass `IgnoreSavedDefaultValues = true`. So: **read the properties back and
+  assert the ones that matter**, and where the call produces geometry, **measure it**
+  (`Body.Faces[igQueryCylinder]` + `Face.GetRange`) instead of trusting
+  `Status == igFeatureOK`. A hole reported OK came out Ø6.0 counterdrilled where Ø5.0
+  tapped was asked for, and nothing in the API said so.
+- **`.Type` on a Face or Edge is the TOPOLOGY kind, never the shape.** `Face.Type` is
   always `igFace`, `Edge.Type` always `igEdge`. Plane-vs-cylinder and circle-vs-line
   live one level down, on `.Geometry.Type` — and that geometry object also carries the
-  exact `Radius`. Comparing `Face.Type` with `igPlane` matches nothing, forever.
+  exact `Radius`, which a bounding box cannot give you for a partial cylindrical face.
+  Comparing `Face.Type` with `igPlane` matches nothing, forever.
+- **More generally, an enum that INDEXES a collection is rarely the enum a property
+  RETURNS.** `Body.Faces[igQueryCylinder=10]` does select the cylindrical faces, but
+  `igQueryCylinder` will never appear as anyone's `.Type` — indexing uses
+  `FeatureTopologyQueryTypeConstants`, reading uses `GNTTypePropertyConstants`. Before
+  comparing any constant against a property, confirm in the dump that the property's
+  own type is that enum.
+- **Ask an object where it is; don't deduce it from how you built it.** A profile knows
+  its own plane (`Convert2DCoordinate` at `(0,0)`, `(1,0)`, `(0,1)` gives origin plus
+  two in-plane vectors, hence the normal), so sketch geometry can be placed from real 3D
+  part coordinates and a `NormalSide` guess can be checked rather than assumed. The same
+  move works elsewhere: a full circular edge's `GetRange` box is degenerate along the
+  circle's normal, which hands you the axis and centre in one read (take the exact radius
+  from `.Geometry`, not from the box). Most sign and axis bugs
+  in sketch-driven modeling come from reasoning about construction history instead of
+  querying the result.
 
 ## Where to look next
 
@@ -86,11 +139,11 @@ Read only the file you need; each is self-contained.
 
 | Task at hand | Read |
 |---|---|
-| Setting up discovery, dumping the typelib, building the SPY or the action recorder, early binding | `references/discovery.md` |
+| Setting up discovery, dumping the typelib, building the SPY or the action recorder, reading the install's data tables for a string argument, early binding | `references/discovery.md` |
 | A specific HRESULT, binder error, or "it succeeded but nothing happened" | `references/errors.md` |
-| A confirmed call signature, enum value, face color, face traversal, bbox, occurrence transform, in-place editing, surface collections | `references/api-signatures.md` |
-| Building geometry: sketch+extrude, cylinders, holes, threaded holes, sync vs ordered, placing a part in an assembly | `references/modeling-recipes.md` |
-| Putting a button inside SE: add-in registration, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder | `references/addin-ribbon.md` |
+| A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts | `references/api-signatures.md` |
+| Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered, placing a part in an assembly | `references/modeling-recipes.md` |
+| Putting a button inside SE: add-in registration, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, modeless dialogs, in-process hosting limits, picking a face or edge from the model | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |
 
 ## The discovery loop, in order
@@ -101,14 +154,25 @@ Read only the file you need; each is self-contained.
    are what predict marshaling errors, and a missing `[opt]` marker is what predicts
    `DISP_E_PARAMNOTOPTIONAL`. Grep the output; never load it wholesale into context.
 2. **Grep the dump before proposing any call.** The answer is usually already there.
-3. **Confirm the member exists on the LIVE object** before building on it. Reflecting
-   `Interop.SolidEdge` finds interop *types* that the running Model may not implement —
-   this has produced confidently wrong code more than once. Reflection gives you
-   signatures and enum values; the live IDispatch decides what is actually callable.
-4. **When the API is unclear, have the human do it by hand and watch.** Dump the
+3. **Read the install's DATA tables for any string argument.** The typelib gives the
+   *shape* of a call and never the magic strings an `[in] BSTR` accepts — hole
+   standards, thread descriptions, materials, fits. Those live in files under
+   `Preferences\` in the SE install, readable **without a license and without running
+   SE**, so they cost no human round-trip at all. Locate them via
+   `Application.GetGlobalParameter` rather than hardcoding. Reading the table also
+   reveals what SE *cannot* do: the legacy `HOLES.TXT` has no pitch column, so nothing
+   needing a pitch can be driven from it.
+4. **Confirm the member exists on the LIVE object** before building on it. Reflecting
+   `Interop.SolidEdge` finds interop *types* that the running Model may not implement,
+   and can disagree with the dump on **parameter direction** — it imports one
+   `SurfaceByBoundaries.Add` argument as `out` where the live dump says `[in,out]`,
+   which would drop your data on the way in. The interop package is older than the SE
+   build; where they differ, the dump wins. Reflection gives you signatures and enum
+   values; the live IDispatch decides what is actually callable.
+5. **When the API is unclear, have the human do it by hand and watch.** Dump the
    selected feature (SPY) or diff collection snapshots around the manual action
    (recorder). This reverse-engineers the exact call in one round instead of ten.
-5. **Watch for the void-returning trap in step 4.** Not every visible modeling action
+6. **Watch for the void-returning trap in step 5.** Not every visible modeling action
    creates a tree feature — some apply geometry with no record, so the recorder reports
    "nothing changed" on a real, successful action. The signature of one of these is an
    *existing* item migrating between collections rather than a new name appearing.
@@ -128,10 +192,9 @@ sends back a log. That round-trip is the scarce resource; spend it well.
 4. **Close the GUI before rebuilding** — a running WinExe locks the output exe.
 5. **Stamp the loaded build in the log — with the full PATH.** On startup, log
    `assembly.Location` plus `File.GetLastWriteTime(...)` for the add-in and core DLLs.
-   The file name alone is not enough: a stale build and a fresh one look identical
-   until you can see which folder it loaded from.
-   The first lines then prove which binary actually ran, which kills the "is this even
-   my new code?" ambiguity permanently. (For add-ins this matters doubly — see the
+   The file name alone is not enough: a stale build and a fresh one look identical until
+   you can see which folder it loaded from. The first lines then prove which binary
+   actually ran, which kills the "is this even my new code?" ambiguity permanently. (For add-ins this matters doubly — see the
    deploy-folder trap in `references/addin-ribbon.md`.)
 6. **Isolate risky operations from the working deliverable.** A feature that fails
    mid-op can poison the document proxy so that every *subsequent* call fails — an

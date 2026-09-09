@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -1289,10 +1289,16 @@ namespace AutoEDM.Electrode
             dynamic newDoc = null;
             try
             {
-                System.IO.File.Copy(sourcePath, newPath);
-                Log.Info($"Duplicar eletrodo: cópia do arquivo -> {System.IO.Path.GetFileName(newPath)}");
+                MakeElectrodeCopy(sourceDoc, sourcePath, newPath);
 
-                newDoc = app.Documents.Open(newPath);
+                newDoc = OpenCopyForEdit(app, newPath);
+                if (newDoc == null)
+                {
+                    result.Message = "Copiei a peça, mas o Solid Edge não abriu a cópia (veja o log). " +
+                                      "Arquivo: " + newPath + " — abra e ajuste o GAP manualmente.";
+                    Log.Warn("Duplicar eletrodo: " + result.Message);
+                    return result;
+                }
                 if (!AdjustGapOnDuplicate(newDoc, next))
                 {
                     result.Message = "Copiei a peça, mas não consegui ajustar o GAP nela (veja o log). " +
@@ -1628,12 +1634,133 @@ namespace AutoEDM.Electrode
             return true;
         }
 
+        /// <summary>
+        /// A CÓPIA DA PEÇA — e por que não é `File.Copy` (correção 2026-09-08, log `085342`).
+        ///
+        /// Um `File.Copy` produz um .par byte-a-byte idêntico, INCLUSIVE o ID interno de
+        /// documento do original — que está ABERTO, porque a montagem o carregou. Ao pedir
+        /// `Documents.Open` nesse arquivo, a SE vê um ID que já tem em memória e devolve NULO
+        /// (sem lançar). Daí o "Model.FaceOffsets — referência nula" em TODA tentativa, 246 ms
+        /// depois da cópia: rápido demais para a SE ter aberto peça alguma.
+        ///
+        /// `PartDocument.SaveCopyAs(caminho)` é o caminho nativo: a própria SE grava a cópia com
+        /// identidade NOVA e o documento de origem continua onde está — ao contrário de
+        /// `SaveAs`, que RENOMEARIA a peça dentro da montagem do usuário. O `File.Copy` fica de
+        /// reserva, para o caso de `SaveCopyAs` não existir nesta versão do SE.
+        /// </summary>
+        private static void MakeElectrodeCopy(dynamic sourceDoc, string sourcePath, string newPath)
+        {
+            try
+            {
+                sourceDoc.SaveCopyAs(newPath);
+                if (System.IO.File.Exists(newPath))
+                {
+                    Log.Info($"Duplicar eletrodo: cópia por SaveCopyAs -> {System.IO.Path.GetFileName(newPath)}");
+                    return;
+                }
+                Log.Warn("Duplicar eletrodo: SaveCopyAs não lançou, mas o arquivo não apareceu — caindo no File.Copy.");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Duplicar eletrodo: SaveCopyAs falhou (" + ex.GetBaseException().Message + ") — caindo no File.Copy.");
+            }
+
+            System.IO.File.Copy(sourcePath, newPath);
+            Log.Warn($"Duplicar eletrodo: cópia por File.Copy -> {System.IO.Path.GetFileName(newPath)} " +
+                     "(mesmo ID interno do original; se o Open devolver nulo, é por isso).");
+        }
+
+        /// <summary>
+        /// Abre a cópia para edição. NÃO é só `Documents.Open` (falha real de 2026-09-08, log
+        /// `085342`: "Model.FaceOffsets inacessível — não é possível fazer associação em tempo
+        /// de execução em uma referência NULA", 246 ms depois da cópia, em toda tentativa).
+        /// A mesma expressão `Models.Item(1).FaceOffsets` funcionava na peça de ORIGEM na linha
+        /// de cima — logo o problema não é a API, é o documento recém-aberto.
+        ///
+        /// Duas defesas, porque `Documents.Open` é declarado devolvendo `IDispatch` (pode vir
+        /// NULO) e porque a SE termina de montar o documento no ciclo de OCIOSO — chamada de
+        /// dentro de um comando do add-in, que segura a thread de UI, esse ciclo não acontece
+        /// sozinho e a árvore pode voltar vazia:
+        ///   1. `Application.DoIdle()` depois do Open, dando à SE a volta que falta;
+        ///   2. se ainda vier nulo, procurar o arquivo em `Application.Documents` — ele costuma
+        ///      estar aberto mesmo quando o retorno do Open veio vazio.
+        /// Loga o que abriu (tipo, ambiente, nº de corpos), senão a próxima falha volta a ser
+        /// um "referência nula" que não diz de quem.
+        /// </summary>
+        private static dynamic OpenCopyForEdit(dynamic app, string path)
+        {
+            dynamic doc = null;
+            try { doc = app.Documents.Open(path); }
+            catch (Exception ex) { Log.Warn("Duplicar eletrodo: Documents.Open falhou — " + ex.GetBaseException().Message); }
+
+            try { app.DoIdle(); } catch (Exception ex) { Log.Info("Duplicar eletrodo: DoIdle indisponível (" + ex.GetBaseException().Message + ")."); }
+
+            if (doc == null)
+            {
+                doc = FindOpenDocumentByPath(app, path);
+                Log.Warn(doc == null
+                    ? "Duplicar eletrodo: Documents.Open devolveu NULO e a cópia não apareceu em Application.Documents."
+                    : "Duplicar eletrodo: Documents.Open devolveu nulo, mas a cópia ESTAVA aberta — recuperada de Application.Documents.");
+            }
+
+            if (doc != null) Log.Info("Duplicar eletrodo: cópia aberta — " + DescribeDoc(doc));
+            return doc;
+        }
+
+        /// <summary>A cópia entre os documentos abertos, pelo caminho completo.</summary>
+        private static dynamic FindOpenDocumentByPath(dynamic app, string path)
+        {
+            try
+            {
+                dynamic docs = app.Documents;
+                int n = 0; try { n = (int)docs.Count; } catch { }
+                for (int i = 1; i <= n; i++)
+                {
+                    dynamic d; try { d = docs.Item(i); } catch { continue; }
+                    string full; try { full = (string)d.FullName; } catch { continue; }
+                    if (string.Equals(full, path, StringComparison.OrdinalIgnoreCase)) return d;
+                }
+            }
+            catch (Exception ex) { Log.Warn("Duplicar eletrodo: varrer Application.Documents falhou — " + ex.GetBaseException().Message); }
+            return null;
+        }
+
+        /// <summary>Retrato de um documento para o log — é o que distingue "não abriu" de
+        /// "abriu vazio" de "abriu no ambiente errado".</summary>
+        private static string DescribeDoc(dynamic doc)
+        {
+            string name = "?", type = "?", mode = "?", models = "?";
+            try { name = (string)doc.Name; } catch { }
+            try { type = ((int)doc.Type).ToString(); } catch { }
+            try { mode = AutoEDM.Com.ModelingEnvironment.Name(AutoEDM.Com.ModelingEnvironment.Read(doc)); } catch { }
+            try { models = ((int)doc.Models.Count).ToString(); } catch (Exception ex) { models = "ilegível (" + ex.GetBaseException().Message + ")"; }
+            return $"'{name}' Type={type} (1=peça), modelagem {mode}, Models.Count={models}";
+        }
+
         private static dynamic FindGapOffsetFeature(dynamic partDoc, out string foundBy)
         {
             foundBy = null;
+
+            // PASSO A PASSO de propósito: `partDoc.Models.Item(1).FaceOffsets` numa linha só
+            // devolve sempre o mesmo "referência nula" do binder, sem dizer QUAL elo é nulo
+            // (foi o que custou a rodada de 2026-09-08). Cada elo agora se identifica.
+            dynamic models;
+            try { models = partDoc.Models; }
+            catch (Exception ex) { Log.Warn("Duplicar eletrodo: doc.Models inacessível — " + ex.GetBaseException().Message); return null; }
+            if (models == null) { Log.Warn("Duplicar eletrodo: doc.Models veio NULO (documento não terminou de abrir?)."); return null; }
+
+            int bodies = -1; try { bodies = (int)models.Count; } catch { }
+            if (bodies == 0) { Log.Warn("Duplicar eletrodo: a cópia abriu SEM sólido (Models.Count=0) — nada a ajustar."); return null; }
+
+            dynamic model;
+            try { model = models.Item(1); }
+            catch (Exception ex) { Log.Warn($"Duplicar eletrodo: Models.Item(1) falhou (Count={bodies}) — " + ex.GetBaseException().Message); return null; }
+            if (model == null) { Log.Warn($"Duplicar eletrodo: Models.Item(1) veio NULO (Count={bodies})."); return null; }
+
             dynamic faceOffsets;
-            try { faceOffsets = partDoc.Models.Item(1).FaceOffsets; }
+            try { faceOffsets = model.FaceOffsets; }
             catch (Exception ex) { Log.Warn("Duplicar eletrodo: Model.FaceOffsets inacessível — " + ex.GetBaseException().Message); return null; }
+            if (faceOffsets == null) { Log.Warn("Duplicar eletrodo: Model.FaceOffsets veio NULO."); return null; }
 
             int n = 0; try { n = (int)faceOffsets.Count; } catch { }
             dynamic firstItem = null;

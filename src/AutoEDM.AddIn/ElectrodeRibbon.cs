@@ -40,10 +40,16 @@ namespace AutoEDM.AddIn
         public ElectrodeRibbon() : base()
         {
             LoadXml(System.Reflection.Assembly.GetExecutingAssembly(), "AutoEDM.AddIn.Ribbon.xml");
+            StartStateWatch();
         }
 
         public override void OnControlClick(RibbonControl control)
         {
+            // Rede de segurança: o relógio de estado (StartStateWatch) já deixa o botão
+            // cinza no ambiente errado, mas se a SE clicar assim mesmo (estado velho, ribbon
+            // ainda não repintada), o comando explica em vez de estragar a peça.
+            if (!AllowedHere(control.CommandId, explain: true)) return;
+
             switch (control.CommandId)
             {
                 case CmdCriarEletrodos: CriarEletrodos(); break;
@@ -68,7 +74,7 @@ namespace AutoEDM.AddIn
         /// <summary>Analisa (NÃO-destrutivo) e propõe os eletrodos por nível de Z.</summary>
         private void AnalisarZ()
         {
-            Run("ANALISAR ELETRODOS (Z)", DocKind.Assembly, (connector, doc, p) =>
+            Run(CmdAnalisarZ, (connector, doc, p) =>
             {
                 Selection.ZAnalysisResult res = NewBuilder(connector).AnalyzeElectrodesByZ(doc, p);
                 MessageBox.Show(
@@ -82,7 +88,7 @@ namespace AutoEDM.AddIn
         /// base (bloco/holder) é gerada depois, pela "Criar Base", sobre a geometria real.</summary>
         private void CriarEletrodos()
         {
-            Run("CRIAR ELETRODOS", DocKind.Assembly, (connector, doc, p) =>
+            Run(CmdCriarEletrodos, (connector, doc, p) =>
             {
                 var builder = NewBuilder(connector);
 
@@ -130,7 +136,7 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void CriarEletrodoManual()
         {
-            Run("CRIAR ELETRODO (MANUAL, da seleção)", DocKind.Assembly, (connector, doc, p) =>
+            Run(CmdCriarEletrodoManual, (connector, doc, p) =>
             {
                 ManualElectrodeResult res = NewBuilder(connector).CreateElectrodeFromSelection(doc, p);
                 MessageBox.Show(res.Message, "AutoEDM — Criar eletrodo (manual)", MessageBoxButtons.OK,
@@ -148,7 +154,7 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void AbrirCoordenadas()
         {
-            Run("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, (connector, doc, p) =>
+            Run(CmdCoordenadas, (connector, doc, p) =>
             {
                 var items = NewBuilder(connector).ListSelectedElectrodes(doc);
                 if (items.Count == 0)
@@ -169,7 +175,7 @@ namespace AutoEDM.AddIn
         /// <summary>Folha de dados (spec-sheet) por eletrodo (.txt + .csv). Somente leitura.</summary>
         private void GerarSpecSheet()
         {
-            Run("FICHA DE ELETRODOS (spec-sheet)", DocKind.Assembly, (connector, doc, p) =>
+            Run(CmdSpecSheet, (connector, doc, p) =>
             {
                 ElectrodeBuildPlan plan = NewBuilder(connector).PlanFromAssemblyDocument(doc, p);
                 Log.Info(ElectrodeSpecSheet.ToText(plan, p));
@@ -189,7 +195,7 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void CriarBase()
         {
-            Run("CRIAR BASE", DocKind.Part, (connector, doc, p) =>
+            Run(CmdCriarBase, (connector, doc, p) =>
             {
                 // O Core loga cada passo + o probe.
                 var builder = new SurfaceBlockBuilder();
@@ -211,7 +217,7 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void UnirSuperficies()
         {
-            Run("UNIR SUPERFÍCIES", DocKind.Part, (connector, doc, p) =>
+            Run(CmdUnirSuperficies, (connector, doc, p) =>
             {
                 var builder = new SurfaceBlockBuilder();
                 BlockOverSurfacesResult res = builder.UniteSurfacesToBlock(doc, new BlockOverSurfacesOptions());
@@ -239,7 +245,7 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void AplicarGap()
         {
-            Run("APLICAR GAP", DocKind.Part, (connector, doc, p) =>
+            Run(CmdAplicarGap, (connector, doc, p) =>
             {
                 double? preselect = RaVariableStore.TryRead(doc, out double ra) ? (double?)ra : null;
                 var choices = RaGapPresets.All(p.Material, Config.BuildColorMap(), Config.BuildOffsetPolicy());
@@ -276,7 +282,7 @@ namespace AutoEDM.AddIn
         /// </summary>
         private void DuplicarEletrodo()
         {
-            Run("DUPLICAR ELETRODO", DocKind.Assembly, (connector, doc, p) =>
+            Run(CmdDuplicarEletrodo, (connector, doc, p) =>
             {
                 DuplicateElectrodeResult res = NewBuilder(connector).DuplicateElectrodeToNextGap(doc, p);
                 MessageBox.Show(res.Message, "AutoEDM — Duplicar eletrodo", MessageBoxButtons.OK,
@@ -454,7 +460,9 @@ namespace AutoEDM.AddIn
 
         private void AlojamentoORing()
         {
-            if (!TryDoc(DocKind.Part, out dynamic app, out dynamic doc)) return;
+            if (!AllowedHere(CmdAlojamentoORing, explain: true)) return;
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
             try
             {
                 if (_oringForm != null && !_oringForm.IsDisposed)
@@ -476,27 +484,187 @@ namespace AutoEDM.AddIn
         // -------------------------------------------------------------- infra
 
         /// <summary>Tipo de documento exigido por um comando (= SolidEdgeFramework.DocumentTypeConstants).</summary>
-        private enum DocKind { Assembly = 3, Part = 1 } // igAssemblyDocument / igPartDocument
+        private enum DocKind { Any = 0, Part = 1, Assembly = 3 } // igPartDocument / igAssemblyDocument
+
+        /// <summary>O que um comando exige do documento ativo para PODER rodar.</summary>
+        private sealed class CommandSpec
+        {
+            public readonly string Title;
+            public readonly DocKind Kind;
+            public readonly ModelingEnv Env;
+            public CommandSpec(string title, DocKind kind, ModelingEnv env) { Title = title; Kind = kind; Env = env; }
+        }
 
         /// <summary>
-        /// Boilerplate comum aos comandos que exigem MONTAGEM ou PEÇA ativa: valida o
-        /// tipo de documento, conecta, loga início/fim e envolve qualquer exceção em
-        /// <see cref="Fail"/> — nenhuma exceção sobe direto pro Solid Edge por esquecimento
-        /// de try/catch (achado A1 da revisão do add-in). Os 3 comandos de
-        /// diagnóstico/gravador (IniciarLeitura/GravarLeitura/InspecionarSelecao) aceitam
-        /// QUALQUER tipo de documento e têm fluxo próprio (ConfirmDocParaGravacao) — ficam
-        /// fora deste wrapper de propósito.
+        /// PRÉ-REQUISITO DE CADA BOTÃO, num lugar só (Carlos, 2026-09-08). Antes cada comando
+        /// declarava apenas o TIPO de documento, e o ambiente de modelagem era resolvido lá
+        /// dentro — às vezes TROCANDO o modo da peça pelas costas do usuário. Daí saíram os
+        /// dois problemas relatados:
+        ///
+        /// • esboços presos entre síncrono e ordenado, impossíveis de apagar: o alojamento de
+        ///   O'ring criava esboço ORDENADO (<c>ProfileSets</c> só faz desse tipo) e o consumia
+        ///   com um recurso SÍNCRONO — o esboço fica órfão no nó "Ordenado" do PathFinder e a
+        ///   interface do SE se recusa a removê-lo;
+        /// • "Aplicar GAP" errando quando a peça estava em síncrono: ele coletava as faces
+        ///   selecionadas, TROCAVA o documento para ordenado e só então pintava/offsetava — a
+        ///   troca reconstrói o corpo, e as faces lidas antes dela viram proxies mortos.
+        ///
+        /// A regra passa a ser uma só, para todo botão: <b>o comando declara o ambiente que
+        /// exige; o AutoEDM nunca troca o ambiente da peça.</b> No ambiente errado o botão fica
+        /// CINZA (<see cref="RefreshControlStates"/>) e, se ainda assim for clicado, explica ao
+        /// usuário como trocar no SE.
         /// </summary>
-        private void Run(string title, DocKind kind, Action<SolidEdgeConnector, dynamic, ElectrodeParams> body)
+        private static readonly System.Collections.Generic.Dictionary<int, CommandSpec> Specs =
+            new System.Collections.Generic.Dictionary<int, CommandSpec>
+            {
+                // --- montagem: nada aqui depende do ambiente de modelagem de peça ---
+                { CmdAnalisarZ,           new CommandSpec("ANALISAR ELETRODOS (Z)",               DocKind.Assembly, ModelingEnv.Any) },
+                { CmdCriarEletrodos,      new CommandSpec("CRIAR ELETRODOS",                      DocKind.Assembly, ModelingEnv.Any) },
+                { CmdCriarEletrodoManual, new CommandSpec("CRIAR ELETRODO (MANUAL, da seleção)",  DocKind.Assembly, ModelingEnv.Any) },
+                { CmdDuplicarEletrodo,    new CommandSpec("DUPLICAR ELETRODO",                    DocKind.Assembly, ModelingEnv.Any) },
+                { CmdCoordenadas,         new CommandSpec("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
+                { CmdSpecSheet,           new CommandSpec("FICHA DE ELETRODOS (spec-sheet)",      DocKind.Assembly, ModelingEnv.Any) },
+
+                // --- peça: cada botão tem UM ambiente, o do recurso que ele cria ---
+                // Bloco + faixa + furos: extrusão e furação da família síncrona (BlankModeler),
+                // validadas em campo com a peça em síncrono (ModelingMode=1 nos logs 55/58).
+                { CmdCriarBase,           new CommandSpec("CRIAR BASE",           DocKind.Part, ModelingEnv.Synchronous) },
+                // "Limite", Costurar, Anexar e a booleana de união são SÍNCRONAS — em ordenado
+                // o botão criava só uma feature de costura e não unia (relato de 2026-07-20).
+                { CmdUnirSuperficies,     new CommandSpec("UNIR SUPERFÍCIES",     DocKind.Part, ModelingEnv.Synchronous) },
+                // Model.FaceOffsets (o GAP que fica editável na árvore) só existe em ORDENADO.
+                { CmdAplicarGap,          new CommandSpec("APLICAR GAP",          DocKind.Part, ModelingEnv.Ordered) },
+                // Esboço + corte revolvido: em ORDENADO o esboço é filho legítimo do recurso e
+                // some junto quando o usuário apaga o canal. Em síncrono viraria órfão.
+                { CmdAlojamentoORing,     new CommandSpec("ALOJAMENTO DE O'RING", DocKind.Part, ModelingEnv.Ordered) },
+
+                // --- diagnóstico: só leem, ou criam documento próprio — servem em qualquer ambiente ---
+                { CmdInspecionar,         new CommandSpec("INSPECIONAR SELEÇÃO",   DocKind.Any, ModelingEnv.Any) },
+                { CmdIniciarLeitura,      new CommandSpec("INICIAR LEITURA",       DocKind.Any, ModelingEnv.Any) },
+                { CmdGravarLeitura,       new CommandSpec("GRAVAR LOG DA LEITURA", DocKind.Any, ModelingEnv.Any) },
+                { CmdDiagRosca,           new CommandSpec("SONDA DE ROSCA M6",     DocKind.Any, ModelingEnv.Any) },
+            };
+
+        /// <summary>
+        /// O documento ativo atende ao pré-requisito deste comando? Com
+        /// <paramref name="explain"/>, também diz ao usuário o que falta — o clique explica, o
+        /// relógio de estado não (senão abriria caixas de diálogo sozinho).
+        /// </summary>
+        private static bool AllowedHere(int commandId, bool explain)
         {
-            if (!TryDoc(kind, out dynamic app, out dynamic doc)) return;
+            CommandSpec spec;
+            if (!Specs.TryGetValue(commandId, out spec)) return true; // comando sem pré-requisito declarado
+
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null)
+            {
+                if (explain) MessageBox.Show("Add-in não inicializado.", "AutoEDM");
+                return false;
+            }
+
+            dynamic doc = null;
+            try { doc = app.ActiveDocument; } catch { }
+            if (doc == null)
+            {
+                if (explain) MessageBox.Show("Nenhum documento ativo.", "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            if (spec.Kind != DocKind.Any)
+            {
+                int type = -1; try { type = (int)doc.Type; } catch { }
+                if (type != (int)spec.Kind)
+                {
+                    if (explain)
+                        MessageBox.Show(spec.Kind == DocKind.Assembly
+                            ? "Abra uma MONTAGEM (.asm) ativa (a cavidade no zero-máquina) para usar esta ferramenta."
+                            : "Abra uma PEÇA (.par) ativa, com as faces de queima já copiadas nela, para usar esta ferramenta.",
+                            "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return false;
+                }
+            }
+
+            ModelingEnv actual = ModelingEnvironment.Read(doc);
+            if (!ModelingEnvironment.Matches(spec.Env, actual))
+            {
+                if (explain)
+                    MessageBox.Show(ModelingEnvironment.WrongEnvironmentMessage(spec.Title, spec.Env, actual),
+                        "AutoEDM — ambiente de modelagem", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            return true;
+        }
+
+        // --------------------------------------------- botão cinza quando o ambiente é o errado
+
+        /// <summary>
+        /// O Solid Edge pergunta o estado de cada comando do add-in enquanto a faixa está
+        /// visível (<c>ISEAddInEventsEx.OnCommandUpdateUI</c>) e o framework responde com o que
+        /// estiver em <c>RibbonControl.Enabled</c> naquele instante — é uma propriedade comum
+        /// (auto-property), sem callback para interceptar. Então quem mantém esse valor fresco
+        /// é este relógio: a cada tique ele relê documento + ambiente e liga/desliga cada botão.
+        ///
+        /// Roda na thread STA da própria SE (o add-in é in-process), então ler COM daqui é
+        /// seguro e não passa por marshaling. Tudo é best-effort: um tique que falhe não pode
+        /// derrubar a ribbon e, no pior caso, o botão continua clicável — por isso o clique
+        /// ainda passa por <see cref="AllowedHere"/>.
+        /// </summary>
+        private Timer _stateTimer;
+        private bool _refreshing;
+
+        private void StartStateWatch()
+        {
             try
             {
-                Log.Info($"===== {title} (add-in) =====");
-                body(SolidEdgeConnector.Attach(app), doc, LoadParams());
-                Log.Info($"===== FIM ({title}) =====");
+                _stateTimer = new Timer { Interval = 750 };
+                _stateTimer.Tick += (s, e) => RefreshControlStates();
+                _stateTimer.Start();
             }
-            catch (Exception ex) { Fail(title.ToLowerInvariant(), ex); }
+            catch (Exception ex) { Log.Warn("Estado dos botões: relógio não iniciou — " + ex.GetBaseException().Message); }
+        }
+
+        private void RefreshControlStates()
+        {
+            if (_refreshing) return;                 // um tique lento não pode empilhar o próximo
+            _refreshing = true;
+            try
+            {
+                foreach (RibbonControl c in Controls)
+                {
+                    bool allowed = AllowedHere(c.CommandId, explain: false);
+                    if (c.Enabled != allowed) c.Enabled = allowed;
+                }
+            }
+            catch { /* estado do botão é conforto, nunca motivo de erro dentro da SE */ }
+            finally { _refreshing = false; }
+        }
+
+        /// <summary>
+        /// Boilerplate comum aos comandos: confere o pré-requisito declarado em
+        /// <see cref="Specs"/> (tipo de documento + ambiente de modelagem), conecta, loga
+        /// início/fim e envolve qualquer exceção em <see cref="Fail"/> — nenhuma exceção sobe
+        /// direto pro Solid Edge por esquecimento de try/catch (achado A1 da revisão do
+        /// add-in). Os 3 comandos de diagnóstico/gravador
+        /// (IniciarLeitura/GravarLeitura/InspecionarSelecao) têm fluxo próprio
+        /// (ConfirmDocParaGravacao) — ficam fora deste wrapper de propósito.
+        /// </summary>
+        private void Run(int commandId, Action<SolidEdgeConnector, dynamic, ElectrodeParams> body)
+        {
+            CommandSpec spec = Specs[commandId];
+            if (!AllowedHere(commandId, explain: true)) return;
+
+            dynamic app = ElectrodeAddIn.Current?.App;
+            dynamic doc = null;
+            try { doc = app?.ActiveDocument; } catch { }
+            if (app == null || doc == null) { MessageBox.Show("Nenhum documento ativo.", "AutoEDM"); return; }
+
+            try
+            {
+                Log.Info($"===== {spec.Title} (add-in) — modelagem {ModelingEnvironment.Name(ModelingEnvironment.Read(doc))} =====");
+                body(SolidEdgeConnector.Attach(app), doc, LoadParams());
+                Log.Info($"===== FIM ({spec.Title}) =====");
+            }
+            catch (Exception ex) { Fail(spec.Title.ToLowerInvariant(), ex); }
         }
 
         /// <summary>
@@ -515,23 +683,6 @@ namespace AutoEDM.AddIn
         /// sempre a paleta de fábrica mesmo com um config.json customizado.</summary>
         private static ElectrodeBuilder NewBuilder(SolidEdgeConnector connector) =>
             new ElectrodeBuilder(connector, offsetPolicy: Config.BuildOffsetPolicy(), raColorMap: Config.BuildColorMap());
-
-        private static bool TryDoc(DocKind kind, out dynamic app, out dynamic doc)
-        {
-            app = ElectrodeAddIn.Current?.App;
-            doc = null;
-            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return false; }
-            doc = app.ActiveDocument;
-            if (doc == null || (int)doc.Type != (int)kind)
-            {
-                MessageBox.Show(kind == DocKind.Assembly
-                    ? "Abra uma MONTAGEM (.asm) ativa (a cavidade no zero-máquina) para usar esta ferramenta."
-                    : "Abra uma PEÇA (.par) ativa, com as faces de queima já copiadas nela, para usar esta ferramenta.",
-                    "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
-            }
-            return true;
-        }
 
         /// <summary>
         /// Avisa (não bloqueia) quando o documento ativo NÃO é uma PEÇA — o Gravador quase

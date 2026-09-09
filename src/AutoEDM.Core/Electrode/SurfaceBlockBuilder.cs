@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -645,7 +645,7 @@ namespace AutoEDM.Electrode
 
             // Costurar/anexar/booleana são operações SÍNCRONAS (e o patch de "Limite" também) —
             // força o modo ANTES de mexer em geometria, não só na hora de unir.
-            ForceSynchronous(partDoc);
+            AssertSynchronous(partDoc);
 
             OpenEdgeScan scan = CollectOpenEdges(surf);
             bool readyToUnite = DiagnoseOpenEdges(scan, blockBottomZmm, result, "diagnóstico");
@@ -756,12 +756,19 @@ namespace AutoEDM.Electrode
                 return result;
             }
 
-            // FaceOffsets só existe em modelagem ORDENADA (síncrono não permite reeditar o GAP depois).
-            int mode = 1; try { mode = (int)partDoc.ModelingMode; } catch { }
-            if (mode != 2)
+            // FaceOffsets só existe em modelagem ORDENADA (síncrono não permite reeditar o GAP
+            // depois). ATÉ 2026-09-08 este trecho TROCAVA o documento para ordenado sozinho — e
+            // era esse o bug do "Aplicar GAP no síncrono dá erro": as `burnFaces` acima já foram
+            // lidas, e trocar o modo faz a SE reconstruir o corpo; da troca em diante toda
+            // Face/Edge coletada antes é um proxy morto, e pintar/offsetar erra sem explicar.
+            // Agora o comando EXIGE ordenado (o botão fica cinza no ambiente errado, ver
+            // ElectrodeRibbon.Specs) e nunca troca nada.
+            if (!ModelingEnvironment.Require(partDoc, ModelingEnv.Ordered, "Aplicar GAP"))
             {
-                try { partDoc.ModelingMode = 2; result.SwitchedToOrdered = true; Log.Info("Aplicar GAP: alternado para ORDENADO (FaceOffsets não existe em síncrono)."); }
-                catch (Exception e) { Log.Warn("Aplicar GAP: alternar p/ Ordenado falhou — " + e.GetBaseException().Message); return result; }
+                result.Warnings.Add("Troque a peça para modelagem ORDENADA no Solid Edge e clique de novo — " +
+                                    "o GAP (Model.FaceOffsets) não existe em síncrono, e o AutoEDM não troca o " +
+                                    "ambiente sozinho (a troca invalida as faces já selecionadas).");
+                return result;
             }
 
             FaceColorPainter.Paint(partDoc, burnFaces, choice.Color, choice.Ra);
@@ -828,7 +835,7 @@ namespace AutoEDM.Electrode
         private static bool TryUniteToBlock(dynamic partDoc, dynamic blockModel, dynamic tool,
             dynamic surf, List<object> patches)
         {
-            ForceSynchronous(partDoc);
+            AssertSynchronous(partDoc);
 
             object model = (object)blockModel;
 
@@ -860,18 +867,17 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
-        /// Garante modelagem SÍNCRONA antes de qualquer operação de superfície (Costurar,
-        /// "Limite", Anexar, booleana) — o documento pode chegar em Ordenado de um run anterior
-        /// que trocou de modo para o GAP. NUNCA lança (segue mesmo assim e o log mostra).
+        /// CONFERE que a peça está em modelagem SÍNCRONA antes de qualquer operação de
+        /// superfície ("Limite", Costurar, Anexar, booleana) — nenhuma delas funciona em
+        /// Ordenado. Até 2026-09-08 este método TROCAVA o modo (`ModelingMode = 1`); não troca
+        /// mais. Trocar de ambiente no meio do caminho é o que deixava esboço órfão entre os
+        /// dois ambientes e proxy de face morto — ver <see cref="ModelingEnvironment"/>. Quem
+        /// impede o uso no ambiente errado é o botão (ElectrodeRibbon.Specs); aqui fica só o
+        /// aviso no log, para quem chamar o núcleo por fora da ribbon.
         /// </summary>
-        private static void ForceSynchronous(dynamic partDoc)
+        private static void AssertSynchronous(dynamic partDoc)
         {
-            try
-            {
-                int m = (int)partDoc.ModelingMode;
-                if (m != 1) { partDoc.ModelingMode = 1; Log.Info("Unir: alternado de volta pra SÍNCRONO (Limite/Costurar/Anexar/Booleana não funcionam em Ordenado)."); }
-            }
-            catch (Exception e) { Log.Warn("Unir: checar/alternar p/ Síncrono falhou (seguindo mesmo assim) — " + e.GetBaseException().Message); }
+            ModelingEnvironment.Require(partDoc, ModelingEnv.Synchronous, "Unir superfícies");
         }
 
         /// <summary>
@@ -1788,20 +1794,20 @@ namespace AutoEDM.Electrode
         // ================================================================ ordenado
 
         /// <summary>
-        /// Troca a peça para modelagem ORDENADA (item 7) — deixa a feature de união editável
-        /// na árvore para o operador ajustar o offset/gap. Só no build FINAL (OK). Nunca aborta.
+        /// AVISA que o próximo passo (o GAP) pede modelagem ORDENADA — NÃO troca mais o modo
+        /// (2026-09-08). Trocava até então, para deixar a feature de união editável na árvore;
+        /// só que a troca automática, somada à que o "Aplicar GAP" fazia por conta própria,
+        /// jogava a peça de um ambiente para o outro no meio do fluxo. É essa vaivém que
+        /// deixava esboços presos entre síncrono e ordenado. Quem troca de ambiente é o
+        /// usuário, quando quiser — ver <see cref="ModelingEnvironment"/>. Nunca aborta.
         /// </summary>
         public void FinalizeToOrdered(dynamic partDoc, BlockOverSurfacesResult result, BlockOverSurfacesOptions opt)
         {
             if (opt == null || !opt.SwitchToOrdered) return;
             if (result != null && !(result.SurfacesUnited || result.SurfacesOffset)) return; // nada de superfície criado
-            try
-            {
-                partDoc.ModelingMode = 2; // igOrdered
-                if (result != null) result.SwitchedToOrdered = true;
-                Log.Info("Modelagem alternada para ORDENADO (feature de união editável para ajuste de offset/gap).");
-            }
-            catch (Exception ex) { Log.Warn("Alternar para ordenado falhou (modelo preservado): " + ex.GetBaseException().Message); }
+            Log.Info("Superfície unida em SÍNCRONO. Para o GAP (Model.FaceOffsets, editável na árvore) " +
+                     "troque a peça para ORDENADO no Solid Edge e use \"Aplicar GAP\" — o AutoEDM não troca " +
+                     "o ambiente sozinho.");
         }
 
         // ================================================================ infra

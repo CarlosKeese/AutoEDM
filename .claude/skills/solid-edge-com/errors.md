@@ -36,3 +36,32 @@ can silently break a step that already worked (fixation holes). Put risky/unprov
 behind a **separate command** (its own ribbon button) that runs only that op, so the proven flow
 (block + band + holes) never shares a document mutation with the experiment. Iterate the hard part
 in isolation.
+
+## `Documents.Open` returns NULL after a `File.Copy` of an already-open document
+
+**Symptom.** Copy a `.par` with `File.Copy`, `Documents.Open` it, and the next member access
+dies with the RuntimeBinder's *"cannot perform runtime binding on a null reference"* — a null
+receiver, not a COM error. The same expression works on the original document one line earlier,
+so the API is not the problem. The tell is **timing**: the failure lands ~250 ms after the copy,
+far too fast for SE to have opened a part at all.
+
+**Cause.** A byte copy carries the original's **internal document ID**. If the original is open
+(e.g. loaded as a component of the active assembly), SE sees an ID it already holds and hands
+back **null without throwing**.
+
+**Fix.** Let SE write the copy: `PartDocument.SaveCopyAs(path)` gives the new file its own
+identity. Do **not** use `SaveAs` — that renames the document *inside the user's assembly*.
+`SaveCopyAs` leaves the source exactly where it is.
+
+**Two defenses worth keeping anyway**, since `Documents.Open` is declared returning `IDispatch`
+and may legitimately return null:
+
+- Call `Application.DoIdle()` after opening. SE finishes assembling a document on its idle
+  cycle; called from inside an add-in command, which holds the UI thread, that cycle never comes
+  and the tree can read back empty.
+- If the return is null, scan `Application.Documents` for the path — the document is often open
+  even when the call returned nothing.
+
+**And never chain the probe.** `doc.Models.Item(1).FaceOffsets` on one line always reports the
+same "null reference" no matter which link is null. Split it, and name the link in the log —
+that single change is the difference between one test round and three.

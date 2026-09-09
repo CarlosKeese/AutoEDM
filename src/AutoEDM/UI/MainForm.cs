@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Linq;
 using System.Threading;
@@ -382,8 +382,9 @@ namespace AutoEDM.UI
                 Log.Info("Criar Base (peça ativa, opções default; 1ª vez também loga o PROBE das APIs de superfície)...");
                 var res = new SurfaceBlockBuilder().Build(doc, new BlockOverSurfacesOptions());
                 Log.Info($"Concluído: bloco={res.BlockCreated}, faixa={res.BandCreated}, " +
-                         $"ordenado={res.SwitchedToOrdered}, fixação={res.FixationApplied}, " +
-                         $"features criadas={res.CreatedFeatures.Count}. Revise no SE.");
+                         $"fixação={res.FixationApplied}, features criadas={res.CreatedFeatures.Count}. " +
+                         "Revise no SE. (O AutoEDM não troca mais o ambiente de modelagem — " +
+                         "para o GAP, troque a peça para ORDENADO você mesmo.)");
             });
 
         /// <summary>

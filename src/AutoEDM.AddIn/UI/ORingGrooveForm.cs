@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using AutoEDM.Com;
 using AutoEDM.Diagnostics;
 using AutoEDM.Sealing;
 
@@ -823,6 +824,21 @@ namespace AutoEDM.AddIn.UI
         {
             var ready = _plans.Where(pl => pl.Ready).ToList();
             if (ready.Count == 0) return;
+
+            // AMBIENTE, conferido AQUI e não só no botão da ribbon: esta janela é MODELESS e
+            // fica aberta enquanto o usuário mexe no Solid Edge — nada impede que ele troque a
+            // peça para síncrono entre abrir a janela e clicar em Criar. Em síncrono o esboço
+            // do canal (ProfileSets é sempre ORDENADO) ficaria órfão no nó "Ordenado" do
+            // PathFinder, sem dono e sem como apagar pela interface.
+            ModelingEnv env = ModelingEnvironment.Read(Doc());
+            if (env != ModelingEnv.Ordered)
+            {
+                MessageBox.Show(
+                    ModelingEnvironment.WrongEnvironmentMessage("Alojamento de O'ring", ModelingEnv.Ordered, env),
+                    "AutoEDM — ambiente de modelagem", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Log.Warn($"Alojamento de O'ring: criação recusada — peça em modelagem {ModelingEnvironment.Name(env)}.");
+                return;
+            }
 
             // O Carlos pediu AVISAR em vez de recusar: mostra o que está fora e deixa decidir.
             var offSpec = ready.Where(pl => !pl.Spec.IsWithinStandard).ToList();

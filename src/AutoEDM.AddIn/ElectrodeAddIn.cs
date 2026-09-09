@@ -36,7 +36,7 @@ namespace AutoEDM.AddIn
             SolidEdgeFramework.AddIn AddInInstance)
         {
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 11; // incrementar ao mudar a ribbon (v11 = + Alojamento de O’ring no grupo Peça)
+            AddInEx.GuiVersion = 12; // incrementar ao mudar a ribbon (v12 = supertips com o ambiente de modelagem exigido)
 
             Current = this;
             App = application;

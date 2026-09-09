@@ -74,6 +74,53 @@ So always `ProfileSet.Delete()` right after building the feature — the synchro
 survives, and no orphan sketch remains. (Cleaner still: make the sketch synchronously via
 `Sketches`; reserve ordered sketches for downstream ops like offset/chamfer/round.)
 
+**Who owns the sketch decides whether you delete it** (2026-09-08, from a part the user
+could not clean up):
+
+- **Ordered feature, ordered sketch** — the sketch is the feature's own child. *Leave it.*
+  Deleting it kills the feature you just built, and the user deleting the feature takes the
+  sketch with it. This is the clean case: put sketch-driven cut/revolve features in an
+  **ordered** document and there is nothing to clean up.
+- **Synchronous feature, ordered sketch** — nobody owns it. You *must* delete it, and it is
+  exactly the case where `Delete()` can refuse.
+- **Prefer the first.** Rather than building a cleanup mechanism for the second, require the
+  ordered environment for the command (and grey the button out elsewhere).
+
+**`ProfileSet.Delete()` can no-op without throwing — verify by count.** A locked sketch does
+not raise; the call returns and the sketch is still there. A bare `try { ps.Delete(); } catch {}`
+therefore reports success on precisely the failure you care about, and a *silent* catch reports
+nothing at all — the first sign is the user's dirty part, with no line in the log. Read
+`doc.ProfileSets.Count` before and after and log loudly when it did not drop.
+
+**Cleaning up after an ordered feature: hide the `Profile`, not the `ProfileSet`.** A sketch
+consumed by an ordered feature stays in the tree — correctly, it belongs to the feature — but on
+screen it is a knot of black curves sitting on the geometry, and **`ProfileSet` has no `Visible`
+property at all** (checked in the typelib dump, SE 223), so the user cannot switch it off from
+the UI either. What does have `Visible` is the **`Profile`** inside it, and that is what draws.
+So after the feature succeeds: set `profile.Visible = false` first — it is the only step that
+fixes what the user actually sees — and only then try `ProfileSet.Delete()`.
+
+**`SetAxisOfRevolution` leaves a `RefAxis` behind, and it draws too.** It is a document object in
+its own right, not just the construction line in your sketch, and it carries its own `Visible`.
+Hiding the profile alone still leaves that stroke on screen. Hide both.
+
+**Verify a cleanup deletion two ways, not one.** After deleting a sketch a feature consumed,
+check (a) that the collection actually shrank — `Delete()` on a consumed ordered sketch tends to
+refuse *without throwing* — and (b) that the **feature is still there**, by body face count.
+Without (b), a delete that took the feature with it would be logged as `CREATED ✓` over a part
+with no groove in it.
+
+**A `ProfileSet` takes exactly ONE `Profile` — the second `Profiles.Add` returns `E_FAIL`.**
+Confirmed on a real part (2026-09-08) by breaking it: a routine that probed three base planes
+was "optimised" to reuse a single probe set, one profile per plane. Plane 1 read fine, planes 2
+and 3 threw `E_FAIL`, no plane matched, and the feature silently stopped being created — the
+only symptom was two warning lines and zero geometry. The plural collection name promises
+nothing; it holds one.
+
+So **probe sketches are sketches, and you cannot pool them**. Counting them still matters — one
+throwaway `ProfileSet` per base plane, times every item in a batch, is a lot of sketches — but
+the answer is to **delete each one right after it answers, and verify**, not to share a set.
+
 **Fixation holes (validated recipe).** Mark centers with **`Profile.Holes2d.Add(x,y)`** —
 NOT `Circles2d` (a plain circle makes the hole feature create **zero holes, with no error**).
 Then `HoleData = PartDocument.HoleDataCollection.Add(HoleType, DiameterMeters, …)` with

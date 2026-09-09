@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Reflection;
+using AutoEDM.Com;
 using AutoEDM.Diagnostics;
 using AutoEDM.Model;
 
@@ -45,25 +46,39 @@ namespace AutoEDM.Sealing
             if (target == null || !target.Ok) { Log.Warn("Canal de O'ring: seleção inválida."); return false; }
             if (spec == null) { Log.Warn("Canal de O'ring: sem alojamento calculado."); return false; }
 
-            dynamic ps = null, plane = null;
-            bool planeIsTemporary = false;
+            dynamic doc0;
+            try { doc0 = app.ActiveDocument; }
+            catch (Exception e) { Log.Warn("Canal de O'ring: sem documento ativo — " + e.GetBaseException().Message); return false; }
+
+            // AMBIENTE (premissa de 2026-09-08, ver ModelingEnvironment): este recurso é um
+            // esboço + corte revolvido, e `ProfileSets` só produz esboço ORDENADO. Numa peça
+            // SÍNCRONA o esboço fica órfão no nó "Ordenado" e o usuário não consegue apagar —
+            // foi o que sujou a peça do Carlos. Em ORDENADO o esboço é filho legítimo do
+            // recurso: some junto quando o usuário apaga o canal. Por isso o comando exige
+            // ORDENADO em vez de tentar limpar a sujeira depois.
+            if (!ModelingEnvironment.Require(doc0, ModelingEnv.Ordered, "Canal de O'ring")) return false;
+
+            bool cutOk = false;
+            int facesAfterCut = -1;          // conferido no finally: o canal sobreviveu à limpeza?
+            dynamic modelRef = null;
+            object refAxisMade = null;       // o eixo de revolução vira objeto próprio no documento
+            var scope = new SketchScope(doc0, "Canal de O'ring");
+            AxisSketch sketch = null;
             try
             {
-                dynamic doc = app.ActiveDocument;
-                int mode = 1; try { mode = (int)doc.ModelingMode; } catch { }
+                dynamic doc = doc0;
+                const int mode = 2; // garantido pelo Require acima
                 dynamic model = doc.Models.Item(1);
+                modelRef = model;
                 int facesBefore = FaceCount(model);
-                Log.Info($"Canal de O'ring: ModelingMode={mode}, {facesBefore} face(s) no corpo antes.");
+                Log.Info($"Canal de O'ring: modelagem ORDENADA, {facesBefore} face(s) no corpo antes.");
 
                 double[] axisDir = ProfilePlaneFrame.AxisVector(target.AxisIndex);
                 // TIPADO de propósito: o retorno de um método chamado com argumento `dynamic`
                 // sai dynamic, e aí o compilador perde a análise dos parâmetros [out] adiante.
-                AxisSketch sketch = OpenSketchThroughAxis(doc, target.CenterMm, axisDir);
+                sketch = OpenSketchThroughAxis(doc, scope, target.CenterMm, axisDir);
                 if (sketch == null) { Log.Warn("Canal de O'ring: não achei um plano de esboço que contenha o eixo."); return false; }
 
-                ps = sketch.ProfileSet;
-                plane = sketch.Plane;
-                planeIsTemporary = sketch.PlaneIsTemporary;
                 dynamic profile = sketch.Profile;
                 ProfilePlaneFrame frame = sketch.Frame;
 
@@ -107,6 +122,7 @@ namespace AutoEDM.Sealing
                 try { refAxis = (object)profile.SetAxisOfRevolution(axisLine); }
                 catch (Exception e) { Log.Warn("Canal de O'ring: SetAxisOfRevolution falhou: " + e.GetBaseException().Message); return false; }
                 if (refAxis == null) { Log.Warn("Canal de O'ring: SetAxisOfRevolution devolveu nulo."); return false; }
+                refAxisMade = refAxis;
 
                 // O que se PEDE ao SE que valide. Para revolver não basta "fechado": tem de
                 // haver eixo (16) e o perfil não pode cruzá-lo (32) — pedir isso é o que faz o
@@ -122,18 +138,16 @@ namespace AutoEDM.Sealing
 
                 object cut = Revolve(model, (object)profile, refAxis, mode)
                           ?? SubtractRevolvedBody(doc, model, (object)profile, refAxis, mode);
-                // Só o plano que ESTE comando criou pode sumir — esconder um plano-base que o
-                // usuário deixou visível seria mexer no documento dele sem ele pedir.
-                if (planeIsTemporary) { try { plane.Visible = false; } catch { } }
 
                 int facesAfter = FaceCount(model);
+                facesAfterCut = facesAfter;
                 bool ok = cut != null && !FeatureFailed(cut) && facesAfter > facesBefore;
                 Log.Info($"  {facesAfter} face(s) no corpo depois (antes {facesBefore}); Status={StatusOf(cut)}.");
                 if (ok) Log.Info("Canal de O'ring CRIADO ✓");
-                else Log.Warn($"Canal de O'ring: o corte não vingou — nenhuma forma de corte do modo " +
-                              $"{(mode == 2 ? "ORDENADO" : "SÍNCRONO")} foi aceita. O AutoEDM NÃO tenta os métodos do " +
-                              "outro modo de propósito: isso criaria um recurso no outro ambiente, que a SE não " +
-                              "deixa apagar. Se precisar, troque o modo do documento e repita.");
+                else Log.Warn("Canal de O'ring: o corte não vingou — nenhuma forma de corte do modo ORDENADO foi " +
+                              "aceita. O AutoEDM NÃO tenta os métodos do outro modo de propósito: isso criaria um " +
+                              "recurso no outro ambiente, que a SE não deixa apagar.");
+                cutOk = ok;
                 return ok;
             }
             catch (Exception e)
@@ -143,19 +157,65 @@ namespace AutoEDM.Sealing
             }
             finally
             {
-                // O esboço SEMPRE é apagado, dê certo ou não. `ProfileSets.Add()` cria um
-                // esboço ORDENADO mesmo numa peça síncrona e, depois que um recurso o consome,
-                // ele fica TRAVADO: o usuário não consegue mais apagá-lo pela interface. Deixá-lo
-                // para trás foi o que sujou a peça do Carlos em 2026-09-04 — e a regra já estava
-                // escrita na skill do projeto. O recurso sobrevive à exclusão do esboço (é o que
-                // o bloco do eletrodo faz desde sempre).
-                if (ps != null)
-                {
-                    try { ps.Delete(); }
-                    catch (Exception e) { Log.Warn("  o esboço do canal não pôde ser apagado: " + e.GetBaseException().Message); }
-                }
-                if (planeIsTemporary && plane != null) { try { plane.Visible = false; } catch { } }
+                // Corte OK: aposentar o esboço e o plano (ver RetireSketch). Corte falhou:
+                // ninguém é dono de nada, o escopo apaga tudo e CONFERE.
+                if (cutOk && sketch != null) RetireSketch(doc0, scope, sketch, refAxisMade, modelRef, facesAfterCut);
+                scope.Dispose();   // sondagens (e, se o corte falhou, o esboço definitivo)
             }
+        }
+
+        /// <summary>
+        /// O QUE FAZER COM O ESBOÇO DEPOIS QUE O CANAL NASCEU (Carlos, 2026-09-08, 2ª rodada).
+        ///
+        /// A 1ª rodada simplesmente DEIXAVA o esboço na peça, por ser filho do recurso em
+        /// modelagem ordenada. Só que na tela ele fica como um punhado de curvas pretas em cima
+        /// do canal — e <b>o usuário não consegue ocultá-lo</b>: <c>ProfileSet</c> NÃO tem
+        /// propriedade <c>Visible</c> (conferido no dump da typelib, SE 223). Quem tem
+        /// <c>Visible</c> é o <c>Profile</c> lá dentro, e é ele que desenha as curvas. Por isso
+        /// esconder o PERFIL vem primeiro, e sempre: é o único passo que resolve o que se vê.
+        ///
+        /// Só então tenta apagar o esboço, CONFERINDO as duas pontas: (a) a coleção encolheu de
+        /// verdade — em ordenado o SE costuma recusar sem lançar; (b) o canal continua lá, pela
+        /// contagem de faces. Sem a conferência (b) uma exclusão que levasse o recurso junto
+        /// passaria despercebida, e o log diria "CRIADO ✓" sobre uma peça sem canal.
+        ///
+        /// O plano temporário é só ESCONDIDO, nunca apagado: ele é referência do recurso, e
+        /// apagá-lo invalidaria o canal (mesma lição já registrada no BlankModeler).
+        /// </summary>
+        private static void RetireSketch(dynamic doc, SketchScope scope, AxisSketch sketch,
+            object refAxis, dynamic model, int facesAfterCut)
+        {
+            try { sketch.Profile.Visible = false; Log.Info("  esboço do canal: perfil ESCONDIDO (Profile.Visible = false)."); }
+            catch (Exception e) { Log.Warn("  esboço do canal: não deu para esconder o perfil — " + e.GetBaseException().Message); }
+
+            // O eixo de revolução não é só uma linha do esboço: `SetAxisOfRevolution` devolve um
+            // RefAxis, objeto PRÓPRIO do documento (e com `Visible` próprio, conferido no dump).
+            // Esconder só o perfil deixaria esse traço na tela.
+            if (refAxis != null)
+            {
+                try { ((dynamic)refAxis).Visible = false; Log.Info("  esboço do canal: eixo de revolução (RefAxis) ESCONDIDO."); }
+                catch (Exception e) { Log.Warn("  esboço do canal: não deu para esconder o RefAxis — " + e.GetBaseException().Message); }
+            }
+
+            bool deleted = SketchScope.DeleteVerified(doc, (object)sketch.ProfileSet, "Canal de O'ring (esboço do canal)");
+            scope.Release(sketch.ProfileSet);   // apagado ou intocável: o Dispose não tenta de novo
+
+            if (deleted)
+            {
+                int now = FaceCount(model);
+                if (facesAfterCut > 0 && now >= 0 && now < facesAfterCut)
+                    Log.Error($"  ATENÇÃO: apagar o esboço levou o canal junto ({facesAfterCut} → {now} face(s)). " +
+                              "Desfaça (Ctrl+Z) e me mande este log — o esboço tem de ficar nesta versão do SE.");
+                else
+                    Log.Info("  esboço do canal APAGADO; o canal continua na peça.");
+            }
+            else
+            {
+                Log.Info("  o esboço do canal fica na árvore (o SE não deixa apagar um esboço já consumido " +
+                         "por recurso ordenado), mas ESCONDIDO — e some junto quando você apagar o canal.");
+            }
+
+            if (sketch.PlaneIsTemporary) scope.HideTempPlane((object)sketch.Plane);
         }
 
         /// <summary>
@@ -417,21 +477,29 @@ namespace AutoEDM.Sealing
         /// <c>dynamic</c>, sem dizer que o culpado era o plano. Agora o esboço que confere o
         /// plano é o MESMO que desenha o canal: nada é apagado no meio do caminho.
         /// </summary>
-        private static AxisSketch OpenSketchThroughAxis(dynamic doc, double[] axisPointMm, double[] axisDir)
+        private static AxisSketch OpenSketchThroughAxis(dynamic doc, SketchScope scope, double[] axisPointMm, double[] axisDir)
         {
+            // UM ESBOÇO POR SONDAGEM — não um esboço para as três (regressão de 2026-09-08,
+            // corrigida no mesmo dia com log real): tentei economizar abrindo um único
+            // ProfileSet e acrescentando um Profile por plano-base. O primeiro entra; o
+            // SEGUNDO `Profiles.Add` no MESMO set devolve E_FAIL. Resultado: os planos 2 e 3
+            // nunca eram lidos, nenhum plano continha o eixo e NENHUM canal era criado
+            // ("[plano] sondagem falhou: E_FAIL" ×2, em todos os cliques do log 083000).
+            // Na prática o ProfileSet do SE é de um perfil só. O que valia da ideia — não
+            // apagar esboço em catch mudo — continua: cada sondagem nasce no escopo e morre
+            // conferida, logo depois de responder onde o plano está.
             for (int i = 1; i <= 3; i++)
             {
                 dynamic basePlane;
                 try { basePlane = doc.RefPlanes.Item(i); } catch { continue; }
 
-                // Sondar um plano BASE com esboço descartável é seguro: plano base não some.
-                var frame = FrameOf(doc, basePlane);
+                var frame = FrameOf(doc, scope, basePlane);
                 if (frame == null || !frame.IsParallelToLine(axisDir)) continue;
 
                 double d = frame.SignedDistance(axisPointMm);
                 if (Math.Abs(d) < 0.01)
                 {
-                    var onBase = TryOpenSketch(doc, basePlane, false, axisPointMm, axisDir);
+                    var onBase = TryOpenSketch(doc, scope, basePlane, false, axisPointMm, axisDir);
                     if (onBase != null)
                     {
                         Log.Info($"  [plano] RefPlanes.Item({i}) já contém o eixo.");
@@ -450,14 +518,14 @@ namespace AutoEDM.Sealing
                     }
                     catch (Exception e) { Log.Warn($"  [plano] AddParallelByDistance(Item({i}), {Math.Abs(d):0.###}, {side}): " + e.GetBaseException().Message); }
                     if (candidate == null) continue;
+                    scope.TrackTempPlane((object)candidate);   // some no fim se o corte não usar
 
-                    var s = TryOpenSketch(doc, candidate, true, axisPointMm, axisDir);
+                    var s = TryOpenSketch(doc, scope, candidate, true, axisPointMm, axisDir);
                     if (s != null)
                     {
                         Log.Info($"  [plano] criado a partir de RefPlanes.Item({i}), afastamento {Math.Abs(d):0.###} mm, lado {side}.");
                         return s;
                     }
-                    try { candidate.Delete(); } catch { try { candidate.Visible = false; } catch { } }
                 }
             }
             return null;
@@ -468,13 +536,13 @@ namespace AutoEDM.Sealing
         /// eixo do anel está contido nele. Se não estiver, desfaz o esboço e deixa o chamador
         /// tentar o outro lado.
         /// </summary>
-        private static AxisSketch TryOpenSketch(dynamic doc, dynamic plane, bool planeIsTemporary,
+        private static AxisSketch TryOpenSketch(dynamic doc, SketchScope scope, dynamic plane, bool planeIsTemporary,
             double[] axisPointMm, double[] axisDir)
         {
             dynamic ps = null;
             try
             {
-                ps = doc.ProfileSets.Add();
+                ps = scope.AddProfileSet();
                 dynamic profile = ps.Profiles.Add(plane);
                 var frame = ProfilePlaneFrame.Discover((object)profile);
                 if (frame != null && frame.ContainsLine(axisPointMm, axisDir))
@@ -486,23 +554,29 @@ namespace AutoEDM.Sealing
             }
             catch (Exception e) { Log.Warn("  [plano] não deu para abrir o esboço: " + e.GetBaseException().Message); }
 
-            if (ps != null) { try { ps.Delete(); } catch { } }
+            if (ps != null) scope.DropProfileSet((object)ps);
             return null;
         }
 
-        /// <summary>Referencial de um plano — abre um perfil descartável só para perguntar ao
-        /// SE onde o plano está, e apaga em seguida.</summary>
-        private static ProfilePlaneFrame FrameOf(dynamic doc, dynamic plane)
+        /// <summary>
+        /// Referencial de um plano — abre um esboço DESCARTÁVEL, pergunta ao SE onde o plano
+        /// está e apaga em seguida. Sondar um plano BASE assim é seguro: plano base não some.
+        /// O esboço é próprio (não compartilhado) porque um ProfileSet aceita UM perfil: o
+        /// segundo `Profiles.Add` no mesmo set devolve E_FAIL. E a exclusão vai pelo escopo,
+        /// que confere pela contagem — era o `catch { }` mudo daqui que deixava esboço na peça
+        /// do usuário sem uma linha no log.
+        /// </summary>
+        private static ProfilePlaneFrame FrameOf(dynamic doc, SketchScope scope, dynamic plane)
         {
             dynamic probe = null;
             try
             {
-                probe = doc.ProfileSets.Add();
+                probe = scope.AddProfileSet();
                 dynamic p = probe.Profiles.Add(plane);
                 return ProfilePlaneFrame.Discover((object)p);
             }
             catch (Exception e) { Log.Warn("  [plano] sondagem falhou: " + e.GetBaseException().Message); return null; }
-            finally { if (probe != null) { try { probe.Delete(); } catch { } } }
+            finally { if (probe != null) scope.DropProfileSet((object)probe); }
         }
 
         private static string Count(dynamic collection)

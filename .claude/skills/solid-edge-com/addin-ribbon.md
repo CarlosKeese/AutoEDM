@@ -73,6 +73,31 @@ alive — `Get-Process Edge` (Solid Edge is `Edge.exe`; the browser is `msedge.e
 a four-step ritual that is easy to half-do into one command that cannot half-succeed. Only the
 app assemblies need copying; the interop/community/System.* dependencies never change.
 
+## Greying out a button when the document is wrong for it
+
+Every command has preconditions — document type, and (for a part) **which modeling
+environment its features belong to**. Enforce them in the ribbon, not only inside the
+command: a greyed button says "not here" before the user commits, where a dialog after the
+click only apologises. Keep both — the enabled state can be one poll stale.
+
+- Put the preconditions in **one table keyed by `CommandId`** (title + document type +
+  required `ModelingMode`), and let both the click handler and the enable logic read it.
+  Scattering the check inside each command is how one of them ends up "helpfully" switching
+  the document's environment instead of refusing (see `references/modeling-recipes.md`).
+- `SolidEdgeCommunity.AddIn.RibbonControl.Enabled` is a **plain auto-property**. SE asks the
+  add-in for command state through `ISEAddInEventsEx.OnCommandUpdateUI` while the tab is
+  visible, and the framework answers with whatever that property holds *at that moment* —
+  the base class implements the interface explicitly, so **there is no callback of your own
+  to hook**. Keep the value fresh instead: a `System.Windows.Forms.Timer` (~750 ms) that
+  walks `Ribbon.Controls`, re-evaluates each command and assigns `Enabled`. In-process, that
+  timer runs on SE's own STA thread, so the COM reads need no marshaling.
+- Make the tick **cheap, re-entrancy-guarded and totally swallowed**: reading
+  `ActiveDocument.Type`/`.ModelingMode` is enough, one tick must not stack on a slow one, and
+  a throw must never surface inside SE. Worst case the button stays clickable — which the
+  click-time check already covers.
+- Say the requirement in the **supertip** too ("requires ORDERED modeling"), so the greyed
+  button explains itself on hover instead of just looking broken.
+
 ## Dialogs that need the user to pick in SE while they are open
 
 A **modal** `ShowDialog()` freezes Solid Edge: with it up, nothing in the model can be clicked.

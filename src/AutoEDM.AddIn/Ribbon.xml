@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8" ?>
+﻿<?xml version="1.0" encoding="utf-8" ?>
 
 <!--
   Ribbon do AutoEDM. Recurso EMBUTIDO; carregado por ElectrodeRibbon via
@@ -41,20 +41,20 @@
     </group>
     <group name="Peça">
       <button id="5" size="large" label="Criar Base"
-              screentip="Criar Base (ambiente de PEÇA)"
-              supertip="Na PEÇA aberta: cria a BASE (bloco no material mais próximo) com a FAIXA de medição (chanfro X+ Y− p/ QUAD/RET, ou flat em Y− p/ REDONDO) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. SEM gap/offset por cor aqui — a superfície copiada não carrega a cor original; isso e o trabalho de superfície entram no botão 'Unir superfícies'."
+              screentip="Criar Base (PEÇA, modelagem SÍNCRONA)"
+              supertip="Exige a peça em modelagem SÍNCRONA (o botão fica cinza em ordenado). Na PEÇA aberta: cria a BASE (bloco no material mais próximo) com a FAIXA de medição (chanfro X+ Y− p/ QUAD/RET, ou flat em Y− p/ REDONDO) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. SEM gap/offset por cor aqui — a superfície copiada não carrega a cor original; isso e o trabalho de superfície entram no botão 'Unir superfícies'."
               imageId="1" showLabel="true" />
       <button id="7" size="large" label="Unir superfícies"
-              screentip="Unir a queima ao bloco, SÓ a união (ambiente de PEÇA)"
-              supertip="ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — une a superfície de queima ao bloco num sólido único. SÓ une (sem GAP/cor) — se falhar, uma NA MÃO no SE e siga para 'Aplicar GAP'. Separado do bloco para não interferir na fixação."
+              screentip="Unir a queima ao bloco, SÓ a união (PEÇA, modelagem SÍNCRONA)"
+              supertip="Exige a peça em modelagem SÍNCRONA — Limite/Costurar/Anexar/booleana não funcionam em ordenado (o botão fica cinza lá). ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — une a superfície de queima ao bloco num sólido único. SÓ une (sem GAP/cor) — se falhar, uma NA MÃO no SE e siga para 'Aplicar GAP'. Separado do bloco para não interferir na fixação."
               imageId="1" showLabel="true" />
       <button id="11" size="large" label="Aplicar GAP"
-              screentip="GAP + cor + nome no corpo já unido (ambiente de PEÇA)"
-              supertip="Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
+              screentip="GAP + cor + nome no corpo já unido (PEÇA, modelagem ORDENADA)"
+              supertip="Exige a peça em modelagem ORDENADA — o GAP (Model.FaceOffsets, editável na árvore) não existe em síncrono, e o AutoEDM não troca o ambiente sozinho (a troca invalida as faces já selecionadas). Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
               imageId="1" showLabel="true" />
       <button id="14" size="large" label="Alojamento de O’ring"
-              screentip="Canal de anel O’ring pela ISO 3601 (ambiente de PEÇA)"
-              supertip="Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
+              screentip="Canal de anel O’ring pela ISO 3601 (PEÇA, modelagem ORDENADA)"
+              supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
               imageId="1" showLabel="true" />
     </group>
     <group name="Diagnóstico">

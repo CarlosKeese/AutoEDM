@@ -103,9 +103,10 @@ namespace AutoEDM.Electrode
                 BindingFlags.InvokeMethod, null, partDoc.Models,
                 new object[] { 1, arr, extrudeSide, h });
 
-            // Sketch criada por código -> apagar (síncrono; o bloco sobrevive).
-            try { profileSet.Delete(); }
-            catch (Exception e) { Log.Warn($"ProfileSet.Delete(): {e.GetBaseException().Message}"); }
+            // Sketch criada por código -> apagar (síncrono; o bloco sobrevive). CONFERIDO:
+            // um Delete() que não lança pode não ter apagado nada, e aí o esboço fica preso no
+            // nó "Ordenado" sem o usuário conseguir remover — ver AutoEDM.Com.SketchScope.
+            AutoEDM.Com.SketchScope.DeleteVerified(partDoc, (object)profileSet, "Bloco");
 
             // O plano-base do lift é construção; some da árvore (só invisível, apagá-lo
             // poderia invalidar a feature em ordenado — lição do fix #4).
@@ -156,8 +157,7 @@ namespace AutoEDM.Electrode
                 BindingFlags.InvokeMethod, null, partDoc.Models,
                 new object[] { 1, arr, extrudeSide, h });
 
-            try { profileSet.Delete(); }
-            catch (Exception e) { Log.Warn($"ProfileSet.Delete(): {e.GetBaseException().Message}"); }
+            AutoEDM.Com.SketchScope.DeleteVerified(partDoc, (object)profileSet, "Bloco");
             if (liftedPlane) { try { plane.Visible = false; } catch { } }
             return ext;
         }
@@ -238,7 +238,7 @@ namespace AutoEDM.Electrode
                         BindingFlags.InvokeMethod, null, partDoc.Models,
                         new object[] { 1, arr, 2, h }), "Faixa de medição (extrusão)");
 
-                try { profileSet.Delete(); } catch (Exception e) { Log.Warn($"ProfileSet.Delete() (faixa): {e.GetBaseException().Message}"); }
+                AutoEDM.Com.SketchScope.DeleteVerified(partDoc, (object)profileSet, "Faixa de medição");
                 if (lifted) { try { plane.Visible = false; } catch { } }
                 Log.Info(FeatureFailed(ext) ? "  Faixa: feature com Status FALHA." : "  Faixa de medição criada ✓.");
             }
@@ -331,7 +331,7 @@ namespace AutoEDM.Electrode
                 {
                     Log.Warn($"Faixa redonda: Arcs2d.AddByStartAlongEnd falhou ({exArc.GetBaseException().Message}) — dumping assinaturas reais de Arcs2d p/ corrigir sem adivinhar.");
                     try { AutoEDM.Com.ComDiagnostics.LogSignatures((object)profile.Arcs2d, "AddByStartAlongEnd", "AddByCenterStartEnd", "AddAsFillet", "AddAsFilletNoTrim"); } catch { }
-                    try { profileSet.Delete(); } catch { }
+                    AutoEDM.Com.SketchScope.DeleteVerified(partDoc, (object)profileSet, "Faixa redonda");
                     return null;
                 }
                 profile.Lines2d.AddBy2Points(xLeft, yFlat, xRight, yFlat); // fecha o flat (corda em Y−)
@@ -343,7 +343,7 @@ namespace AutoEDM.Electrode
                         BindingFlags.InvokeMethod, null, partDoc.Models,
                         new object[] { 1, arr, 2, h }), "Faixa de medição redonda (extrusão)");
 
-                try { profileSet.Delete(); } catch (Exception e) { Log.Warn($"ProfileSet.Delete() (faixa redonda): {e.GetBaseException().Message}"); }
+                AutoEDM.Com.SketchScope.DeleteVerified(partDoc, (object)profileSet, "Faixa redonda");
                 if (lifted) { try { plane.Visible = false; } catch { } }
                 Log.Info(FeatureFailed(ext) ? "  Faixa redonda: feature com Status FALHA." : "  Faixa de medição redonda criada ✓.");
             }
@@ -418,7 +418,7 @@ namespace AutoEDM.Electrode
                     }, "Eixo (extrusão)");
                     Log.Info(FeatureFailed(shaft) ? "  Eixo: feature com Status FALHA." : $"  Eixo Ø{dia:0.#} criado ✓.");
                 }
-                finally { try { ps.Delete(); } catch { } }
+                finally { AutoEDM.Com.SketchScope.DeleteVerified(partDoc, (object)ps, "Eixo de fixação"); }
                 try { plane.Visible = false; } catch { }
             }
             catch (Exception ex) { Log.Warn($"Eixo de fixação falhou (bloco preservado): {ex.GetBaseException().Message}"); }
@@ -620,9 +620,10 @@ namespace AutoEDM.Electrode
         {
             object hole = null;
             dynamic ps = null;
+            dynamic doc = null;   // fora do try: o `finally` precisa dele p/ conferir a exclusão do esboço
             try
             {
-                dynamic doc = app.ActiveDocument; // RCW novo — sobrevive à desconexão do furo anterior
+                doc = app.ActiveDocument; // RCW novo — sobrevive à desconexão do furo anterior
                 int mode = 1; try { mode = (int)doc.ModelingMode; } catch { }
 
                 dynamic plane = doc.RefPlanes.AddParallelByDistance(
@@ -670,7 +671,7 @@ namespace AutoEDM.Electrode
                     TryEnablePhysicalThread(hole);
             }
             catch (Exception e) { Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm falhou: {e.GetBaseException().Message}"); }
-            finally { if (ps != null) { try { ps.Delete(); } catch { } } }
+            finally { AutoEDM.Com.SketchScope.DeleteVerified(doc, (object)ps, $"Furo {label}"); }
             return hole;
         }
 
