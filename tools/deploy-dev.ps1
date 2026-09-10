@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Compila e instala o AutoEDM na pasta de onde o Solid Edge realmente carrega o add-in.
 

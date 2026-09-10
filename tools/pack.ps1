@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Empacota o AutoEDM para distribuição: um ZIP portátil que instala sem admin.
 

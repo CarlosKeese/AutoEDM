@@ -56,4 +56,4 @@ __pycache__/
 *.pyc
 
 ## Pacotes de distribuição gerados por tools/pack.ps1
-dist/
+/dist/

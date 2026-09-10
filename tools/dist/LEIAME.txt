@@ -1,0 +1,122 @@
+AutoEDM - add-in de eletrodos para Solid Edge
+=============================================
+
+Codigo-fonte, versoes novas e documentacao:
+https://github.com/CarlosKeese/AutoEDM
+
+
+INSTALAR
+--------
+
+1) FECHE o Solid Edge.
+
+2) Extraia esta pasta para um lugar do SEU USUARIO,
+   por exemplo:  C:\Users\<voce>\AutoEDM
+
+   NAO extraia em "Arquivos de Programas": o registro e por usuario
+   e aquela pasta exige administrador.
+
+3) De dois cliques em:
+
+       instalar.cmd
+
+   E ele que registra o add-in no Solid Edge (por dentro, chama o
+   AutoEDM.Register.exe). NAO precisa de senha de administrador.
+
+4) Abra o Solid Edge. A aba "AutoEDM" aparece na faixa de opcoes.
+
+
+QUAL PROGRAMA REGISTRA O ADD-IN
+-------------------------------
+
+    AutoEDM.Register.exe
+
+O instalar.cmd e um involucro em volta dele, e faz tres coisas antes
+de chama-lo:
+
+  - recusa rodar com o Solid Edge aberto (senao os DLLs ficariam
+    travados e voce continuaria na versao antiga achando que atualizou);
+  - desbloqueia os arquivos (Unblock-File). ZIP vindo de e-mail, rede
+    ou download carrega o "Mark of the Web", e o Windows se recusa a
+    carregar esses DLLs dentro do Solid Edge. O add-in some da ribbon
+    SEM ERRO NENHUM - e a causa numero 1 de "instalei e nao apareceu";
+  - chama o AutoEDM.Register.exe.
+
+Se quiser rodar o registrador direto, ele funciona sozinho:
+
+    AutoEDM.Register.exe        registra
+    AutoEDM.Register.exe /u     remove
+
+Ele copia o add-in para %LOCALAPPDATA%\AutoEDM\addin e grava as chaves
+COM em HKCU\Software\Classes - so no seu usuario, nunca na maquina.
+
+
+ATUALIZAR
+---------
+
+Feche o Solid Edge, extraia a versao nova e rode o instalar.cmd de novo.
+Nao precisa desinstalar antes.
+
+
+REMOVER
+-------
+
+Feche o Solid Edge e rode:
+
+    desinstalar.cmd
+
+Depois, se quiser, apague a mao a pasta %LOCALAPPDATA%\AutoEDM.
+
+
+REQUISITOS
+----------
+
+  - Windows x64
+  - Solid Edge 2023 ou mais novo, com licenca
+  - .NET Framework 4.7.2 (ja vem no Windows 10 1803+ e no Windows 11)
+
+
+CONFIGURACAO
+------------
+
+No primeiro uso o add-in cria:
+
+    %LOCALAPPDATA%\AutoEDM\config.json
+
+com os valores de fabrica - prefixo do nome do eletrodo, material,
+tolerancia de cor, tabela de offset por Ra, paleta de cor -> Ra e as
+medidas do bloco da base. Edite esse arquivo para ajustar ao seu
+padrao, sem recompilar nada. Se apagar o arquivo, ele volta com os
+valores de fabrica no proximo uso.
+
+
+AMBIENTE: SINCRONO x ORDENADO
+-----------------------------
+
+O AutoEDM NUNCA troca o ambiente de modelagem da peca sozinho - quem
+troca e voce. Cada botao declara o ambiente que exige, e fica cinza no
+ambiente errado. Se clicar assim mesmo, ele explica o que trocar.
+
+    Criar Base ............. SINCRONO
+    Unir superficies ....... SINCRONO
+    Aplicar GAP ............ ORDENADO
+    Alojamento de O'ring ... ORDENADO
+
+Os comandos de montagem e os de diagnostico servem em qualquer ambiente.
+
+
+SUPORTE
+-------
+
+Os logs ficam em:
+
+    %LOCALAPPDATA%\AutoEDM\logs
+
+A primeira linha de cada log traz a VERSAO do build e o carimbo dos
+binarios carregados. Mande esse arquivo ao reportar qualquer problema.
+
+
+LICENCA
+-------
+
+MIT. Veja LICENSE no repositorio.

@@ -1,4 +1,4 @@
-# Gera um .res Win32 com 4 recursos RT_BITMAP (IDs 1..4) para os botões do ribbon.
+﻿# Gera um .res Win32 com 4 recursos RT_BITMAP (IDs 1..4) para os botões do ribbon.
 # Sem rc.exe: monta o binário .res à mão (formato documentado) + bitmaps via System.Drawing.
 Add-Type -AssemblyName System.Drawing
 

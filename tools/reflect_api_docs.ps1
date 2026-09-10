@@ -1,4 +1,4 @@
-<#
+﻿<#
   reflect_api_docs.ps1
 
   Gera documentação Markdown de módulos da API COM do Solid Edge por REFLEXÃO do
