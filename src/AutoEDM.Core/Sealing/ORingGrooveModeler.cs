@@ -159,8 +159,23 @@ namespace AutoEDM.Sealing
             {
                 // Corte OK: aposentar o esboço e o plano (ver RetireSketch). Corte falhou:
                 // ninguém é dono de nada, o escopo apaga tudo e CONFERE.
-                if (cutOk && sketch != null) RetireSketch(doc0, scope, sketch, refAxisMade, modelRef, facesAfterCut);
-                scope.Dispose();   // sondagens (e, se o corte falhou, o esboço definitivo)
+                //
+                // A limpeza é ENGOLIDA de propósito: ela é cosmética (esconder curvas), e o canal
+                // já está na peça quando ela roda. Deixá-la propagar foi o que fez o comando
+                // relatar "0 criado(s), 1 falha(s)" sobre três canais que tinham sido cortados
+                // com Status=igFeatureOK — o erro da limpeza virou o veredito da operação.
+                if (cutOk && sketch != null)
+                {
+                    try { RetireSketch(doc0, scope, sketch, refAxisMade, modelRef, facesAfterCut); }
+                    catch (Exception e)
+                    {
+                        Log.Warn("  o canal FOI criado; só a limpeza do esboço falhou — " +
+                                 e.GetBaseException().Message + " (o esboço pode ter ficado visível sobre o canal).");
+                    }
+                }
+
+                try { scope.Dispose(); }   // sondagens (e, se o corte falhou, o esboço definitivo)
+                catch (Exception e) { Log.Warn("  limpeza dos esboços de sondagem falhou — " + e.GetBaseException().Message); }
             }
         }
 
@@ -174,17 +189,35 @@ namespace AutoEDM.Sealing
         /// <c>Visible</c> é o <c>Profile</c> lá dentro, e é ele que desenha as curvas. Por isso
         /// esconder o PERFIL vem primeiro, e sempre: é o único passo que resolve o que se vê.
         ///
-        /// Só então tenta apagar o esboço, CONFERINDO as duas pontas: (a) a coleção encolheu de
-        /// verdade — em ordenado o SE costuma recusar sem lançar; (b) o canal continua lá, pela
-        /// contagem de faces. Sem a conferência (b) uma exclusão que levasse o recurso junto
-        /// passaria despercebida, e o log diria "CRIADO ✓" sobre uma peça sem canal.
+        /// O esboço NÃO é apagado — e é aqui que estava o bug de 2026-09-10 ("as features são
+        /// criadas mas com erro e não aparecem no modelo"). O <c>Cut</c> EXIGE modelagem
+        /// ORDENADA justamente para o esboço ter dono: ele é filho do corte revolvido. Apagá-lo
+        /// arranca o perfil de baixo do recurso que acabou de nascer, e o canal vira uma feature
+        /// com erro que não desenha nada — exatamente o sintoma relatado. O log ainda dizia
+        /// "CRIADO ✓" porque o corte REALMENTE tinha dado certo (Status=igFeatureOK, faces
+        /// 3 → 7); quem o destruía era esta limpeza, logo depois.
         ///
-        /// O plano temporário é só ESCONDIDO, nunca apagado: ele é referência do recurso, e
-        /// apagá-lo invalidaria o canal (mesma lição já registrada no BlankModeler).
+        /// A regra do projeto já era essa desde 2026-09-08 — "em ORDENADO o esboço é filho do
+        /// recurso, NÃO apagar" — e o comentário no topo do <c>Cut</c> a repete. Só esta função
+        /// não tinha sido alinhada. Esconder o perfil resolve o que incomodava de verdade (as
+        /// curvas pretas sobre o canal), e o esboço some sozinho quando o usuário apaga o canal.
+        ///
+        /// O plano temporário, pela mesma razão, é só ESCONDIDO: ele é referência do recurso
+        /// (mesma lição já registrada no BlankModeler).
         /// </summary>
         private static void RetireSketch(dynamic doc, SketchScope scope, AxisSketch sketch,
             object refAxis, dynamic model, int facesAfterCut)
         {
+            // PRIMEIRA coisa, antes de qualquer passo cosmético: tirar o esboço do escopo. O que
+            // sobra no escopo é APAGADO no Dispose, e este esboço tem dono (o corte ordenado).
+            // Se um dos passos abaixo estourasse antes disto, o Dispose levaria o canal junto —
+            // e o passo que pode estourar é exatamente o que mexe em proxy COM recém-regenerado.
+            //
+            // `(object)` de propósito: `AxisSketch.ProfileSet` é `dynamic`, e passar dynamic a um
+            // método liga um call site que precisa referenciar o proxy COM na hora de amarrar;
+            // com o proxy desconectado isso lança RPC_E_DISCONNECTED ANTES de o método rodar.
+            scope.Release((object)sketch.ProfileSet);
+
             try { sketch.Profile.Visible = false; Log.Info("  esboço do canal: perfil ESCONDIDO (Profile.Visible = false)."); }
             catch (Exception e) { Log.Warn("  esboço do canal: não deu para esconder o perfil — " + e.GetBaseException().Message); }
 
@@ -197,23 +230,15 @@ namespace AutoEDM.Sealing
                 catch (Exception e) { Log.Warn("  esboço do canal: não deu para esconder o RefAxis — " + e.GetBaseException().Message); }
             }
 
-            bool deleted = SketchScope.DeleteVerified(doc, (object)sketch.ProfileSet, "Canal de O'ring (esboço do canal)");
-            scope.Release(sketch.ProfileSet);   // apagado ou intocável: o Dispose não tenta de novo
+            Log.Info("  esboço do canal MANTIDO (é filho do corte ordenado — apagá-lo quebraria o canal) " +
+                     "e ESCONDIDO; some junto quando você apagar o canal.");
 
-            if (deleted)
-            {
-                int now = FaceCount(model);
-                if (facesAfterCut > 0 && now >= 0 && now < facesAfterCut)
-                    Log.Error($"  ATENÇÃO: apagar o esboço levou o canal junto ({facesAfterCut} → {now} face(s)). " +
-                              "Desfaça (Ctrl+Z) e me mande este log — o esboço tem de ficar nesta versão do SE.");
-                else
-                    Log.Info("  esboço do canal APAGADO; o canal continua na peça.");
-            }
-            else
-            {
-                Log.Info("  o esboço do canal fica na árvore (o SE não deixa apagar um esboço já consumido " +
-                         "por recurso ordenado), mas ESCONDIDO — e some junto quando você apagar o canal.");
-            }
+            // Rede de segurança: se por algum caminho o canal tiver sumido entre o corte e aqui,
+            // isso tem de gritar, não passar por "CRIADO ✓".
+            int now = FaceCount(model);
+            if (facesAfterCut > 0 && now >= 0 && now < facesAfterCut)
+                Log.Error($"  ATENÇÃO: o canal perdeu faces depois do corte ({facesAfterCut} → {now}). " +
+                          "Desfaça (Ctrl+Z) e me mande este log.");
 
             if (sketch.PlaneIsTemporary) scope.HideTempPlane((object)sketch.Plane);
         }
