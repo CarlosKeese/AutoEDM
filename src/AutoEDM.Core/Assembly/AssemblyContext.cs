@@ -148,6 +148,59 @@ namespace AutoEDM.Assembly
             }
         }
 
+        /// <summary>
+        /// A pose COMPLETA da ocorrência (rotação 3D de verdade), via
+        /// <c>Occurrence.GetMatrix([in,out] Matrix: SAFEARRAY(double))</c> — assinatura
+        /// confirmada no dump da typelib SE 2023 (interface <c>Occurrence</c>, ao lado de
+        /// <c>PutMatrix(Matrix, Replace)</c>).
+        ///
+        /// Por que a matriz e não os 3 ângulos do <see cref="TryGetPlacement"/>: os ângulos não
+        /// vêm com a ordem de composição, e errar a ordem só aparece quando dois eixos giram
+        /// juntos — exatamente o caso da cavidade inclinada. Ver <see cref="OccurrenceTransform"/>.
+        ///
+        /// O array vai PRÉ-ALOCADO com 16 posições e marcado by-ref: é [in,out], mesmo cuidado
+        /// do <c>SurfaceByBoundaries.Add</c>. Devolve null (com log) se a leitura falhar — quem
+        /// chama continua tendo o caminho antigo.
+        /// </summary>
+        public static OccurrenceTransform TryGetPose(OccurrenceInfo occ)
+        {
+            try
+            {
+                var matrix = new double[16];
+                object[] args = { matrix };
+                var mod = new ParameterModifier(1);
+                mod[0] = true; // [in,out]
+
+                object target = occ.ComOccurrence;
+                target.GetType().InvokeMember(
+                    "GetMatrix", BindingFlags.InvokeMethod, null, target, args,
+                    new[] { mod }, CultureInfo.InvariantCulture, null);
+
+                // O InvokeMember pode devolver o SAFEARRAY num objeto NOVO em vez de preencher
+                // o nosso — aceitar os dois evita ler 16 zeros achando que leu a matriz.
+                double[] read = args[0] as double[];
+                if (read == null || read.Length < 16) read = matrix;
+                if (read.Length < 16) { Log.Warn($"GetMatrix de '{occ.Name}': vieram {read.Length} valores, esperados 16."); return null; }
+
+                bool allZero = true;
+                foreach (double v in read) if (Math.Abs(v) > 1e-12) { allZero = false; break; }
+                if (allZero) { Log.Warn($"GetMatrix de '{occ.Name}': matriz toda zero — leitura descartada."); return null; }
+
+                // Gabarito para decidir a arrumação do array (ver OccurrenceTransform.FromMatrix).
+                double[] origin = null;
+                if (TryReadTransform(occ, out double[] t6)) origin = new[] { t6[0], t6[1], t6[2] };
+
+                var pose = OccurrenceTransform.FromMatrix(read, origin);
+                Log.Info($"Pose de '{occ.Name}': {pose.Describe()} — {pose.LayoutEvidence}.");
+                return pose;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"GetMatrix falhou para '{occ.Name}': {ex.GetBaseException().Message}");
+                return null;
+            }
+        }
+
         private static string SafeName(dynamic occ)
         {
             try { return occ.Name; } catch { return "<unnamed>"; }

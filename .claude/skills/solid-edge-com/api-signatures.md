@@ -51,6 +51,28 @@ Verify every numeric value against the dump for your own version before trusting
   the new occurrence with `PutTransform` using the source's angles, and **rotate any source-local
   offset** (e.g. a feature's XY center) by the same angle before adding the source translation.
   For a pure Z-rotation Z is unchanged; warn/skip on X/Y tilt.
+- **Occurrence FULL POSE — prefer this over the 3 angles when any X/Y tilt is possible**:
+  `Occurrence.GetMatrix([in,out] Matrix: SAFEARRAY(double))` / `Occurrence.PutMatrix(Matrix:
+  SAFEARRAY(double), Replace: bool)` — confirmed in the SE 2023 dump on both `Occurrence` and
+  `Part` (same block as Get/PutTransform). 16 doubles, meters. The array is `[in,out]`: **pre-
+  allocate `new double[16]` and mark it by-ref with a `ParameterModifier`**, and accept a NEW
+  array coming back in the arg slot (some calls replace rather than fill — reading 16 zeros as
+  a valid matrix is the trap here).
+  **Why the matrix and not the angles**: `GetTransform` gives 3 Euler angles but the typelib
+  never says in which ORDER they compose (Rz·Ry·Rx? intrinsic? extrinsic?). Guessing wrong only
+  shows up when two axes rotate at once — precisely the tilted case you were trying to fix, and
+  it fails *silently* (you get the transpose: a part lying the wrong way, no error). `GetMatrix`
+  hands you the rotation already composed; `PutMatrix(..., Replace: true)` writes it back with no
+  conversion to angles anywhere. `Replace: false` would COMPOSE with the current placement and
+  apply the rotation twice.
+  **The layout is NOT documented** (the signature only says `SAFEARRAY(double)`): translation
+  may sit at indices 12,13,14 (row-vector, `p' = p·M`) or 3,7,11 (column-vector, `p' = M·p`),
+  and picking wrong transposes the rotation. **Detect it at runtime**: read the origin with
+  `GetTransform` (already a validated path) and pick whichever slot triple matches. Then transform
+  local points by the matrix instead of adding coordinates axis-by-axis — adding a local Z depth
+  to an assembly Z only works while the two Z axes are parallel, and when they are not it can
+  still return a plausible-looking number (AutoEDM hit exactly this on job MD-14972, cavity at
+  Y = −90°: 3 of 5 electrodes "looked right" by arithmetic coincidence).
 - **In-place editing is NOT `Occurrence.Activate = true`.** That boolean only LOADS /
   activates the occurrence (large-assembly memory management); it does **not** enter
   part-edit-in-place. The authoritative signals are `AssemblyDocument.ModelingInAssembly`
