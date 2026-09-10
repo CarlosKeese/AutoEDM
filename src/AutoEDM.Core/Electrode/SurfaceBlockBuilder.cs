@@ -917,8 +917,24 @@ namespace AutoEDM.Electrode
 
             try
             {
-                var stitchCol = (SolidEdgePart.StitchSurfaces)partDoc.Constructions.StitchSurfaces;
-                object stitched = stitchCol.Add(arr.Length, ref arr, true, Type.Missing);
+                // A coleção sai como `object` e o Add vai por `InvokeMember` — NÃO por cast para
+                // `SolidEdgePart.StitchSurfaces`. Castar para um tipo da PIA estática (Interop
+                // 219, mais velha que o SE 223 rodando) força um QueryInterface por um IID que o
+                // objeto ao vivo não expõe: E_NOINTERFACE. Era exatamente esse cast que fazia a
+                // costura falhar em TODA rodada (logs de 09-09 e 09-10, "costura de consolidação
+                // falhou — E_NOINTERFACE"), jogando a união para a superfície crua. Mesma lição
+                // já aplicada em BooleanFeatures e SurfaceByBoundaries; esta chamada tinha ficado
+                // para trás.
+                object stitchCol = (object)partDoc.Constructions.StitchSurfaces;
+
+                // SurfaceArray é SAFEARRAY by-ref, como o EdgesArray do 'Limite'.
+                object[] args = { arr.Length, arr, true, Type.Missing };
+                var mod = new ParameterModifier(args.Length);
+                mod[1] = true;
+
+                object stitched = stitchCol.GetType().InvokeMember("Add", BindingFlags.InvokeMethod,
+                    null, stitchCol, args, new[] { mod }, CultureInfo.InvariantCulture, null);
+
                 if (stitched == null) { Log.Warn("Unir: costura devolveu null — seguindo com a superfície crua."); return surf; }
                 Log.Info($"Unir: {pieces.Count} superfície(s) costurada(s) como {elemType} ({FeatureStatusText(stitched)}).");
                 return stitched;
