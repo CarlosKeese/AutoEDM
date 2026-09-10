@@ -354,6 +354,7 @@ namespace AutoEDM.Electrode
             // na montagem; sem aplicar a rotação, o bloco sai atravessado, Log 53).
             double occXmm = 0, occYmm = 0, occZmm = 0;   // translação da cavidade (mm)
             double occAx = 0, occAy = 0, occAz = 0;       // rotação da cavidade (rad)
+            OccurrenceTransform pose = null;              // pose 3D completa (preferida)
             if (cavity != null)
             {
                 var actx = new AssemblyContext(asmDoc);
@@ -365,10 +366,20 @@ namespace AutoEDM.Electrode
                     bool rotated = Math.Abs(caxRad) + Math.Abs(cayRad) + Math.Abs(cazRad) > 1e-6;
                     Log.Info($"Cavidade '{cavity.Name}' na montagem: origem ({occXmm:0.0}, {occYmm:0.0}, {occZmm:0.0}) mm" +
                              (rotated ? $" + ROTAÇÃO (rad X={caxRad:0.###} Y={cayRad:0.###} Z={cazRad:0.###})" : ", sem rotação"));
-                    if (Math.Abs(caxRad) + Math.Abs(cayRad) > 1e-4)
-                        Log.Warn("Cavidade INCLINADA (rotação X/Y ≠ 0) — só a rotação Z é aplicada ao eletrodo; confira a orientação.");
                 }
                 else Log.Warn("Transform da cavidade ilegível — usando coordenadas locais como se fossem da montagem.");
+
+                // A pose completa (GetMatrix) é o caminho preferido: resolve a cavidade
+                // INCLINADA, que a soma de Z + rotação Z não resolve. Se a leitura falhar,
+                // segue o caminho antigo — que continua correto enquanto o eixo Z local for
+                // paralelo ao da montagem, e é avisado quando não for.
+                pose = AssemblyContext.TryGetPose(cavity);
+                if (pose == null && Math.Abs(occAx) + Math.Abs(occAy) > 1e-4)
+                    Log.Warn("Cavidade INCLINADA (rotação X/Y ≠ 0) e a matriz da ocorrência não pôde ser lida — " +
+                             "só a rotação Z será aplicada; confira a orientação de cada eletrodo.");
+                else if (pose != null && pose.IsTilted())
+                    Log.Info("Cavidade INCLINADA — posicionamento pela matriz completa da ocorrência " +
+                             "(o eletrodo herda a inclinação da cavidade).");
             }
 
             string folder = ElectrodeNaming.ResolveElectrodeFolder(asmDoc, p);
@@ -377,7 +388,7 @@ namespace AutoEDM.Electrode
 
             int created = 0;
             foreach (var e in res.Electrodes)
-                if (CreateAndPlaceElectrode(app, asmDoc, folder, e, occXmm, occYmm, occZmm, occAz))
+                if (CreateAndPlaceElectrode(app, asmDoc, folder, e, occXmm, occYmm, occZmm, occAz, null, pose))
                     created++;
 
             Log.Info($"{created}/{res.Electrodes.Count} eletrodo(s) criado(s). " +
@@ -448,18 +459,28 @@ namespace AutoEDM.Electrode
                 ? WrapOccurrence(firstParentOccurrence)
                 : FindOwningOccurrence(ctx, faces[0]);
             double occXmm = 0, occYmm = 0, occZmm = 0, occAz = 0;
+            OccurrenceTransform pose = null;
             if (cavity != null)
             {
+                double tiltRad = 0;
                 if (ctx.TryGetPlacement(cavity, out double coxM, out double coyM, out double cozM,
                                          out double caxRad, out double cayRad, out double cazRad))
                 {
                     occXmm = Units.MToMm(coxM); occYmm = Units.MToMm(coyM); occZmm = Units.MToMm(cozM);
                     occAz = cazRad;
+                    tiltRad = Math.Abs(caxRad) + Math.Abs(cayRad);
                     Log.Info($"Criar eletrodo manual: faces da ocorrência '{cavity.Name}' — origem ({occXmm:0.0}, {occYmm:0.0}, {occZmm:0.0}) mm.");
-                    if (Math.Abs(caxRad) + Math.Abs(cayRad) > 1e-4)
-                        Log.Warn("Criar eletrodo manual: ocorrência INCLINADA (rotação X/Y ≠ 0) — só a rotação Z é aplicada; confira a orientação.");
                 }
                 else Log.Warn($"Criar eletrodo manual: transform de '{cavity.Name}' ilegível — usando coordenadas locais como se fossem da montagem.");
+
+                // Mesma pose 3D do fluxo automático — os dois posicionam pelo mesmo método.
+                pose = AssemblyContext.TryGetPose(cavity);
+                if (pose == null && tiltRad > 1e-4)
+                    Log.Warn("Criar eletrodo manual: ocorrência INCLINADA (rotação X/Y ≠ 0) e matriz ilegível — " +
+                             "só a rotação Z é aplicada; confira a orientação.");
+                else if (pose != null && pose.IsTilted())
+                    Log.Info("Criar eletrodo manual: ocorrência INCLINADA — posicionamento pela matriz completa " +
+                             "(o eletrodo herda a inclinação).");
             }
             else
             {
@@ -497,7 +518,7 @@ namespace AutoEDM.Electrode
             Log.Info($"Criar eletrodo manual: {electrodeName}, {e.FaceCount} face(s), " +
                      $"centro local ({e.CenterXmm:0.0}, {e.CenterYmm:0.0}), fundo Z={e.DeepestZmm:0.0} (local).");
 
-            result.Created = CreateAndPlaceElectrode(app, asmDoc, folder, e, occXmm, occYmm, occZmm, occAz, detectedRa);
+            result.Created = CreateAndPlaceElectrode(app, asmDoc, folder, e, occXmm, occYmm, occZmm, occAz, detectedRa, pose);
             result.Path = System.IO.Path.Combine(folder, $"{electrodeName}.par");
             result.Message = result.Created
                 ? $"Eletrodo {electrodeName} criado e posicionado no centro de {e.FaceCount} face(s) (fundo Z={e.DeepestZmm:0.0} mm)." +
@@ -709,7 +730,7 @@ namespace AutoEDM.Electrode
         /// </summary>
         private bool CreateAndPlaceElectrode(dynamic app, dynamic asmDoc, string folder,
             Selection.ProposedElectrode e, double occXmm, double occYmm, double occZmm, double occAz,
-            double? detectedRa = null)
+            double? detectedRa = null, OccurrenceTransform pose = null)
         {
             dynamic partDoc = null;
             try
@@ -724,15 +745,35 @@ namespace AutoEDM.Electrode
                 // não o topo/abertura (paredes paralelas ao Z). Por isso DeepestZmm
                 // (Z mínimo das faces), não TopZmm — antes estava invertido (Log 52).
                 double baseZmm = e.DeepestZmm;                      // fundo do bolsão (Z mín.), LOCAL da cavidade
-                // Aplica a rotação Z da cavidade ao CENTRO da queima (local -> montagem).
-                // Z não muda numa rotação em torno de Z. A ocorrência do eletrodo também
-                // é girada por occAz (PutTransform), alinhando a peça à região de queima.
-                double cosZ = Math.Cos(occAz), sinZ = Math.Sin(occAz);
-                double rcx = e.CenterXmm * cosZ - e.CenterYmm * sinZ;
-                double rcy = e.CenterXmm * sinZ + e.CenterYmm * cosZ;
-                double asmX = occXmm + rcx;
-                double asmY = occYmm + rcy;
-                double asmZ = occZmm + baseZmm;                     // superfície, MONTAGEM (a origem vai aqui)
+                double asmX, asmY, asmZ;
+                OccurrenceTransform electrodePose = null;
+
+                if (pose != null)
+                {
+                    // CAMINHO PREFERIDO: o ponto de queima é LOCAL da cavidade, e a matriz da
+                    // ocorrência leva local -> montagem de uma vez — sem somar coordenadas de
+                    // eixos que podem nem ser paralelos. É isto que conserta a cavidade
+                    // inclinada; com a cavidade "em pé" dá exatamente o mesmo que a conta antiga.
+                    pose.TransformPointM(Units.MmToM(e.CenterXmm), Units.MmToM(e.CenterYmm), Units.MmToM(baseZmm),
+                        out double pxM, out double pyM, out double pzM);
+                    asmX = Units.MToMm(pxM); asmY = Units.MToMm(pyM); asmZ = Units.MToMm(pzM);
+
+                    // O eletrodo herda a ORIENTAÇÃO da cavidade: só assim o eixo em que ele
+                    // desce é o eixo em que a cavidade foi aberta.
+                    electrodePose = pose.WithTranslationM(pxM, pyM, pzM);
+                }
+                else
+                {
+                    // Caminho antigo (matriz ilegível): rotação Z apenas. Continua correto
+                    // enquanto o Z local for paralelo ao da montagem — e o aviso de cavidade
+                    // inclinada já foi dado por quem chamou.
+                    double cosZ = Math.Cos(occAz), sinZ = Math.Sin(occAz);
+                    double rcx = e.CenterXmm * cosZ - e.CenterYmm * sinZ;
+                    double rcy = e.CenterXmm * sinZ + e.CenterYmm * cosZ;
+                    asmX = occXmm + rcx;
+                    asmY = occYmm + rcy;
+                    asmZ = occZmm + baseZmm;                        // superfície, MONTAGEM (a origem vai aqui)
+                }
 
                 // Nome do eletrodo (Carlos, 2026-07-23): "Nome da montagem" + "EE" + índice, ex.
                 // "15142.200_EDM_EE01" — substitui o antigo "ELD_D01" (prefixo fixo, não
@@ -750,14 +791,25 @@ namespace AutoEDM.Electrode
                 partDoc = null;
 
                 dynamic occ = asmDoc.Occurrences.AddByFilename(path);
-                // PutTransform (dump linha 6707): origem→superfície + rotação Z da cavidade,
-                // alinhando o bloco à região de queima girada. Fallback p/ PutOrigin.
-                try { occ.PutTransform(Units.MmToM(asmX), Units.MmToM(asmY), Units.MmToM(asmZ), 0.0, 0.0, occAz); }
-                catch (Exception pe)
+
+                // Escada de posicionamento, do mais completo para o mais pobre:
+                //   PutMatrix  — pose 3D inteira (única que acerta cavidade inclinada);
+                //   PutTransform — origem + rotação Z (o que existia antes);
+                //   PutOrigin  — só a translação.
+                bool placed = false;
+                if (electrodePose != null)
+                    placed = TryPutMatrix(occ, electrodePose, e.Index);
+
+                if (!placed)
                 {
-                    Log.Warn($"Eletrodo {e.Index}: PutTransform falhou ({pe.GetBaseException().Message}); tentando PutOrigin (sem rotação).");
-                    try { occ.PutOrigin(Units.MmToM(asmX), Units.MmToM(asmY), Units.MmToM(asmZ)); }
-                    catch (Exception pe2) { Log.Warn($"Eletrodo {e.Index}: PutOrigin também falhou: {pe2.GetBaseException().Message}"); }
+                    // PutTransform (dump linha 6707): origem→superfície + rotação Z da cavidade.
+                    try { occ.PutTransform(Units.MmToM(asmX), Units.MmToM(asmY), Units.MmToM(asmZ), 0.0, 0.0, occAz); placed = true; }
+                    catch (Exception pe)
+                    {
+                        Log.Warn($"Eletrodo {e.Index}: PutTransform falhou ({pe.GetBaseException().Message}); tentando PutOrigin (sem rotação).");
+                        try { occ.PutOrigin(Units.MmToM(asmX), Units.MmToM(asmY), Units.MmToM(asmZ)); placed = true; }
+                        catch (Exception pe2) { Log.Warn($"Eletrodo {e.Index}: PutOrigin também falhou: {pe2.GetBaseException().Message}"); }
+                    }
                 }
 
                 Log.Info($"Eletrodo {e.Index} criado e posicionado ✓");
@@ -767,6 +819,33 @@ namespace AutoEDM.Electrode
             {
                 Log.Warn($"Eletrodo {e.Index} falhou: {ex.GetBaseException().Message}");
                 try { if (partDoc != null) partDoc.Close(); } catch { }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Posiciona a ocorrência pela pose 3D completa, via
+        /// <c>Occurrence.PutMatrix(Matrix: SAFEARRAY(double), Replace: bool)</c> — assinatura
+        /// confirmada no dump da typelib SE 2023, ao lado do <c>GetMatrix</c> de onde a pose veio.
+        /// <c>Replace = true</c>: a matriz SUBSTITUI a posição atual, não é composta com ela
+        /// (compor aplicaria a rotação duas vezes).
+        ///
+        /// Devolve false (com log) em vez de lançar — quem chama cai na escada de fallback.
+        /// </summary>
+        private static bool TryPutMatrix(object occ, OccurrenceTransform pose, int index)
+        {
+            try
+            {
+                object[] args = { pose.ToMatrix(), true };
+                occ.GetType().InvokeMember("PutMatrix", BindingFlags.InvokeMethod, null, occ, args,
+                    null, CultureInfo.InvariantCulture, null);
+                Log.Info($"Eletrodo {index}: posicionado pela matriz completa da ocorrência ({pose.Describe()}).");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Eletrodo {index}: PutMatrix falhou ({ex.GetBaseException().Message}) — " +
+                         "caindo para PutTransform (só rotação Z; confira a orientação se a cavidade for inclinada).");
                 return false;
             }
         }
