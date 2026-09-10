@@ -35,6 +35,11 @@ namespace AutoEDM.AddIn
             SolidEdgeFramework.SeConnectMode ConnectMode,
             SolidEdgeFramework.AddIn AddInInstance)
         {
+            // PRIMEIRA linha, antes de qualquer coisa que possa carregar dependência: hospedados
+            // pelo Edge.exe não temos bindingRedirect, e sem este gancho o System.Text.Json
+            // morre no construtor estático. Ver AssemblyRedirect.
+            AssemblyRedirect.Install();
+
             base.OnConnection(application, ConnectMode, AddInInstance);
             AddInEx.GuiVersion = 12; // incrementar ao mudar a ribbon (v12 = supertips com o ambiente de modelagem exigido)
 
@@ -53,6 +58,8 @@ namespace AutoEDM.AddIn
             catch { /* log em arquivo é best-effort */ }
             Log.Info("AutoEDM add-in conectado ao Solid Edge.");
             Log.Info("Build carregado: " + BuildStamp());
+            // O gancho de redirecionamento roda antes do log existir; o que ele fez sai agora.
+            foreach (var linha in AssemblyRedirect.Report) Log.Info(linha);
         }
 
         /// <summary>Carimbo dos binários EM MEMÓRIA (AddIn + Core) com a data de build — para
