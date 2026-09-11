@@ -20,6 +20,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | Documento | Descrição |
 |---|---|
 | [`docs/GUIA_SOLID_EDGE_COM.md`](./GUIA_SOLID_EDGE_COM.md) | **A "Pedra de Roseta": guia de aprendizados** para automatizar o SE por COM sem o SDK — introspecção, out-params (`ParameterModifier`), late binding, unidades/STA/message filter, receitas de modelagem (sketch+extrusão, furos, superfícies intra-peça), síncrono×ordenado, in-place bloqueado, add-in de ribbon, tabela **erro→causa→fix**. Comece por aqui. |
+| [`docs/INTER-PART.md`](./INTER-PART.md) | **Antes de tocar em cópia entre peças, leia.** Inventário das 13 tentativas que falharam (com log:linha), o que está estabelecido como fato e NÃO deve ser re-testado, e os eixos que nunca tiveram uma execução — incluindo o que a própria memória do projeto elegeu como mais promissor. Traz a assinatura completa de `CopyConstructions.Add` (a rota por ARQUIVO, que dispensa in-place) e como enumerar os comandos nativos por nome. |
 | [`docs/MEMORIA_SOLID_EDGE_COM.md`](./MEMORIA_SOLID_EDGE_COM.md) | **Fonte de verdade:** o que a API COM do SE **deixa** ou **recusa** fazer, com status (✅/❌/🟡/⛔) + evidência (run/dump) em cada item. Consultar antes de escrever, corrigir ou analisar código COM. Corrige entendimentos superados (edição in-place, `CopySurfaces`). |
 
 ## API, SDK, funções, parâmetros e métodos
