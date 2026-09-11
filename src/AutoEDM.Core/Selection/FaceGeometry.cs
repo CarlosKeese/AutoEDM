@@ -77,6 +77,57 @@ namespace AutoEDM.Selection
             return TryRange(com, method, out aMm, out bMm, ref error);
         }
 
+        /// <summary>
+        /// Mesmo executor de <see cref="TryTwoPointOutMm"/>, SEM converter de metros para mm —
+        /// para os métodos dessa mesma forma cujos dois arrays NÃO são comprimento.
+        /// <c>Face.GetParamRange</c> é o caso: devolve parâmetros de superfície (num cilindro, U
+        /// é ÂNGULO em radianos), e passar isso por <see cref="Units.MToMm"/> daria um número
+        /// 1000× maior sem estourar nada — exatamente o tipo de erro plausível-e-errado que a
+        /// classe <see cref="Units"/> existe para evitar.
+        /// </summary>
+        public static bool TryTwoArrayOut(object com, string method,
+            out double[] a, out double[] b, out string error)
+        {
+            error = null;
+            return TryTwoArrayOutCore(com, method, out a, out b, ref error);
+        }
+
+        /// <summary>
+        /// Mesma receita by-ref para os métodos de UM só array de saída —
+        /// <c>Plane.GetNormalVector([out] NormalVector)</c>, <c>Vertex.GetPointData([out] Point)</c>.
+        /// Cru, sem conversão: um vetor NORMAL é adimensional (não é comprimento, não passa por
+        /// <see cref="Units"/>); um PONTO está em metros e quem chama converte.
+        /// </summary>
+        public static bool TryOneArrayOut(object com, string method, out double[] a, out string error)
+        {
+            a = null;
+            error = null;
+            try
+            {
+                object[] args = { new double[0] };
+                var mod = new ParameterModifier(1);
+                mod[0] = true;
+
+                com.GetType().InvokeMember(
+                    method, BindingFlags.InvokeMethod, null, com, args,
+                    new[] { mod }, CultureInfo.InvariantCulture, null);
+
+                a = ToDoubles(args[0]);
+                if (a == null || a.Length < 3)
+                {
+                    error = $"out vazio ({Describe(args[0])})";
+                    a = null;
+                    return false;
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.GetBaseException().Message;
+                return false;
+            }
+        }
+
         private static bool TryRangeFromVertices(object comFace,
             out double[] minMm, out double[] maxMm, ref string error)
         {
@@ -130,6 +181,30 @@ namespace AutoEDM.Selection
         {
             minMm = null;
             maxMm = null;
+            if (!TryTwoArrayOutCore(comFace, method, out double[] mn, out double[] mx, ref error)) return false;
+            // O executor cru aceita 2 componentes (GetParamRange devolve U,V); um RANGE precisa
+            // dos 3 do ponto, então a conferência de tamanho fica aqui, e não lá.
+            if (mn.Length < 3 || mx.Length < 3)
+            {
+                error = $"range com menos de 3 componentes (min={mn.Length}, max={mx.Length})";
+                return false;
+            }
+            minMm = new[] { Units.MToMm(mn[0]), Units.MToMm(mn[1]), Units.MToMm(mn[2]) };
+            maxMm = new[] { Units.MToMm(mx[0]), Units.MToMm(mx[1]), Units.MToMm(mx[2]) };
+            return true;
+        }
+
+        /// <summary>
+        /// O executor cru dos métodos "dois SAFEARRAY(double) por parâmetro de saída"
+        /// (<c>GetRange</c>, <c>GetExactRange</c>, <c>GetEndPoints</c>, <c>GetParamRange</c>).
+        /// Devolve os arrays COMO VIERAM — quem chama decide se aquilo é comprimento e precisa
+        /// converter de metros.
+        /// </summary>
+        private static bool TryTwoArrayOutCore(object comFace, string method,
+            out double[] a, out double[] b, ref string error)
+        {
+            a = null;
+            b = null;
             try
             {
                 // Os dois cantos são [out] SAFEARRAY(double). Em late binding com
@@ -144,16 +219,14 @@ namespace AutoEDM.Selection
                     method, BindingFlags.InvokeMethod, null, comFace, args,
                     new[] { mod }, CultureInfo.InvariantCulture, null);
 
-                double[] mn = ToDoubles(args[0]);
-                double[] mx = ToDoubles(args[1]);
-                if (mn == null || mx == null || mn.Length < 3 || mx.Length < 3)
+                a = ToDoubles(args[0]);
+                b = ToDoubles(args[1]);
+                if (a == null || b == null || a.Length < 2 || b.Length < 2)
                 {
-                    error = $"out vazio (min={Describe(args[0])}, max={Describe(args[1])})";
+                    error = $"out vazio (a={Describe(args[0])}, b={Describe(args[1])})";
+                    a = null; b = null;
                     return false;
                 }
-
-                minMm = new[] { Units.MToMm(mn[0]), Units.MToMm(mn[1]), Units.MToMm(mn[2]) };
-                maxMm = new[] { Units.MToMm(mx[0]), Units.MToMm(mx[1]), Units.MToMm(mx[2]) };
                 return true;
             }
             catch (Exception ex)

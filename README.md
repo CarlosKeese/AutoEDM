@@ -90,7 +90,7 @@ A aba **AutoEDM** tem quatro grupos. A coluna **Ambiente** é levada a sério: c
 
 | Comando | Ambiente | O que faz |
 |---|---|---|
-| **Analisar (Z)** | qualquer | Lê a montagem ativa **sem alterar nada** e propõe quantos eletrodos existem, por nível de profundidade, com a posição de cada um. |
+| **Analisar (Z)** | qualquer | Lê a peça **sem alterar nada** e propõe quantos eletrodos existem, por nível de profundidade, com a posição de cada um. Junto, faz a [análise de usinabilidade](#análise-de-usinabilidade): o que a sua ferramentaria não consegue produzir e por isso exige erosão. **Selecione a peça a analisar** antes de clicar — sem seleção ele mira pela cor de queima, e o eletrodo também tem faces pintadas. |
 | **Criar eletrodos** | qualquer | Cria uma peça por eletrodo com o bloco da base (holder) modelado e posicionado na montagem. Não salva a montagem. |
 | **Criar eletrodo (manual)** | qualquer | Um clique por eletrodo: selecione a(s) face(s) do fundo do bolsão a erodir e ele cria **um** eletrodo, centrado em XY e no Z mais fundo das faces. Identifica o Ra pela cor e grava numa variável da peça. |
 | **Duplicar eletrodo** | qualquer | Selecione um eletrodo que já tem GAP aplicado: gera a cópia de desbaste no **próximo Ra da escada** e a posiciona em todas as ocorrências daquele eletrodo na montagem. |
@@ -119,6 +119,39 @@ A aba **AutoEDM** tem quatro grupos. A coluna **Ambiente** é levada a sério: c
 | **Iniciar leitura de ação manual** | Snapshot das features **antes** de você fazer a operação à mão no SE. |
 | **Gravar log da leitura** | Diff contra o snapshot: grava o tipo e as propriedades das features que você criou, para reproduzir por COM. |
 | **Sonda de rosca (M6)** | Cria uma peça descartável com cinco furos M6, cada um por uma receita diferente da API de rosca. O log traz o `HoleData`, o `Status` da feature e o erro da rosca física — para descobrir qual receita produz a hélice cortada de verdade. |
+
+---
+
+## Análise de usinabilidade
+
+O **Analisar (Z)** não decide o que vai a erosão pela sua tinta — ele mede a peça e responde com o que a **sua** ferramentaria consegue produzir. A regra é uma só, aplicada a dois sólidos: o que a fresa não alcança na cavidade é o que exige eletrodo; o que ela não alcança no eletrodo é um eletrodo que não dá para fabricar.
+
+### O que ele reprova
+
+| Achado | Por quê | Veredito |
+|---|---|---|
+| **Canto vivo** (R0) entre duas paredes verticais | Toda fresa deixa ali o próprio raio — no mínimo R0,5 com a Ø1. Canto vivo nenhuma entrega, em profundidade nenhuma. | Erosão, e ferramenta mais longa não ajuda |
+| **Raio menor que a menor fresa** | Nada abaixo de R0,5 existe na ferramentaria. | Erosão |
+| **Fundo demais para a fresa do raio** | O raio aceita uma fresa, mas nenhuma delas é longa o bastante. | Erosão *ou* uma fresa mais longa |
+| **Furo fundo demais para fresa** | Dá a volta completa: é furo, e furo se faz com broca. | Não é erosão — confira a broca |
+
+O canto **piso↔parede** também é vivo e **não** é reprovado: a fresa de topo reto varre o fundo e encosta na parede. Só o canto **vertical** parede↔parede exige erosão — é a diferença que separa um bolsão de fundo chato, que se fresa todo dia, de um canto de projeto sem raio.
+
+### A ferramentaria
+
+Os limites saem da lista de ferramentas, não de um número fixo no código. Com a ferramentaria de fábrica (fresas de Ø1 a Ø6, topo reto e esférica, incluindo os pescoços longos, e brocas DIN 338 de Ø1 a Ø19):
+
+| Raio exigido pela região | Alcance da fresa |
+|---|---|
+| menor que R0,5 | nenhuma fresa — é erosão |
+| R0,5 a R1,0 | 10 mm |
+| R1,0 ou mais | 20 mm |
+
+Das 18 fresas, apenas **6** mudam essa resposta: as outras servem o mesmo raio sem ir mais fundo, e existem por rigidez, carga de cavaco e tempo de ciclo. O relatório diz, por região, qual ferramenta ela exige — então uma região que só sobrevive graças a um pescoço longo fica visível.
+
+### O que ele ainda não faz
+
+A análise mede **faces curvas e arestas vivas** — o raio exato, direto do modelo, sem discretizar nada. Ela ainda **não** enxerga rasgo estreito entre duas paredes planas nem região sem acesso de cima: isso exige varrer o vazio da cavidade, e é o próximo passo. Também não separa face côncava de convexa, então um pino fino é relatado junto com um canto fechado — os dois são problema de fabricação, mas o motivo sai genérico.
 
 ---
 
@@ -337,6 +370,8 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Unir superfícies (anexar a queima ao bloco) | ✅ validado no SE |
 | Guarda de ambiente síncrono/ordenado por comando | ✅ construído |
 | Configuração externa (`config.json`) | ✅ construído, coberto por teste |
+| Análise de usinabilidade: raio mínimo, alcance e canto vivo | ✅ construído, coberto por teste — validado no SE (raio); canto vivo a confirmar |
+| Análise de usinabilidade: rasgo estreito e acesso (varredura do vazio) | 📋 planejado |
 | Alojamento de O'ring pela ISO 3601 | 🚧 construído, aguardando validação no SE |
 | Aplicar GAP (offset + cor + nome da feature) | 🚧 corrigido, aguardando confirmação final no SE |
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |

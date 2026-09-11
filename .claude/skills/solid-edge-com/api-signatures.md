@@ -277,11 +277,50 @@ edge.Geometry.Type   // igCircle / igLine / igEllipse / igBSplineCurve
 ```
 
 **And once you're holding the geometry object, take the exact numbers from it** instead of
-deriving them from a bounding box: `Cylinder.Radius` and `Circle.Radius` are plain properties (no
-`[out]` marshaling), as are `Cylinder.GetCylinderData`/`Circle.GetCircleData` if you want the base
-point and axis too. A bbox measures the *chord* of a partial cylindrical face and lies about the
-diameter; the radius never does. (Bbox is still the right tool for a full circular edge's axis and
-centre — see below.)
+deriving them from a bounding box: `Cylinder.Radius`, `Circle.Radius`, `Torus.MinorRadius` and
+`Torus.MajorRadius` are plain properties (no `[out]` marshaling), as are
+`Cylinder.GetCylinderData`/`Circle.GetCircleData` if you want the base point and axis too. A bbox
+measures the *chord* of a partial cylindrical face and lies about the diameter; the radius never
+does. (Bbox is still the right tool for a full circular edge's axis and centre — see below.)
+
+> **Prefer the property over the method whenever both offer the same number.**
+> `GetCylinderData([out] BasePoint, [out] AxisVector, [out] Radius)` and
+> `GetTorusData([out] …, [out] MajorRadius, [out] MinorRadius)` hand the radius back through an
+> `[out]` **scalar**, and `[out]` scalars are exactly what this runtime's late binding does not
+> populate reliably (same reason `GetFacetData`'s `FacetCount` has to be ignored in favour of the
+> array length — see `SectionAreaCalculator`). A property has no out-marshaling to get wrong.
+> Validated on SE 2023, 2026-09-11: a radius sweep over a real cavity read 4/4 curved faces through
+> the properties with zero failures.
+
+**`Face.GetParamRange` answers "is this face a full hole/pin, or just a corner?" in one read.**
+Signature confirmed on the *live* object (not only the dump):
+`GetParamRange([in,out] MinParam: SAFEARRAY(double)*, [in,out] MaxParam: SAFEARRAY(double)*)`,
+`cParams=2` — the **same shape** as `Face.GetRange`, so the same by-ref `ParameterModifier` helper
+drives it.
+
+> ⚠ **Same shape, different units — do NOT run it through the metres→mm conversion.** The two
+> arrays are *surface parameters*, not lengths: on a cylinder one component is an **angle in
+> radians**. Feeding that to `Units.MToMm` yields a number 1000× too big without throwing, which is
+> precisely the plausible-and-wrong class of bug `Units` exists to prevent. Reuse the raw by-ref
+> executor (`FaceGeometry.TryTwoArrayOut`), not the mm one (`TryTwoPointOutMm`, which is right for
+> `GetRange`/`GetExactRange`/`Edge.GetEndPoints` because those *are* metres).
+
+Recipe: a cylindrical face whose parameter span is ≈`2π` wraps all the way round, so it is a
+**hole or a pin**, not a milled corner. Which of the two components carries the angle is *not*
+documented — test both and log which one opened to 2π; the other is the cylinder's axial extent in
+metres, which would only reach 2π on a 6,28 m part. This is what lets a machinability check stop
+reporting "Ø8 × 25 mm, too deep to mill → EDM" for what is an ordinary drilled hole.
+
+**`Face.ID` is stable within a session, NOT across a rebuild.** It is still the right key to match
+a body face against a feature face *in one pass* (above), but it is not a durable handle: on
+2026-09-11 the same two R0,277 mm faces came back as IDs 253/218 before an edit and 636/550 after.
+Anything that must survive an edit wants `Face.GetReferenceKey([out] ReferenceKey, [opt][out] KeySize)`.
+
+**The live object exposes more than `docs/api/` lists.** Introspecting a real `Face` on SE 2023
+printed **42** members, including `GetFacetDataEx`, `GetRenderLineData` and `FeatureIDsAndNames` —
+none of which appear in `docs/api/SolidEdgeGeometry.md`. The generated reference is a floor, not a
+ceiling: when something you need seems absent, dump the live member list before concluding it
+doesn't exist.
 
 **A circular `Edge`'s `GetRange` hands you the whole axis for free.** `Edge.GetRange` /
 `GetExactRange` have the same `[in,out] SAFEARRAY(double)` shape as `Face.GetRange` (so the same

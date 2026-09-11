@@ -290,7 +290,20 @@ namespace AutoEDM.Electrode
 
             dynamic app = _connector.Application;
             var ctx = new AssemblyContext(asmDoc);
-            var hit = FindBurnOccurrence(ctx, app);
+
+            // A peça SELECIONADA manda (Carlos, 2026-09-11) — ver a nota de FindBurnOccurrence.
+            // Sem seleção, cai na mira automática por cor, que é o comportamento de sempre.
+            int ignoredSel;
+            var selected = CollectSelectedOccurrences(asmDoc, out ignoredSel, "Analisar (Z)");
+            OccurrenceInfo preferred = selected.Count > 0 ? selected[0] : null;
+            if (selected.Count > 1)
+                Log.Warn($"Analisar (Z): {selected.Count} ocorrências selecionadas — usando a 1ª ('{preferred.Name}'). " +
+                         "Selecione UMA peça para não haver dúvida.");
+            else if (preferred == null)
+                Log.Info("Analisar (Z): nada selecionado — mirando pela cor de queima. Se cair no eletrodo em vez do " +
+                         "postiço, selecione a peça certa na montagem e clique de novo.");
+
+            var hit = FindBurnOccurrence(ctx, app, preferred);
             OccurrenceInfo target = hit.Item1;
             cavity = target;
             IReadOnlyList<FaceGroup> groups = hit.Item2;
@@ -318,6 +331,45 @@ namespace AutoEDM.Electrode
                 result.BurnFaceCount = main.Faces.Count;
             }
             if (tally != null) result.ColorTally.AddRange(tally);
+
+            // NÍVEL 1 da usinabilidade (2026-09-11), SÓ LEITURA: mede o raio EXATO das faces
+            // curvas da cavidade e sinaliza o que a ferramentaria não produz. O corpo sai de
+            // Face.Body (propriedade confirmada no dump), então não é preciso reabrir a peça da
+            // ocorrência. Best-effort: uma falha aqui não pode derrubar a análise de Z, que é o
+            // resultado principal do botão.
+            try
+            {
+                object cavityBody = TryGetSolidBody(target.OccurrenceDocument)
+                                    ?? (all.Count > 0 ? (object)all[0].ComFace.Body : null);
+                foreach (var radiusHit in Machinability.BRepRadiusProbe.Probe(cavityBody, null))
+                {
+                    result.MachinabilityWarnings.Add(radiusHit.Describe());
+                    switch (radiusHit.Verdict)
+                    {
+                        case Machinability.MachinabilityVerdict.BelowMinimumRadius:
+                            result.BelowMinimumRadiusCount++; break;
+                        case Machinability.MachinabilityVerdict.HoleBeyondMillReach:
+                            result.DeepHoleCount++; break;
+                        default:
+                            result.BeyondReachCount++; break;
+                    }
+                }
+
+                // CANTO VIVO (Carlos, 2026-09-11): o raio pequeno demais é só metade do nível 1.
+                // Canto vivo não tem face curva nenhuma para medir — é uma ARESTA entre dois
+                // planos, raio ZERO — e toda fresa deixa ali o próprio raio. Quem responde é a
+                // topologia, e a sonda vive separada por isso.
+                foreach (var corner in Machinability.SharpCornerProbe.Probe(cavityBody))
+                {
+                    result.MachinabilityWarnings.Add(corner.Describe());
+                    result.SharpCornerCount++;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("Usinabilidade: análise pulada — " + ex.GetBaseException().Message);
+            }
+
             return result;
         }
 
@@ -904,15 +956,30 @@ namespace AutoEDM.Electrode
         //  Localiza a ocorrência com faces nas cores de queima
         // ------------------------------------------------------------------
 
+        /// <summary>
+        /// Resolve qual ocorrência analisar e suas faces de queima.
+        ///
+        /// <paramref name="preferred"/> (a ocorrência SELECIONADA pelo usuário) manda sobre tudo.
+        /// Escolha do Carlos em 2026-09-11, e ela conserta um erro que o 1º run ao vivo expôs: a
+        /// mira automática é "quem tem MAIS faces de queima mapeadas", e o ELETRODO também tem as
+        /// faces pintadas — então ele ganhava da cavidade. Naquele log a análise inteira (níveis de
+        /// Z, pegada, raios) descreveu `5956.209_EDM_EE01.par`, que é o eletrodo, e não o postiço
+        /// `5956.209.par`. Nenhuma heurística de nome ou de tamanho é chutada aqui: quem sabe qual
+        /// peça é qual é quem está com a montagem aberta.
+        /// </summary>
         private Tuple<OccurrenceInfo, IReadOnlyList<FaceGroup>, IReadOnlyList<Selection.ColorTally>> FindBurnOccurrence(
-            AssemblyContext ctx, dynamic app)
+            AssemblyContext ctx, dynamic app, OccurrenceInfo preferred = null)
         {
             OccurrenceInfo best = null;
             IReadOnlyList<FaceGroup> bestGroups = new List<FaceGroup>();
             IReadOnlyList<Selection.ColorTally> bestTally = new List<Selection.ColorTally>();
             int bestFaceCount = 0;
 
-            foreach (var occ in ctx.GetOccurrences())
+            IEnumerable<OccurrenceInfo> toScan = preferred != null
+                ? new[] { preferred }
+                : ctx.GetOccurrences();
+
+            foreach (var occ in toScan)
             {
                 if (occ.OccurrenceDocument == null) continue;
 
@@ -929,6 +996,14 @@ namespace AutoEDM.Electrode
                 // guarda também o histograma DELA (com as cores não mapeadas, ex. roxo) p/ o
                 // aviso de "cor dominante não mapeada" na confirmação.
                 int faceCount = groups.Sum(gr => gr.Faces.Count);
+                if (preferred != null)
+                {
+                    // Peça apontada pelo usuário: vale mesmo sem nenhuma face de queima mapeada —
+                    // a usinabilidade (raio e canto vivo) não depende de tinta nenhuma.
+                    best = occ; bestGroups = groups; bestTally = tally;
+                    Log.Info($"Ocorrência SELECIONADA pelo usuário: '{occ.Name}' ({faceCount} face(s) de queima mapeada(s)).");
+                    break;
+                }
                 if (faceCount > bestFaceCount)
                 {
                     bestFaceCount = faceCount;
@@ -1130,11 +1205,44 @@ namespace AutoEDM.Electrode
             catch (Exception ex) { return "? (" + ex.GetBaseException().Message + ")"; }
         }
 
-        /// <summary>Sinaliza arestas/faces abaixo do raio mínimo usinável.</summary>
-        public IReadOnlyList<string> CheckMinimumRadii(dynamic electrodePart, double minRadiusMm)
+        /// <summary>
+        /// Sinaliza as faces cuja curvatura está fora do que a ferramentaria produz — NÍVEL 1 da
+        /// análise de usinabilidade: o raio EXATO, direto do B-Rep, sem malha e sem limiar para
+        /// calibrar (ver <see cref="Machinability.BRepRadiusProbe"/>).
+        ///
+        /// <paramref name="ladder"/> nula = a ferramentaria de fábrica
+        /// (<see cref="Machinability.ToolLadder.Shop"/>). SOMENTE LEITURA.
+        /// </summary>
+        public IReadOnlyList<string> CheckMinimumRadii(dynamic electrodePart, Machinability.ToolLadder ladder = null)
         {
-            Log.Warn("CheckMinimumRadii: análise de raios mínimos ainda não implementada.");
-            return Array.Empty<string>();
+            object body = TryGetSolidBody(electrodePart);
+            if (body == null)
+            {
+                Log.Warn("Raios mínimos: nenhum corpo sólido acessível — análise não executada.");
+                return Array.Empty<string>();
+            }
+            var lines = Machinability.BRepRadiusProbe.Probe(body, ladder).Select(h => h.Describe()).ToList();
+            lines.AddRange(Machinability.SharpCornerProbe.Probe(body).Select(c => c.Describe()));
+            return lines;
+        }
+
+        /// <summary>
+        /// Corpo sólido de uma peça — ou o próprio objeto, quando já vem um Body. Best-effort:
+        /// devolve null em vez de lançar, porque quem chama é análise de leitura.
+        /// </summary>
+        private static object TryGetSolidBody(dynamic partOrBody)
+        {
+            if (partOrBody == null) return null;
+            try { return (object)partOrBody.Models.Item(1).Body; }
+            catch { }
+            // Já é um Body? A coleção Faces[igQueryAll] existe nele e não num PartDocument.
+            try
+            {
+                object probe = ((dynamic)partOrBody).Faces[1];
+                if (probe != null) return (object)partOrBody;
+            }
+            catch { }
+            return null;
         }
 
         /// <summary>

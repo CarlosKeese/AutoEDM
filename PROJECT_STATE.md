@@ -70,7 +70,8 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Unir superfícies | ✅ validado no SE |
 | Guarda de ambiente por comando | ✅ construído |
 | Configuração externa (`config.json`) | ✅ construído, coberto por teste |
-| Testes de unidade | ⚠️ 84 de 91 passando — as 7 falhas são de `ORingGrooveTests` |
+| Análise de usinabilidade (nível 1: raio + canto vivo) | ✅ construído, coberto por teste; raio validado no SE |
+| Testes de unidade | ✅ 167 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -97,6 +98,13 @@ seleção** da ribbon é a ferramenta que alimenta esse dump.
 
 ## Histórico
 
+- **2026-09-11** — **análise de usinabilidade** no "Analisar (Z)": escada de
+  fresas, jogo de brocas DIN 338, raio exato por B-Rep e canto vivo por
+  topologia. A ocorrência **selecionada** passou a mandar sobre a mira por cor —
+  o 1º run ao vivo revelou que a detecção automática pegava o ELETRODO (que
+  também tem faces pintadas) em vez do postiço. Skill atualizada com
+  `Face.GetParamRange`, a regra propriedade-sobre-método e a instabilidade do
+  `Face.ID` entre rebuilds.
 - **2026-08-07** — commit `1064304`: config externa de eletrodos
   (`AutoEdmConfig`), suíte de testes, `ElectrodeListForm`,
   `ElectrodeDiagnostics`, `ElectrodeNaming`, `FaceColorPainter`, `ComLifetime`
@@ -114,6 +122,33 @@ seleção** da ribbon é a ferramenta que alimenta esse dump.
   quebrava. Regra trocada para `/dist/` e os três arquivos criados.
   Repositório tornado **público**; primeira **release compilada** publicada;
   card criado na página de downloads do kenatec.com.
+
+## Análise de usinabilidade (2026-09-11)
+
+O "Analisar (Z)" deixou de ser só segmentação por profundidade: ele agora mede o
+que a ferramentaria **consegue produzir** e sinaliza o que exige erosão. Núcleo
+em `src/AutoEDM.Core/Machinability/`, todo somente-leitura:
+
+| Arquivo | Papel |
+|---|---|
+| `ToolLadder.cs` | A escada de fresas (puro): alcance por raio e por família, `Classify`, e quais fresas realmente decidem |
+| `DrillSet.cs` | O jogo de brocas DIN 338 (puro) — separado de propósito: fresa de raio *r* serve qualquer canto ρ ≥ *r*; broca de Ø *d* faz furo de Ø *d* e ponto |
+| `BRepRadiusProbe.cs` | Raio exato por B-Rep (COM): cilindros e toros, via **propriedade** `Cylinder.Radius` / `Torus.MinorRadius` |
+| `SharpCornerProbe.cs` | Canto vivo (COM): aresta entre dois planos, raio ZERO — não tem face curva para medir, quem responde é a topologia |
+
+Três decisões que valem lembrar:
+
+- **A premissa "Ø1 × 3 mm" estava errada** — a ferramentaria tem Ø1 × 10 mm
+  longneck, então o teto a raio 0,5 mm é 10 mm. Calibrar em 3 mm condenaria
+  bolsão que se fresa hoje, e falso positivo é o que faz o usuário parar de
+  abrir o relatório. `ToolLadderTests` trava esse número.
+- **Propriedade ganha de método** quando os dois oferecem o mesmo valor:
+  `GetCylinderData` devolve o raio por `[out]` escalar, que é o que o late
+  binding não popula confiável. Registrado na skill.
+- **Concavidade é calibrada, não chutada.** O sinal de `(n1 × n2)·t` separa
+  canto côncavo de convexo, mas a convenção do SE não está no dump — então o
+  sinal é calibrado na própria peça pelas arestas da borda da caixa envolvente,
+  e a análise **recusa classificar** se elas divergirem.
 
 ## Dívida conhecida: as 7 falhas de `ORingGrooveTests`
 
@@ -138,9 +173,18 @@ peça real ainda vai contestar.
 
 ## Próxima ação
 
-Validar no Solid Edge, com uma montagem real, as três ferramentas construídas
-que ainda não passaram por confirmação no CAD: **Alojamento de O'ring**,
-**Aplicar GAP** e **Duplicar eletrodo**. Na do O'ring, resolver junto a dívida
-dos 7 testes acima. Depois disso, fechar a receita da rosca
-física M6 (rodar a *Sonda de rosca* e ler o log), os ícones da ribbon (recurso
-BITMAP Win32, via `tools/make_ribbon_res.ps1`) e o orquestrador completo.
+**Nível 2 da análise de usinabilidade** — a varredura do vazio da cavidade
+(malha por `Body.GetFacetData` → rasterização por fatia → transformada de
+distância → varredura de acesso de cima para baixo → componentes conexos 3D).
+É o que faz a análise enxergar rasgo estreito entre paredes planas e região sem
+acesso, e o que dá a **pegada real** de cada região em vez da caixa envolvente.
+O plano completo, com as cinco fases e os riscos, está publicado como página
+(ver o histórico de 2026-09-11).
+
+Antes disso, confirmar no SE o **canto vivo**: o log dirá se a calibração do
+sinal de concavidade (pelas arestas da borda da caixa envolvente) fecha, e
+quantas arestas a versão plano↔plano descarta por encostar em face curva.
+
+Continuam pendentes de validação no CAD: **Alojamento de O'ring**, **Aplicar
+GAP** e **Duplicar eletrodo**; e em aberto a receita da rosca física M6, os
+ícones da ribbon e o orquestrador completo.

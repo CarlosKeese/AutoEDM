@@ -77,10 +77,18 @@ namespace AutoEDM.AddIn
             Run(CmdAnalisarZ, (connector, doc, p) =>
             {
                 Selection.ZAnalysisResult res = NewBuilder(connector).AnalyzeElectrodesByZ(doc, p);
+
+                // A usinabilidade só aparece quando reprovou alguma coisa: silêncio aqui é
+                // resultado bom, e um bloco fixo dizendo "nada encontrado" a cada clique treina o
+                // usuário a fechar a janela sem ler.
+                string machinability = res.DescribeMachinability();
                 MessageBox.Show(
                     $"{res.Electrodes.Count} eletrodo(s) proposto(s), por nível de Z.\n" +
-                    $"({res.FlatFaces} piso / {res.SteepFaces} parede)\n\nVeja as posições no log.",
-                    "AutoEDM — Analisar eletrodos", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    $"({res.FlatFaces} piso / {res.SteepFaces} parede)\n" +
+                    (machinability.Length > 0 ? "\n" + machinability + "\n" : "") +
+                    "\nVeja as posições no log.",
+                    "AutoEDM — Analisar eletrodos", MessageBoxButtons.OK,
+                    res.HasEdmOnlyGeometry ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             });
         }
 

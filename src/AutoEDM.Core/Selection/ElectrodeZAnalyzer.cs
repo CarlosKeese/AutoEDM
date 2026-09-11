@@ -64,6 +64,50 @@ namespace AutoEDM.Selection
         /// <summary>Histograma de TODAS as cores na peça-alvo (mapeadas e não), maior primeiro.</summary>
         public List<ColorTally> ColorTally { get; } = new List<ColorTally>();
 
+        // --- Usinabilidade, nível 1: raio EXATO por B-Rep (2026-09-11) -----------
+        /// <summary>Uma linha pronta por face cuja curvatura a ferramentaria não produz.</summary>
+        public List<string> MachinabilityWarnings { get; } = new List<string>();
+
+        /// <summary>Faces com raio abaixo do da menor fresa — nenhuma profundidade salva.</summary>
+        public int BelowMinimumRadiusCount { get; set; }
+
+        /// <summary>Faces cujo raio alguma fresa serve, mas fundas demais para ela chegar.</summary>
+        public int BeyondReachCount { get; set; }
+
+        /// <summary>Furos fundos demais para fresa — questão de BROCA, não de EDM.</summary>
+        public int DeepHoleCount { get; set; }
+
+        /// <summary>Cantos VIVOS côncavos e verticais — fresa nenhuma faz, é EDM por definição.</summary>
+        public int SharpCornerCount { get; set; }
+
+        /// <summary>
+        /// Alguma face precisa mesmo de EDM? Só isto justifica alarme na janela — furo fundo
+        /// é informação, não problema.
+        /// </summary>
+        public bool HasEdmOnlyGeometry
+        {
+            get { return BelowMinimumRadiusCount > 0 || BeyondReachCount > 0 || SharpCornerCount > 0; }
+        }
+
+        /// <summary>
+        /// Texto de usinabilidade para a janela do "Analisar (Z)". Vazio quando nada foi
+        /// reprovado — silêncio é resultado bom, não falta de análise.
+        /// </summary>
+        public string DescribeMachinability()
+        {
+            if (MachinabilityWarnings.Count == 0) return string.Empty;
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Usinabilidade: {BelowMinimumRadiusCount} face(s) abaixo do raio mínimo da " +
+                          $"ferramentaria, {BeyondReachCount} fora de alcance em profundidade" +
+                          (SharpCornerCount > 0 ? $", {SharpCornerCount} canto(s) VIVO(s)" : "") +
+                          (DeepHoleCount > 0 ? $", {DeepHoleCount} furo(s) fundo(s) — broca, não EDM" : "") + ".");
+            foreach (var w in MachinabilityWarnings.Take(8)) sb.AppendLine("  • " + w);
+            if (MachinabilityWarnings.Count > 8)
+                sb.AppendLine($"  … e mais {MachinabilityWarnings.Count - 8}. A lista completa está no log.");
+            return sb.ToString().TrimEnd();
+        }
+
         /// <summary>Existe uma cor NÃO mapeada com MAIS faces que a queima detectada? Sinal
         /// forte de que a queima real foi pintada numa cor fora do mapa (Log 57: roxo 132 &gt;
         /// vermelho 52) — a detecção provavelmente pegou a região errada.</summary>
