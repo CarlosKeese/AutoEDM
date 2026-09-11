@@ -33,6 +33,7 @@ namespace AutoEDM.AddIn
         private const int CmdDuplicarEletrodo = 12; // Duplicar eletrodo(s) selecionado(s) p/ o próximo Ra da tabela
         private const int CmdDiagRosca = 13;        // Sonda da rosca M6 (peça descartável)
         private const int CmdAlojamentoORing = 14;  // Alojamento de anel O'ring (janela modeless)
+        private const int CmdSondaInterPart = 15;   // Sonda do inter-part (rodada 2) — só leitura + peça descartável
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -64,6 +65,7 @@ namespace AutoEDM.AddIn
                 case CmdInspecionar: InspecionarSelecao(); break;
                 case CmdDiagRosca: DiagnosticarRosca(); break;
                 case CmdAlojamentoORing: AlojamentoORing(); break;
+                case CmdSondaInterPart: SondarInterPart(); break;
                 case CmdIniciarLeitura: IniciarLeitura(); break;
                 case CmdGravarLeitura: GravarLeitura(); break;
             }
@@ -89,6 +91,25 @@ namespace AutoEDM.AddIn
                     "\nVeja as posições no log.",
                     "AutoEDM — Analisar eletrodos", MessageBoxButtons.OK,
                     res.HasEdmOnlyGeometry ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+            });
+        }
+
+        /// <summary>
+        /// SONDA DO INTER-PART (rodada 2). Só leitura na montagem + peças DESCARTÁVEIS: responde,
+        /// numa rodada, as rotas de cópia entre peças que nunca foram executadas e mapeia a API
+        /// para a skill. Não altera a cavidade, não salva a montagem.
+        /// </summary>
+        private void SondarInterPart()
+        {
+            Run(CmdSondaInterPart, (connector, doc, p) =>
+            {
+                AutoEDM.Experiments.InterPartProbe.Run(connector, doc);
+                MessageBox.Show(
+                    "Sonda concluída. TODO o resultado está no log — é ele que interessa, não esta janela.\n\n" +
+                    "Se quiser o teste decisivo: entre em EDIÇÃO EM CONTEXTO no eletrodo à mão, " +
+                    "deixe aberta e rode a sonda de novo. Comparar os dois logs responde se a cópia " +
+                    "entre peças depende só desse estado.",
+                    "AutoEDM — Sonda inter-part", MessageBoxButtons.OK, MessageBoxIcon.Information);
             });
         }
 
@@ -551,6 +572,10 @@ namespace AutoEDM.AddIn
                 { CmdIniciarLeitura,      new CommandSpec("INICIAR LEITURA",       DocKind.Any, ModelingEnv.Any) },
                 { CmdGravarLeitura,       new CommandSpec("GRAVAR LOG DA LEITURA", DocKind.Any, ModelingEnv.Any) },
                 { CmdDiagRosca,           new CommandSpec("SONDA DE ROSCA M6",     DocKind.Any, ModelingEnv.Any) },
+                // Sonda do inter-part: lê a montagem e trabalha em peça DESCARTÁVEL. Serve
+                // tanto com a montagem normal quanto com o usuário em edição em contexto —
+                // é justamente a diferença entre os dois estados que ela mede.
+                { CmdSondaInterPart,      new CommandSpec("SONDA INTER-PART",      DocKind.Assembly, ModelingEnv.Any) },
             };
 
         /// <summary>

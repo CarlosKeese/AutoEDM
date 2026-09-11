@@ -66,6 +66,10 @@
               screentip="Gravador: snapshot ANTES da sua ação manual"
               supertip="Clique ANTES de fazer a ação à mão no SE. Tira uma foto das features/superfícies existentes. Depois de criar 'Limite'/costura/estender/mover, clique em 'Gravar log da leitura' para o AutoEDM dumpar exatamente o que você criou."
               imageId="3" showLabel="true" />
+      <button id="15" size="large" label="Sonda inter-part"
+              screentip="Sonda: rotas de cópia entre peças (SÓ LEITURA)"
+              supertip="Selecione a ocorrência da CAVIDADE na montagem e clique. Testa, numa rodada só, as rotas de cópia das faces de queima entre peças que ainda não foram experimentadas (cópia por ARQUIVO com as cores, faces do corpo da ocorrência, referência de topologia, corpo por tag) e grava o mapa dos comandos nativos do Solid Edge. Trabalha em peças DESCARTÁVEIS: não altera a cavidade e não salva a montagem. O resultado inteiro vai para o log. Para o teste decisivo, entre em edição em contexto à mão, deixe aberta e rode de novo."
+              imageId="6" showLabel="true" />
       <button id="13" size="large" label="Sonda de rosca (M6)"
               screentip="Diagnóstico: por que o furo M6 sai sem rosca"
               supertip="Cria uma PEÇA NOVA descartável (não salva) com um bloco e cinco furos M6 lado a lado, cada um por uma receita diferente da API de rosca do Solid Edge (tabela legada x base de furos nova; rosca física pedida na criação x depois; síncrono x ordenado). O log traz o HoleData completo, o Status da feature e o código de erro da rosca física. Olhe a peça, veja qual furo saiu com a hélice CORTADA e mande o log — é assim que a receita certa entra no 'Criar Base'."
