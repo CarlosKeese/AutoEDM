@@ -34,6 +34,7 @@ namespace AutoEDM.AddIn
         private const int CmdDiagRosca = 13;        // Sonda da rosca M6 (peça descartável)
         private const int CmdAlojamentoORing = 14;  // Alojamento de anel O'ring (janela modeless)
         private const int CmdSondaInterPart = 15;   // Sonda do inter-part (rodada 2) — só leitura + peça descartável
+        private const int CmdListaCorte = 16;       // Lista de corte: perfil do estoque + medida na serra dos eletrodos SELECIONADOS
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -56,6 +57,7 @@ namespace AutoEDM.AddIn
                 case CmdCriarEletrodos: CriarEletrodos(); break;
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
                 case CmdCoordenadas: AbrirCoordenadas(); break;
+                case CmdListaCorte: AbrirListaCorte(); break;
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
                 case CmdCriarBase: CriarBase(); break;
@@ -195,6 +197,36 @@ namespace AutoEDM.AddIn
                     return;
                 }
                 using (var form = new ElectrodeListForm(items))
+                {
+                    form.ShowDialog();
+                }
+            });
+        }
+
+        /// <summary>
+        /// Botão "Lista de corte" (ambiente de MONTAGEM, Carlos, 2026-09-14): mesma seleção do
+        /// "Coordenadas", agrupada por ARQUIVO — posições na montagem, perfil de cobre do estoque
+        /// (identificado pelas medidas da peça) e medida na serra com 5 mm de sobremetal. A janela
+        /// copia a tabela formatada para impressão. Somente leitura.
+        /// </summary>
+        private void AbrirListaCorte()
+        {
+            Run(CmdListaCorte, (connector, doc, p) =>
+            {
+                ElectrodeBuilder builder = NewBuilder(connector);
+                System.Collections.Generic.List<SawCutListItem> items = builder.ListSawCuts(doc);
+                if (items.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Nenhum eletrodo selecionado. Na montagem, selecione a(s) ocorrência(s) do(s) eletrodo(s) " +
+                        "(clique na peça, não numa face) e clique em \"Lista de corte\" de novo.",
+                        "AutoEDM — Lista de corte", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                string asmName = null;
+                try { asmName = (string)doc.Name; } catch { }
+                using (var form = new SawCutListForm(items, builder.BlankCatalog, asmName,
+                           it => builder.RenderElectrodeThumbnail(it.PartDocument)))
                 {
                     form.ShowDialog();
                 }
@@ -552,6 +584,7 @@ namespace AutoEDM.AddIn
                 { CmdCriarEletrodoManual, new CommandSpec("CRIAR ELETRODO (MANUAL, da seleção)",  DocKind.Assembly, ModelingEnv.Any) },
                 { CmdDuplicarEletrodo,    new CommandSpec("DUPLICAR ELETRODO",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCoordenadas,         new CommandSpec("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
+                { CmdListaCorte,          new CommandSpec("LISTA DE CORTE (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdSpecSheet,           new CommandSpec("FICHA DE ELETRODOS (spec-sheet)",      DocKind.Assembly, ModelingEnv.Any) },
 
                 // --- peça: cada botão tem UM ambiente, o do recurso que ele cria ---

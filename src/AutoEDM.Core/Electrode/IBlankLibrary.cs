@@ -158,6 +158,12 @@ namespace AutoEDM.Electrode
         /// nada servir.
         /// </summary>
         IReadOnlyList<BlankSpec> EligibleBlanks(BoundingBox burnBox, double marginPerSide, string material);
+
+        /// <summary>
+        /// O catálogo inteiro, sem filtro de pegada nem de material — a "Lista de corte" identifica
+        /// o perfil de um eletrodo JÁ PRONTO pelas medidas dele e oferece esta lista para trocar.
+        /// </summary>
+        IReadOnlyList<BlankSpec> Catalog { get; }
     }
 
     /// <summary>
@@ -183,6 +189,8 @@ namespace AutoEDM.Electrode
         {
             _catalog = (catalog ?? DefaultCatalog()).ToList();
         }
+
+        public IReadOnlyList<BlankSpec> Catalog => _catalog;
 
         public BlankSpec SelectBlank(BoundingBox burnBox, double marginPerSide, string material)
             => EligibleBlanks(burnBox, marginPerSide, material).FirstOrDefault();

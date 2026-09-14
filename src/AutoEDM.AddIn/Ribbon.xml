@@ -34,6 +34,10 @@
               screentip="Lista os eletrodos SELECIONADOS: posição + GAP/Ra"
               supertip="Na montagem, selecione a(s) ocorrência(s) do(s) eletrodo(s) de interesse e clique. Abre uma janela com a posição de cada um (mesma leitura de 'Propriedades de Ocorrência' no SE) e o GAP/Ra gravados na peça. Não altera nada."
               imageId="2" showLabel="true" />
+      <button id="16" size="large" label="Lista de corte"
+              screentip="Lista de corte dos eletrodos SELECIONADOS: perfil do estoque + medida na serra"
+              supertip="Na montagem, selecione a(s) ocorrência(s) do(s) eletrodo(s) e clique. Abre uma janela com uma linha por arquivo: quantas posições ele ocupa na montagem, o perfil de cobre do estoque (identificado pelas medidas da peça — dá para trocar na própria lista) e a medida de corte na serra já com 5 mm de sobremetal. O botão 'Copiar para impressão' põe a tabela na área de transferência, pronta para colar no Word, Excel ou e-mail. Não altera nada."
+              imageId="5" showLabel="true" />
       <button id="4" size="large" label="Ficha (spec-sheet)"
               screentip="Folha de dados dos eletrodos"
               supertip="Gera a ficha por eletrodo (Ra, pegada, blank, offset por Ra, fixação) em .txt e .csv. Não altera a montagem."

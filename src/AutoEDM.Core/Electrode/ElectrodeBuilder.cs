@@ -1535,6 +1535,223 @@ namespace AutoEDM.Electrode
         }
 
         // ------------------------------------------------------------------
+        //  Ferramenta: lista de corte na serra (janela "Lista de corte")
+        // ------------------------------------------------------------------
+
+        /// <summary>Catálogo de perfis do estoque que este builder usa — a janela "Lista de corte"
+        /// oferece essa mesma lista para trocar o perfil identificado.</summary>
+        public IReadOnlyList<BlankSpec> BlankCatalog => _blankLibrary.Catalog;
+
+        /// <summary>
+        /// Lista de corte dos eletrodos SELECIONADOS na montagem (Carlos, 2026-09-14): uma linha
+        /// por ARQUIVO, com quantas posições esse .par ocupa na montagem inteira, o perfil de cobre
+        /// do estoque e a medida na serra com sobremetal. O "Criar Base" não grava o perfil na
+        /// peça, então ele é identificado pela caixa envolvente do corpo
+        /// (<see cref="SawCutPlanner"/>). Mesma seleção do botão "Coordenadas". SOMENTE-LEITURA.
+        /// </summary>
+        public List<SawCutListItem> ListSawCuts(dynamic asmDoc, double allowanceMm = SawCutPlanner.DefaultAllowanceMm)
+        {
+            if (asmDoc == null) throw new ArgumentNullException(nameof(asmDoc));
+            var result = new List<SawCutListItem>();
+            var ctx = new AssemblyContext(asmDoc);
+
+            List<OccurrenceInfo> selected = CollectSelectedOccurrences(asmDoc, out int skipped, "Lista de corte");
+            if (skipped > 0)
+                Log.Info($"Lista de corte: {skipped} item(ns) da seleção ignorado(s) (não são ocorrências).");
+            if (selected.Count == 0) return result;
+
+            // Posições = ocorrências do MESMO arquivo na montagem inteira, não só as selecionadas
+            // (moldes multi-cavidade usam o mesmo .par em várias posições — mesma regra do
+            // "Duplicar eletrodo").
+            var positions = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var occ in ctx.GetOccurrences())
+            {
+                string occPath = TryFullName((object)occ.OccurrenceDocument);
+                if (occPath == null) continue;
+                positions.TryGetValue(occPath, out int n);
+                positions[occPath] = n + 1;
+            }
+
+            var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var occ in selected)
+            {
+                object partDoc = (object)occ.OccurrenceDocument;
+                string path = TryFullName(partDoc);
+                if (!listed.Add(path ?? occ.Name)) continue; // outra ocorrência do mesmo arquivo: já está na lista
+
+                var item = new SawCutListItem
+                {
+                    PartDocument = partDoc,
+                    FullPath = path,
+                    FileName = path != null ? System.IO.Path.GetFileName(path) : occ.Name,
+                };
+                if (path != null && positions.TryGetValue(path, out int count))
+                {
+                    item.Positions = count;
+                }
+                else
+                {
+                    item.Positions = 1;
+                    item.Notes.Add("caminho da peça não lido — posições não contadas na montagem");
+                }
+
+                item.Material = TryReadPartMaterial(partDoc);
+                if (TryReadPartSizeMm(partDoc, out double sx, out double sy, out double sz, out string sizeErr))
+                {
+                    item.SizeKnown = true;
+                    item.SizeXmm = sx;
+                    item.SizeYmm = sy;
+                    item.SizeZmm = sz;
+                    item.Cut = SawCutPlanner.Identify(sx, sy, sz, item.Material, BlankCatalog, allowanceMm);
+                }
+                else
+                {
+                    item.Notes.Add("medidas da peça não lidas: " + sizeErr);
+                }
+
+                Log.Info($"Lista de corte: '{item.FileName}' posições={item.Positions} " +
+                         $"caixa={item.SizeXmm:0.00}×{item.SizeYmm:0.00}×{item.SizeZmm:0.00} mm material={item.Material ?? "—"} → " +
+                         $"{item.Cut.Blank?.Describe() ?? "perfil não identificado"} {item.Cut.Orientation} " +
+                         $"corte={(item.Cut.CutMm.HasValue ? item.Cut.CutMm.Value.ToString("0", CultureInfo.InvariantCulture) : "—")}" +
+                         $"{(item.Cut.Note != null ? " (" + item.Cut.Note + ")" : "")}");
+                result.Add(item);
+            }
+
+            Log.Info($"Lista de corte: {result.Count} arquivo(s) listado(s).");
+            return result;
+        }
+
+        private static string TryFullName(object doc)
+        {
+            if (doc == null) return null;
+            try
+            {
+                string s = (string)((dynamic)doc).FullName;
+                return string.IsNullOrWhiteSpace(s) ? null : s;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Caixa envolvente (mm, sistema da PEÇA) da união dos corpos de <c>Models</c>.
+        /// <c>GetExactRange</c> primeiro: a caixa do <c>GetRange</c> pode vir folgada num corpo com
+        /// face curva (bloco redondo), e aqui 0,3 mm separa um perfil do outro (RED 12 × 12,7).
+        /// </summary>
+        private static bool TryReadPartSizeMm(object partDoc, out double sizeX, out double sizeY, out double sizeZ, out string error)
+        {
+            sizeX = sizeY = sizeZ = 0;
+            error = null;
+            if (partDoc == null) { error = "documento da peça inacessível"; return false; }
+
+            dynamic models;
+            int n;
+            try { models = ((dynamic)partDoc).Models; n = (int)models.Count; }
+            catch (Exception ex) { error = "Models inacessível — " + ex.GetBaseException().Message; return false; }
+            if (n == 0) { error = "peça sem corpo"; return false; }
+
+            double[] min = null, max = null;
+            for (int i = 1; i <= n; i++)
+            {
+                object body;
+                try { body = (object)models.Item(i).Body; }
+                catch { continue; }
+                if (body == null) continue;
+
+                double[] bmin, bmax;
+                if (!FaceGeometry.TryTwoPointOutMm(body, "GetExactRange", out bmin, out bmax, out string _) &&
+                    !FaceGeometry.TryGetBodyRangeMm(body, out bmin, out bmax)) continue;
+                if (bmin == null || bmax == null || bmin.Length < 3 || bmax.Length < 3) continue;
+
+                if (min == null) { min = (double[])bmin.Clone(); max = (double[])bmax.Clone(); continue; }
+                for (int k = 0; k < 3; k++)
+                {
+                    min[k] = Math.Min(min[k], bmin[k]);
+                    max[k] = Math.Max(max[k], bmax[k]);
+                }
+            }
+
+            if (min == null) { error = "Body.GetExactRange/GetRange não responderam"; return false; }
+            sizeX = max[0] - min[0];
+            sizeY = max[1] - min[1];
+            sizeZ = max[2] - min[2];
+            return true;
+        }
+
+        /// <summary>
+        /// Material gravado na peça (Propriedades de arquivo → MechanicalModeling → Material).
+        /// Best-effort, A VALIDAR no SE: só desempata perfis de mesma seção (RED 16 cobre × CuW80) —
+        /// sem ele a lista cai no cobre padrão e mostra o CuW80 como alternativa.
+        /// </summary>
+        private static string TryReadPartMaterial(object partDoc)
+        {
+            if (partDoc == null) return null;
+            try
+            {
+                dynamic props = ((dynamic)partDoc).Properties;
+                string s = (string)props.Item("MechanicalModeling").Item("Material").Value;
+                return string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+            }
+            catch (Exception ex)
+            {
+                Log.Info("Lista de corte: material da peça não lido — " + ex.GetBaseException().Message);
+                return null;
+            }
+        }
+
+        /// <summary>Tolerância de corda (m) da malha da miniatura — 0,05 mm.</summary>
+        private const double ThumbnailFacetToleranceM = 0.00005;
+
+        /// <summary>
+        /// Miniatura isométrica (vista de baixo) do eletrodo para a impressão da Lista de corte:
+        /// malha TODAS as faces de todos os corpos da peça (<c>Body.Faces[igQueryAll]</c> →
+        /// <c>Face.GetFacetData</c>, a leitura já validada da secção de queima) e desenha com
+        /// <see cref="ElectrodeThumbnail"/>. SOMENTE-LEITURA. Null (com log) se não houver malha.
+        /// </summary>
+        public System.Drawing.Bitmap RenderElectrodeThumbnail(object partDoc, int sizePx = ElectrodeThumbnail.DefaultSizePx)
+        {
+            string name = System.IO.Path.GetFileName(TryFullName(partDoc) ?? "<peça>");
+            if (partDoc == null) { Log.Warn($"Miniatura: '{name}' sem documento da peça."); return null; }
+
+            var meshesMm = new List<double[]>();
+            int faceCount = 0, noMesh = 0;
+            try
+            {
+                dynamic models = ((dynamic)partDoc).Models;
+                int modelCount = (int)models.Count;
+                for (int m = 1; m <= modelCount; m++)
+                {
+                    dynamic all;
+                    try { all = models.Item(m).Body.Faces[1]; } // 1 = igQueryAll
+                    catch { continue; }
+                    int n = 0;
+                    try { n = (int)all.Count; } catch { }
+                    for (int i = 1; i <= n; i++)
+                    {
+                        object face;
+                        try { face = all.Item(i); } catch { noMesh++; continue; }
+                        faceCount++;
+                        if (!SectionAreaCalculator.TryGetFacetPointsM(face, ThumbnailFacetToleranceM, out double[] ptsM, out string _))
+                        {
+                            noMesh++;
+                            continue;
+                        }
+                        meshesMm.Add(ptsM.Select(v => Units.MToMm(v)).ToArray());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Miniatura: '{name}' — corpo inacessível: {ex.GetBaseException().Message}");
+                return null;
+            }
+
+            int facets = meshesMm.Sum(mm => mm.Length / 9);
+            Log.Info($"Miniatura: '{name}' {faceCount} face(s), {facets} faceta(s){(noMesh > 0 ? $", {noMesh} face(s) sem malha" : "")}.");
+            if (meshesMm.Count == 0) return null;
+            return ElectrodeThumbnail.Render(meshesMm, sizePx);
+        }
+
+        // ------------------------------------------------------------------
         //  Ferramenta: listar eletrodos SELECIONADOS (janela "Coordenadas")
         // ------------------------------------------------------------------
 

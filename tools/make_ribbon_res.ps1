@@ -1,11 +1,11 @@
-﻿# Gera um .res Win32 com 4 recursos RT_BITMAP (IDs 1..4) para os botões do ribbon.
+﻿# Gera um .res Win32 com 5 recursos RT_BITMAP (IDs 1..5) para os botões do ribbon.
 # Sem rc.exe: monta o binário .res à mão (formato documentado) + bitmaps via System.Drawing.
 Add-Type -AssemblyName System.Drawing
 
 $outRes = $args[0]
 if (-not $outRes) { throw "uso: make_res.ps1 <caminho .res>" }
 
-# --- desenha os 4 ícones (16x16, 24-bit, fundo branco) ---
+# --- desenha os 5 ícones (16x16, 24-bit, fundo branco) ---
 function New-IconDib([int]$id) {
     $bmp = New-Object System.Drawing.Bitmap 16,16,([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -24,6 +24,16 @@ function New-IconDib([int]$id) {
         4 { # Ficha: linhas laranja
             $p = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(210,120,20)), 2
             $g.DrawLine($p, 3,4, 13,4); $g.DrawLine($p, 3,8, 13,8); $g.DrawLine($p, 3,12, 10,12) }
+        5 { # Lista de corte: lâmina de serra cinza (corpo + dentes)
+            $p = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70,70,70)), 1
+            $b = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(160,160,160))
+            $g.FillRectangle($b, 1,3, 14,5); $g.DrawRectangle($p, 1,3, 14,5)
+            $pts = New-Object 'System.Drawing.Point[]' 8
+            for ($i = 0; $i -lt 8; $i++) {
+                $y = if ($i % 2) { 12 } else { 8 }
+                $pts[$i] = [System.Drawing.Point]::new(1 + 2 * $i, $y)
+            }
+            $g.DrawLines($p, $pts) }
     }
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
@@ -54,7 +64,7 @@ function Write-ResHeader([UInt32]$dataSize, [UInt16]$typeOrd, [UInt16]$nameOrd, 
 # Cabeçalho nulo obrigatório no início do .res
 Write-ResHeader 0 0 0 0
 
-for ($id = 1; $id -le 4; $id++) {
+for ($id = 1; $id -le 5; $id++) {
     [byte[]]$dib = New-IconDib $id
     Write-Output ("  id {0}: DIB {1} bytes" -f $id, $dib.Length)
     Write-ResHeader ([UInt32]$dib.Length) 2 ([UInt16]$id) 0x1030  # type 2 = RT_BITMAP

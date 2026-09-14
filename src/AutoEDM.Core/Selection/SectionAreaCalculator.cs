@@ -236,13 +236,21 @@ namespace AutoEDM.Selection
         /// <summary>
         /// Malha da face em METROS: 9 doubles por faceta (v0.xyz, v1.xyz, v2.xyz).
         /// </summary>
-        private static bool TryGetFacetPointsM(object comFace, out double[] pointsM, out string error)
+        private static bool TryGetFacetPointsM(object comFace, out double[] pointsM, out string error) =>
+            TryGetFacetPointsM(comFace, FacetToleranceM, out pointsM, out error);
+
+        /// <summary>
+        /// Mesma leitura com tolerância de corda escolhida (metros) — a miniatura da Lista de corte
+        /// usa uma bem mais grossa que a da secção: numa imagem de 1 pol. o detalhe não aparece e a
+        /// malha fica leve.
+        /// </summary>
+        public static bool TryGetFacetPointsM(object comFace, double toleranceM, out double[] pointsM, out string error)
         {
             pointsM = null; error = null;
             try
             {
                 // (Tolerance, [out] FacetCount, [in,out] Points, [opt][out] Normals, [opt][out] TextureCoords)
-                object[] args = { FacetToleranceM, 0, new double[0] };
+                object[] args = { toleranceM, 0, new double[0] };
                 var mod = new ParameterModifier(3);
                 mod[1] = true; // FacetCount [out]
                 mod[2] = true; // Points [in,out]
