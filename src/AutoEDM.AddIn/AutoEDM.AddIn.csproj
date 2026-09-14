@@ -18,7 +18,7 @@
     <!-- ComVisible por tipo (atributos na classe); não expor tudo. -->
     <ComVisible>false</ComVisible>
     <!--
-      Recurso Win32 com os bitmaps do ribbon (RT_BITMAP IDs 1..5 = imageId do XML).
+      Recurso Win32 com os bitmaps do ribbon (RT_BITMAP IDs 1..5 e 7 = imageId do XML).
       O Solid Edge lê os ícones do DLL via SetAddInInfo(hInstance,...). Gerado por
       tools/make_ribbon_res.ps1 (sem rc.exe). Substitui o recurso Win32 padrão (version info).
     -->

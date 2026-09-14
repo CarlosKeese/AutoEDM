@@ -9,6 +9,7 @@ using AutoEDM.Electrode;
 using AutoEDM.Model;
 using AutoEDM.Reporting;
 using AutoEDM.Sealing;
+using AutoEDM.Wedm;
 
 namespace AutoEDM.AddIn
 {
@@ -35,6 +36,7 @@ namespace AutoEDM.AddIn
         private const int CmdAlojamentoORing = 14;  // Alojamento de anel O'ring (janela modeless)
         private const int CmdSondaInterPart = 15;   // Sonda do inter-part (rodada 2) — só leitura + peça descartável
         private const int CmdListaCorte = 16;       // Lista de corte: perfil do estoque + medida na serra dos eletrodos SELECIONADOS
+        private const int CmdExportarPerfisWedm = 17; // WEDM: curvas de construção → um .igs por altura Z (PEÇA síncrona)
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -58,6 +60,7 @@ namespace AutoEDM.AddIn
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
                 case CmdCoordenadas: AbrirCoordenadas(); break;
                 case CmdListaCorte: AbrirListaCorte(); break;
+                case CmdExportarPerfisWedm: ExportarPerfisWedm(); break;
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
                 case CmdCriarBase: CriarBase(); break;
@@ -230,6 +233,58 @@ namespace AutoEDM.AddIn
                 {
                     form.ShowDialog();
                 }
+            });
+        }
+
+        /// <summary>
+        /// Botão "Exportar perfis (IGES)" do grupo WEDM (PEÇA síncrona, Carlos, 2026-09-14): as curvas
+        /// de construção visíveis da peça viram um .igs por altura Z, na pasta da peça, com o nome
+        /// dela + "Z = XX.XX" — perfis de corte a fio para o Pitágoras, nas coordenadas da peça. Não
+        /// altera o modelo.
+        /// </summary>
+        private void ExportarPerfisWedm()
+        {
+            const string title = "AutoEDM — Exportar perfis WEDM";
+            Run(CmdExportarPerfisWedm, (connector, doc, p) =>
+            {
+                WedmExportResult r = WedmProfileExporter.Export((object)doc);
+                if (!r.Ok)
+                {
+                    MessageBox.Show(r.Message, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"{r.Files.Count} perfil(is) gravado(s) em:");
+                sb.AppendLine(r.Folder);
+                sb.AppendLine();
+                foreach (WedmLevelFile f in r.Files)
+                    sb.AppendLine($"   {System.IO.Path.GetFileName(f.Path)}  —  {f.CurveCount} curva(s){(f.Replaced ? " (substituído)" : "")}");
+
+                var notes = new System.Collections.Generic.List<string>();
+                if (r.NotHorizontal.Count > 0)
+                    notes.Add($"{r.NotHorizontal.Count} curva(s) fora de plano horizontal NÃO foram exportadas.");
+                if (r.Read.FeaturesHidden > 0)
+                    notes.Add($"{r.Read.FeaturesHidden} curva(s) oculta(s) ou suprimida(s) ficaram de fora.");
+                if (r.Read.EdgesStroked > 0)
+                    notes.Add($"{r.Read.EdgesStroked} curva(s) sem leitura exata saíram como polilinha de 0,001 mm.");
+                if (r.Read.EdgesFailed > 0)
+                    notes.Add($"{r.Read.EdgesFailed} aresta(s) não puderam ser lidas — veja o log.");
+                if (r.StaleFiles.Count > 0)
+                    notes.Add($"{r.StaleFiles.Count} arquivo(s) de outros níveis, de uma exportação anterior, continuam na pasta: " +
+                              string.Join(", ", System.Linq.Enumerable.Select(r.StaleFiles, System.IO.Path.GetFileName)));
+                if (notes.Count > 0)
+                {
+                    sb.AppendLine();
+                    foreach (string n in notes) sb.AppendLine("ATENÇÃO: " + n);
+                }
+                sb.AppendLine();
+                sb.Append("Abrir a pasta?");
+
+                bool attention = notes.Count > 0;
+                if (MessageBox.Show(sb.ToString(), title, MessageBoxButtons.YesNo,
+                        attention ? MessageBoxIcon.Warning : MessageBoxIcon.Information) == DialogResult.Yes)
+                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{r.Files[0].Path}\"");
             });
         }
 
@@ -599,6 +654,8 @@ namespace AutoEDM.AddIn
                 // Esboço + corte revolvido: em ORDENADO o esboço é filho legítimo do recurso e
                 // some junto quando o usuário apaga o canal. Em síncrono viraria órfão.
                 { CmdAlojamentoORing,     new CommandSpec("ALOJAMENTO DE O'RING", DocKind.Part, ModelingEnv.Ordered) },
+                // WEDM: só LÊ as curvas e grava .igs. Síncrono porque é onde o Carlos prepara os perfis.
+                { CmdExportarPerfisWedm,  new CommandSpec("EXPORTAR PERFIS WEDM (IGES por Z)", DocKind.Part, ModelingEnv.Synchronous) },
 
                 // --- diagnóstico: só leem, ou criam documento próprio — servem em qualquer ambiente ---
                 { CmdInspecionar,         new CommandSpec("INSPECIONAR SELEÇÃO",   DocKind.Any, ModelingEnv.Any) },

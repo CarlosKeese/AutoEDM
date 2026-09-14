@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 12; // incrementar ao mudar a ribbon (v12 = supertips com o ambiente de modelagem exigido)
+            AddInEx.GuiVersion = 13; // incrementar ao mudar a ribbon (v13 = grupo WEDM + Lista de corte)
 
             Current = this;
             App = application;

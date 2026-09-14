@@ -61,6 +61,12 @@
               supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
               imageId="1" showLabel="true" />
     </group>
+    <group name="WEDM">
+      <button id="17" size="large" label="Exportar perfis (IGES)"
+              screentip="Perfis de corte a fio: um arquivo .igs por altura Z (PEÇA, modelagem SÍNCRONA)"
+              supertip="Na PEÇA (.par) já salva, em modelagem SÍNCRONA: lê as CURVAS DE CONSTRUÇÃO visíveis (interseção, projeção, derivada, por pontos-chave, 3D...) — o sólido é ignorado — e grava na pasta da peça um arquivo .igs por altura Z, com o nome da peça + 'Z = XX.XX'. Retas e arcos saem exatos e as B-splines com os polos e nós originais, em milímetros e nas coordenadas da própria peça (Z real), prontos para importar no Pitágoras. Curva oculta fica de fora; curva que não está num plano horizontal não é exportada e é avisada no fim. Não altera o modelo."
+              imageId="7" showLabel="true" />
+    </group>
     <group name="Diagnóstico">
       <button id="6" size="large" label="Inspecionar seleção"
               screentip="SPY: dumpa o objeto COM selecionado"
