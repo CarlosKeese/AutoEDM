@@ -84,7 +84,7 @@ AutoEDM automatiza esse pipeline como uma **coleção de ferramentas individuais
 
 ## Os comandos da faixa de opções
 
-A aba **AutoEDM** tem quatro grupos. A coluna **Ambiente** é levada a sério: cada botão **declara** o que exige e, no lugar errado, fica cinza — ver [Ambiente de modelagem](#ambiente-de-modelagem-síncrono-x-ordenado).
+A aba **AutoEDM** tem cinco grupos. A coluna **Ambiente** é levada a sério: cada botão **declara** o que exige e, no lugar errado, fica cinza — ver [Ambiente de modelagem](#ambiente-de-modelagem-síncrono-x-ordenado).
 
 ### Eletrodos — documento de montagem
 
@@ -100,6 +100,7 @@ A aba **AutoEDM** tem quatro grupos. A coluna **Ambiente** é levada a sério: c
 | Comando | Ambiente | O que faz |
 |---|---|---|
 | **Coordenadas** | qualquer | Lista os eletrodos selecionados com posição (mesma leitura de *Propriedades de Ocorrência*) e o GAP/Ra gravados na peça. Não altera nada. |
+| **Lista de corte** | qualquer | Uma linha por arquivo de eletrodo selecionado: quantas posições ele ocupa na montagem, o perfil de cobre do estoque (identificado pelas medidas da peça, trocável na própria lista) e a medida de corte na serra já com os 5 mm de sobremetal. *Copiar para impressão* põe a tabela na área de transferência. Não altera nada. |
 | **Ficha (spec-sheet)** | qualquer | Gera a ficha por eletrodo — Ra, pegada, blank, offset por Ra, fixação — em `.txt` e `.csv`. |
 
 ### Peça — documento de peça
@@ -110,6 +111,15 @@ A aba **AutoEDM** tem quatro grupos. A coluna **Ambiente** é levada a sério: c
 | **Unir superfícies** | **síncrono** | Une a superfície de queima ao bloco num sólido único. Isolado de propósito: só une, sem GAP nem cor. |
 | **Aplicar GAP** | **ordenado** | Escolha o Ra numa lista (pré-selecionada pelo Ra gravado na peça): aplica o offset de faísca via `Model.FaceOffsets`, pinta a cor do Ra e nomeia a feature na árvore. |
 | **Alojamento de O'ring** | **ordenado** | Canal de anel O'ring pela **ISO 3601**. Capture uma face (cilíndrica = eixo/furo; plana = vedação de face) e uma aresta circular: ele mede o diâmetro, acha o anel mais próximo no catálogo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta. Mostra **esmagamento, estiramento e preenchimento antes de cortar**, e avisa quando algum sai da norma — quem decide é você. |
+
+### WEDM — documento de peça
+
+Corte a fio: preparar os perfis na peça e entregá-los ao programa da máquina (Pitágoras). Os dois botões são a mesma sequência em dois cliques — primeiro as curvas, depois os arquivos.
+
+| Comando | Ambiente | O que faz |
+|---|---|---|
+| **Curvas das superfícies** | **síncrono** | Reconhece as superfícies (as **selecionadas**; sem seleção, todas as de construção da peça) e cria uma **curva derivada sobre cada extremidade paralela ao plano XY** — o contorno do fundo (Z mínimo) e o do topo (Z máximo) de cada superfície, que é por onde o fio corta. Contorno horizontal em altura intermediária fica de fora. As curvas nascem na árvore com o nome `WEDM Z = XX.XX`; rodar de novo substitui as da rodada anterior. Não exporta nada. |
+| **Exportar perfis (IGES)** | **síncrono** | Lê as **curvas de construção visíveis** da peça — o sólido é ignorado — e grava na pasta do `.par` **um `.igs` por altura Z**, com o nome da peça + `Z = XX.XX`. Retas e arcos saem exatos e as B-splines com os polos e nós originais, em milímetros e nas coordenadas da peça (Z real). Curva oculta fica de fora; curva que não está num plano horizontal é avisada em vez de sair torta. Não altera o modelo. |
 
 ### Diagnóstico — qualquer documento
 
@@ -170,6 +180,7 @@ Por isso cada botão declara o ambiente que exige, numa tabela única (`CommandS
 | **Unir superfícies** | síncrono | "Limite", Costurar, Anexar e a booleana de união são síncronas. Em ordenado o botão criava só uma feature de costura, e não unia. |
 | **Aplicar GAP** | ordenado | `Model.FaceOffsets` — o GAP que fica **editável na árvore** — só existe em ordenado. |
 | **Alojamento de O'ring** | ordenado | Em ordenado o esboço é filho legítimo do recurso e some junto quando você apaga o canal. Em síncrono viraria órfão. |
+| **Curvas das superfícies** e **Exportar perfis (IGES)** | síncrono | É onde as superfícies copiadas vivem e onde os perfis de corte a fio são preparados. |
 
 Os comandos de montagem e os de diagnóstico não dependem do ambiente: eles só leem, ou criam documento próprio.
 
@@ -327,9 +338,9 @@ Para **rodar de verdade** é preciso o **Solid Edge 2023/2026** aberto com uma m
 
 ### Testes
 
-`tests/AutoEDM.Core.Tests` cobre a lógica que não depende do CAD: leitura de `config.json` e o fallback para os defaults, mapa de cor → Ra, política da tabela de offset por Ra, biblioteca de blanks padrão, conversão de unidades e a guarda de ambiente de modelagem. Rodam em `net8.0-windows`, sem Solid Edge instalado.
+`tests/AutoEDM.Core.Tests` cobre a lógica que não depende do CAD: leitura de `config.json` e o fallback para os defaults, mapa de cor → Ra, política da tabela de offset por Ra, biblioteca de blanks padrão, conversão de unidades, guarda de ambiente de modelagem, encadeamento de arestas em contornos, cota do canal de O'ring, plano de corte na serra e, do WEDM, os níveis de Z, o formato do IGES e a escolha das extremidades da superfície. Rodam em `net8.0-windows`, sem Solid Edge instalado.
 
-> **Estado atual: 84 de 91 passando.** As 7 falhas são todas de `ORingGrooveTests`, e são **conhecidas**: os testes do alojamento de O'ring foram escritos contra uma especificação anterior à implementação que ficou — o catálogo embutido ganhou seções (1,02 / 1,27 / 1,52 mm) que o teste não espera, e as fórmulas de profundidade e largura do canal divergem das constantes 80 % / 131 % que ele assume. É por isso que a ferramenta de O'ring está marcada como *aguardando validação* no roadmap. As demais ferramentas não são afetadas.
+> **Estado atual: 209 de 209 passando.** As 7 falhas antigas de `ORingGrooveTests` — testes escritos contra uma especificação anterior à implementação que ficou — foram resolvidas junto com a correção do canal de O'ring. A ferramenta de O'ring segue marcada como *aguardando validação* no roadmap por outro motivo: o teste cobre a **cota**, não a operação de corte no Solid Edge.
 
 ---
 
@@ -372,6 +383,9 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Configuração externa (`config.json`) | ✅ construído, coberto por teste |
 | Análise de usinabilidade: raio mínimo, alcance e canto vivo | ✅ construído, coberto por teste — validado no SE (raio); canto vivo a confirmar |
 | Análise de usinabilidade: rasgo estreito e acesso (varredura do vazio) | 📋 planejado |
+| Lista de corte (perfil do estoque + medida na serra) | 🚧 construído, coberto por teste, aguardando validação no SE |
+| WEDM: exportar perfis (um `.igs` por altura Z) | ✅ validado no SE |
+| WEDM: curvas nas extremidades paralelas a XY das superfícies | 🚧 construído, coberto por teste, aguardando validação no SE |
 | Alojamento de O'ring pela ISO 3601 | 🚧 construído, aguardando validação no SE |
 | Aplicar GAP (offset + cor + nome da feature) | 🚧 corrigido, aguardando confirmação final no SE |
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |
