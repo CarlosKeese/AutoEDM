@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 13; // incrementar ao mudar a ribbon (v13 = grupo WEDM + Lista de corte)
+            AddInEx.GuiVersion = 14; // incrementar ao mudar a ribbon (v14 = WEDM ganha "Curvas das superfícies")
 
             Current = this;
             App = application;

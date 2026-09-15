@@ -37,6 +37,7 @@ namespace AutoEDM.AddIn
         private const int CmdSondaInterPart = 15;   // Sonda do inter-part (rodada 2) — só leitura + peça descartável
         private const int CmdListaCorte = 16;       // Lista de corte: perfil do estoque + medida na serra dos eletrodos SELECIONADOS
         private const int CmdExportarPerfisWedm = 17; // WEDM: curvas de construção → um .igs por altura Z (PEÇA síncrona)
+        private const int CmdCurvasDasSuperficies = 18; // WEDM: curvas nas extremidades paralelas a XY das superfícies (PEÇA síncrona)
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -61,6 +62,7 @@ namespace AutoEDM.AddIn
                 case CmdCoordenadas: AbrirCoordenadas(); break;
                 case CmdListaCorte: AbrirListaCorte(); break;
                 case CmdExportarPerfisWedm: ExportarPerfisWedm(); break;
+                case CmdCurvasDasSuperficies: CurvasDasSuperficies(); break;
                 case CmdAnalisarZ: AnalisarZ(); break;
                 case CmdSpecSheet: GerarSpecSheet(); break;
                 case CmdCriarBase: CriarBase(); break;
@@ -233,6 +235,63 @@ namespace AutoEDM.AddIn
                 {
                     form.ShowDialog();
                 }
+            });
+        }
+
+        /// <summary>
+        /// Botão "Curvas das superfícies" do grupo WEDM (PEÇA síncrona, Carlos, 2026-09-15): cria na
+        /// peça uma curva derivada sobre cada extremidade PARALELA AO PLANO XY das superfícies —
+        /// contorno do fundo (Z mínimo) e do topo (Z máximo). Não exporta: quem grava os .igs
+        /// continua sendo o "Exportar perfis (IGES)", que lê estas curvas como quaisquer outras.
+        /// </summary>
+        private void CurvasDasSuperficies()
+        {
+            const string title = "AutoEDM — Curvas das superfícies";
+            Run(CmdCurvasDasSuperficies, (connector, doc, p) =>
+            {
+                SurfaceRimResult r = SurfaceRimCurveBuilder.Build((object)doc);
+                if (!r.Ok)
+                {
+                    MessageBox.Show(r.Message, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"{r.Curves.Count} curva(s) criada(s) a partir de {r.SurfacesRead} superfície(s) — {r.Source}.");
+                sb.AppendLine();
+                foreach (var g in System.Linq.Enumerable.OrderBy(
+                             System.Linq.Enumerable.GroupBy(r.Curves, c => new { c.Label, c.IsTop }),
+                             g => double.Parse(g.Key.Label, System.Globalization.CultureInfo.InvariantCulture)))
+                {
+                    int edges = System.Linq.Enumerable.Sum(g, c => c.EdgeCount);
+                    int open = System.Linq.Enumerable.Count(g, c => !c.Closed);
+                    sb.AppendLine($"   Z = {g.Key.Label} ({(g.Key.IsTop ? "topo" : "fundo")})  —  " +
+                                  $"{System.Linq.Enumerable.Count(g)} contorno(s), {edges} aresta(s)" +
+                                  (open > 0 ? $", {open} ABERTO(s)" : ""));
+                }
+
+                var notes = new System.Collections.Generic.List<string>();
+                if (r.Deleted > 0)
+                    notes.Add($"{r.Deleted} curva(s) desta mesma ferramenta, de uma rodada anterior, foram substituídas.");
+                if (r.LoopsOpen > 0)
+                    notes.Add($"{r.LoopsOpen} contorno(s) não fecharam — confira na peça antes de cortar.");
+                if (r.EdgesDropped > 0)
+                    notes.Add($"{r.EdgesDropped} aresta(s) horizontal(is) em alturas intermediárias ficaram de fora (só o Z mínimo e o máximo viram curva).");
+                if (r.SurfacesWithoutRim > 0)
+                    notes.Add($"{r.SurfacesWithoutRim} superfície(s) não têm extremidade paralela ao plano XY.");
+                if (r.LoopsFailed > 0)
+                    notes.Add($"{r.LoopsFailed} contorno(s) não viraram curva — veja o log.");
+                foreach (string w in System.Linq.Enumerable.Take(r.Warnings, 5)) notes.Add(w);
+                if (notes.Count > 0)
+                {
+                    sb.AppendLine();
+                    foreach (string n in notes) sb.AppendLine("ATENÇÃO: " + n);
+                }
+                sb.AppendLine();
+                sb.Append("As curvas estão na árvore da peça com o nome \"WEDM Z = ...\". Confira e clique em \"Exportar perfis (IGES)\" para gerar os arquivos.");
+
+                MessageBox.Show(sb.ToString(), title, MessageBoxButtons.OK,
+                    notes.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             });
         }
 
@@ -656,6 +715,9 @@ namespace AutoEDM.AddIn
                 { CmdAlojamentoORing,     new CommandSpec("ALOJAMENTO DE O'RING", DocKind.Part, ModelingEnv.Ordered) },
                 // WEDM: só LÊ as curvas e grava .igs. Síncrono porque é onde o Carlos prepara os perfis.
                 { CmdExportarPerfisWedm,  new CommandSpec("EXPORTAR PERFIS WEDM (IGES por Z)", DocKind.Part, ModelingEnv.Synchronous) },
+                // Cria curva derivada a partir das arestas das superfícies: mesmo ambiente do
+                // resto do WEDM (é onde as superfícies copiadas vivem) e onde o Carlos trabalha.
+                { CmdCurvasDasSuperficies, new CommandSpec("CURVAS DAS SUPERFÍCIES (extremidades XY)", DocKind.Part, ModelingEnv.Synchronous) },
 
                 // --- diagnóstico: só leem, ou criam documento próprio — servem em qualquer ambiente ---
                 { CmdInspecionar,         new CommandSpec("INSPECIONAR SELEÇÃO",   DocKind.Any, ModelingEnv.Any) },

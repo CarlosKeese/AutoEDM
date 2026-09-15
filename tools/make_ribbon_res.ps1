@@ -1,4 +1,4 @@
-﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5 e 7) para os botões do ribbon.
+﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5, 7 e 8) para os botões do ribbon.
 # Sem rc.exe: monta o binário .res à mão (formato documentado) + bitmaps via System.Drawing.
 Add-Type -AssemblyName System.Drawing
 
@@ -41,6 +41,12 @@ function New-IconDib([int]$id) {
             $g.DrawPolygon($p, $shape)
             $w = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(200,30,30)), 1
             $g.DrawLine($w, 8,0, 8,15) }
+        8 { # Curvas das superfícies: parede cinza entre os contornos de topo e de fundo (verdes)
+            $p = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(150,150,150)), 1
+            $g.DrawLine($p, 2,4, 3,12); $g.DrawLine($p, 13,3, 12,11)
+            $c = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(0,150,60)), 2
+            $g.DrawEllipse($c, 2,1, 11,5)     # contorno do topo
+            $g.DrawEllipse($c, 3,9, 9,5) }    # contorno do fundo
     }
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
@@ -71,7 +77,7 @@ function Write-ResHeader([UInt32]$dataSize, [UInt16]$typeOrd, [UInt16]$nameOrd, 
 # Cabeçalho nulo obrigatório no início do .res
 Write-ResHeader 0 0 0 0
 
-foreach ($id in @(1, 2, 3, 4, 5, 7)) {   # o 6 (sonda) segue sem imagem, só rótulo
+foreach ($id in @(1, 2, 3, 4, 5, 7, 8)) {   # o 6 (sonda) segue sem imagem, só rótulo
     [byte[]]$dib = New-IconDib $id
     Write-Output ("  id {0}: DIB {1} bytes" -f $id, $dib.Length)
     Write-ResHeader ([UInt32]$dib.Length) 2 ([UInt16]$id) 0x1030  # type 2 = RT_BITMAP

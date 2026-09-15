@@ -62,6 +62,10 @@
               imageId="1" showLabel="true" />
     </group>
     <group name="WEDM">
+      <button id="18" size="large" label="Curvas das superfícies"
+              screentip="Curvas nas extremidades paralelas ao plano XY das superfícies (PEÇA, modelagem SÍNCRONA)"
+              supertip="Na PEÇA (.par) em modelagem SÍNCRONA: reconhece as SUPERFÍCIES (as SELECIONADAS, ou todas as de construção se você não selecionar nada) e cria, na própria peça, uma CURVA DERIVADA sobre cada extremidade paralela ao plano XY — o contorno do FUNDO (Z mínimo) e o do TOPO (Z máximo) de cada superfície, que é por onde o fio corta. Contorno horizontal em altura intermediária é descartado. As curvas nascem na árvore com o nome 'WEDM Z = XX.XX' para você conferir; rodar de novo substitui as da rodada anterior. Não exporta nada: depois clique em 'Exportar perfis (IGES)'."
+              imageId="8" showLabel="true" />
       <button id="17" size="large" label="Exportar perfis (IGES)"
               screentip="Perfis de corte a fio: um arquivo .igs por altura Z (PEÇA, modelagem SÍNCRONA)"
               supertip="Na PEÇA (.par) já salva, em modelagem SÍNCRONA: lê as CURVAS DE CONSTRUÇÃO visíveis (interseção, projeção, derivada, por pontos-chave, 3D...) — o sólido é ignorado — e grava na pasta da peça um arquivo .igs por altura Z, com o nome da peça + 'Z = XX.XX'. Retas e arcos saem exatos e as B-splines com os polos e nós originais, em milímetros e nas coordenadas da própria peça (Z real), prontos para importar no Pitágoras. Curva oculta fica de fora; curva que não está num plano horizontal não é exportada e é avisada no fim. Não altera o modelo."
