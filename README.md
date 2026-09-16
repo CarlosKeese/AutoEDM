@@ -385,7 +385,7 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Análise de usinabilidade: rasgo estreito e acesso (varredura do vazio) | 📋 planejado |
 | Lista de corte (perfil do estoque + medida na serra) | 🚧 construído, coberto por teste, aguardando validação no SE |
 | WEDM: exportar perfis (um `.igs` por altura Z) | ✅ validado no SE |
-| WEDM: curvas nas extremidades paralelas a XY das superfícies | 🚧 construído, coberto por teste, aguardando validação no SE |
+| WEDM: curvas nas extremidades paralelas a XY das superfícies | ✅ validado no SE (2026-09-16) |
 | Alojamento de O'ring pela ISO 3601 | 🚧 construído, aguardando validação no SE |
 | Aplicar GAP (offset + cor + nome da feature) | 🚧 corrigido, aguardando confirmação final no SE |
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |

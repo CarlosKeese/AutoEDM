@@ -45,6 +45,35 @@ namespace AutoEDM.Selection
         }
 
         /// <summary>
+        /// Mesma leitura de <see cref="TryGetRangeMm"/>, mas pedindo o <c>GetExactRange</c> PRIMEIRO
+        /// — a caixa APERTADA, para quem compara o bbox contra uma tolerância fina.
+        ///
+        /// Achado 2026-09-15 (log `232609`, botão "Curvas das superfícies" não reconhecia nenhuma
+        /// extremidade num loft entre duas splines horizontais): em aresta B-spline o
+        /// <c>GetRange</c> devolve caixa INFLADA — medido ±0,005 mm em cada lado — enquanto o
+        /// <c>GetExactRange</c> devolve Δ=0,00000 mm na MESMA aresta. Como a ordem do
+        /// <see cref="TryGetRangeMm"/> tenta o folgado primeiro e ele responde, a aresta plana
+        /// chegava ao teste de horizontalidade com 0,01 mm de variação em Z e era reprovada contra
+        /// a tolerância de 0,001 mm. Em reta e arco os dois coincidem, e por isso só apareceu
+        /// quando o perfil passou a ser spline.
+        ///
+        /// O <see cref="TryGetRangeMm"/> segue como está de propósito: quem agrupa detalhe por
+        /// proximidade não se incomoda com 10 µm de folga, e um bbox que só ERRA PARA MAIOR é a
+        /// escolha segura ali. Esta versão é para o caso oposto — decidir se algo é plano.
+        /// </summary>
+        public static bool TryGetExactRangeMm(object com, out double[] minMm, out double[] maxMm)
+        {
+            string err1 = null, err2 = null, err3 = null;
+            if (TryRange(com, "GetExactRange", out minMm, out maxMm, ref err1)) return true;
+            if (TryRange(com, "GetRange", out minMm, out maxMm, ref err2)) return true;
+            if (TryRangeFromVertices(com, out minMm, out maxMm, ref err3)) return true;
+
+            Log.Warn($"FaceGeometry: range exato indisponível — GetExactRange: {err1} | " +
+                     $"GetRange: {err2} | Vertices: {err3}");
+            return false;
+        }
+
+        /// <summary>
         /// Bounding box de um CORPO/superfície inteiro (Body/CopySurface item), em mm — mesma
         /// receita de <see cref="TryGetRangeMm"/> (Body.GetRange/GetExactRange têm a MESMA forma
         /// [in,out] SAFEARRAY(double)×2, confirmada no dump). REDE DE SEGURANÇA (achado

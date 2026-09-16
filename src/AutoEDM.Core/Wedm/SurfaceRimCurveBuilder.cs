@@ -100,6 +100,14 @@ namespace AutoEDM.Wedm
                     res.SurfacesWithoutRim++;
                     res.Warnings.Add($"{label}: nenhuma aresta paralela ao plano XY ({pick.EdgesNotHorizontal} aresta(s) sobem em Z).");
                     Log.Warn($"WEDM rim: '{label}' sem extremidade horizontal — {pick.EdgesNotHorizontal} aresta(s) fora de plano XY.");
+                    // O bbox do CORPO diz se a superfície inteira é fina em Z (loft entre dois
+                    // planos próximos) ou alta — junto com os Δ por aresta, separa "inclinada" de
+                    // "tolerância apertada" sem precisar de outra rodada.
+                    double[] bmin, bmax;
+                    if (FaceGeometry.TryGetBodyRangeMm(Get(surf, "Body") ?? surf, out bmin, out bmax))
+                        Log.Info(string.Format(CultureInfo.InvariantCulture,
+                            "WEDM rim: '{0}' bbox do corpo: X {1:0.000}..{2:0.000}, Y {3:0.000}..{4:0.000}, Z {5:0.000}..{6:0.000} (altura {7:0.000} mm).",
+                            label, bmin[0], bmax[0], bmin[1], bmax[1], bmin[2], bmax[2], bmax[2] - bmin[2]));
                     continue;
                 }
                 if (pick.Flat)
@@ -230,8 +238,11 @@ namespace AutoEDM.Wedm
                 int id;
                 if (TryEdgeId(e, out id) && !seenIds.Add(id)) continue;
 
+                // GetExactRange, NÃO GetRange: aqui o bbox decide se a aresta é PLANA, e a caixa
+                // inflada que o GetRange devolve em spline (±0,005 mm medidos) reprovava rim
+                // perfeitamente horizontal contra a tolerância de 1 µm. Ver TryGetExactRangeMm.
                 double[] min, max;
-                if (!FaceGeometry.TryGetRangeMm(e, out min, out max)) { noRange++; continue; }
+                if (!FaceGeometry.TryGetExactRangeMm(e, out min, out max)) { noRange++; continue; }
 
                 double[] start, end; string why;
                 if (!EdgeGeometry.TryGetEndPointsMm(e, out start, out end, out why)) { noEnds++; continue; }
@@ -251,9 +262,48 @@ namespace AutoEDM.Wedm
             Log.Info($"WEDM rim: '{label}': {edges.Count} aresta(s), {segments.Count} legível(is)" +
                      (noRange > 0 ? $", {noRange} sem bbox" : "") +
                      (noEnds > 0 ? $", {noEnds} sem extremidades" : "") + ".");
+            LogZSpans(segments, label);
             if (noRange + noEnds > 0)
                 res.Warnings.Add($"{label}: {noRange + noEnds} aresta(s) não puderam ser lidas — veja o log.");
             return segments;
+        }
+
+        /// <summary>
+        /// DIAGNÓSTICO (Carlos, 2026-09-15, log `224311`): "sem extremidade horizontal — 4 aresta(s)
+        /// fora de plano XY" numa superfície feita por loft entre DUAS SPLINES HORIZONTAIS, onde
+        /// duas arestas têm de ser planas. O contador de rejeitadas sozinho não distingue as duas
+        /// causas possíveis, que pedem consertos opostos: superfície realmente inclinada (span de
+        /// MILÍMETROS) ou <see cref="WedmLevels.PlanarToleranceMm"/> apertada demais para aresta
+        /// B-spline refeita pela operação de superfície (span de MICRONS). Então mede e registra.
+        ///
+        /// Traz também o <c>GetExactRange</c> ao lado do <c>GetRange</c>: a ordem em
+        /// <see cref="FaceGeometry.TryGetRangeMm"/> tenta o folgado primeiro, e em spline os dois
+        /// podem divergir — se divergirem, o span verdadeiro é o do EXATO.
+        /// </summary>
+        private static void LogZSpans(List<OpenEdgeSegment> segments, string label)
+        {
+            const int Max = 12;   // superfície com muitas arestas não vira despejo de log
+            int shown = 0;
+            foreach (OpenEdgeSegment s in segments)
+            {
+                if (shown++ >= Max) { Log.Info($"WEDM rim: '{label}': (+{segments.Count - Max} aresta(s) não listada(s))"); break; }
+
+                double span = s.ZMaxMm - s.ZMinMm;
+                string exact = "";
+                double[] a, b; string err;
+                if (s.Com != null && FaceGeometry.TryTwoPointOutMm(s.Com, "GetRange", out a, out b, out err))
+                {
+                    double spanLoose = b[2] - a[2];
+                    if (Math.Abs(spanLoose - span) > 1e-6)
+                        exact = string.Format(CultureInfo.InvariantCulture, "  [GetRange inflaria para Δ={0:0.00000} mm]", spanLoose);
+                }
+
+                Log.Info(string.Format(CultureInfo.InvariantCulture,
+                    "WEDM rim: '{0}' aresta {1}: Z {2:0.0000}..{3:0.0000}, Δ={4:0.00000} mm — {5} (tol {6} mm){7}",
+                    label, shown, s.ZMinMm, s.ZMaxMm, span,
+                    span > WedmLevels.PlanarToleranceMm ? "REJEITADA" : "horizontal",
+                    WedmLevels.PlanarToleranceMm.ToString("0.00000", CultureInfo.InvariantCulture), exact));
+            }
         }
 
         /// <summary>

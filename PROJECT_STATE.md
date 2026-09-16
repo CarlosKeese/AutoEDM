@@ -71,7 +71,10 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Guarda de ambiente por comando | ✅ construído |
 | Configuração externa (`config.json`) | ✅ construído, coberto por teste |
 | Análise de usinabilidade (nível 1: raio + canto vivo) | ✅ construído, coberto por teste; raio validado no SE |
-| Testes de unidade | ✅ 167 passando, 0 falhas |
+| Curvas das superfícies (WEDM) | ✅ validado no SE (2026-09-16) |
+| Exportar perfis WEDM (IGES por Z) | ✅ validado no SE (2026-09-16); **importação do 126 no Pitágoras ainda não conferida** |
+| Lista de corte na serra | 🚧 construído, coberto por teste, **aguardando validação no SE** |
+| Testes de unidade | ✅ 209 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -98,6 +101,20 @@ seleção** da ribbon é a ferramenta que alimenta esse dump.
 
 ## Histórico
 
+- **2026-09-16** — **"Curvas das superfícies" validado no SE**, depois de não
+  reconhecer extremidade nenhuma num loft entre duas splines horizontais. A
+  causa não era a geometria nem a tolerância: **`Edge.GetRange` devolve caixa
+  INFLADA em aresta B-spline** (±0,005 mm por lado, medido), e o
+  `FaceGeometry.TryGetRangeMm` pedia justamente ele primeiro — um rim
+  perfeitamente plano chegava ao teste de horizontalidade com 0,01 mm de
+  variação em Z e era reprovado contra a tolerância de 1 µm. `GetExactRange` dá
+  `Δ = 0,00000 mm` na MESMA aresta. Criado `FaceGeometry.TryGetExactRangeMm`
+  (mesma cadeia, exato primeiro) e usado só no teste de planaridade do WEDM; o
+  `TryGetRangeMm` ficou intacto porque para agrupar detalhe por proximidade um
+  bbox que só erra para MAIOR é a escolha segura. A falha parecia depender do
+  ângulo da superfície (45° não reconhecia) porque as inclinadas eram as feitas
+  por loft de spline — em reta e arco os dois métodos coincidem, e por isso o
+  bug só apareceu quando o perfil passou a ser spline. Skill atualizada.
 - **2026-09-11** — **análise de usinabilidade** no "Analisar (Z)": escada de
   fresas, jogo de brocas DIN 338, raio exato por B-Rep e canto vivo por
   topologia. A ocorrência **selecionada** passou a mandar sobre a mira por cor —
@@ -185,6 +202,18 @@ Antes disso, confirmar no SE o **canto vivo**: o log dirá se a calibração do
 sinal de concavidade (pelas arestas da borda da caixa envolvente) fecha, e
 quantas arestas a versão plano↔plano descarta por encostar em face curva.
 
+No WEDM a cadeia fechou em 2026-09-16: o "Curvas das superfícies" criou 4 curvas
+em 2 superfícies e o "Exportar perfis (IGES)" gravou os 4 `.igs` na sequência,
+**um por altura Z, todos como B-spline (entidade 126), nenhuma queda para
+polilinha**. Falta o outro lado da ponte: **abrir esses IGES no Pitágoras** e
+confirmar que o 126 entra com a geometria certa — é o único elo do WEDM que
+ainda não foi visto funcionando.
+
+O mesmo run deixou um ponto de projeto em aberto: os quatro contornos saíram
+**ABERTOS** (uma aresta cada), o que é o esperado para loft entre splines
+abertas, mas perfil de corte a fio normalmente precisa fechar. Decidir se o
+botão deve fechar o contorno sozinho ou se isso é responsabilidade do desenho.
+
 Continuam pendentes de validação no CAD: **Alojamento de O'ring**, **Aplicar
-GAP** e **Duplicar eletrodo**; e em aberto a receita da rosca física M6, os
-ícones da ribbon e o orquestrador completo.
+GAP**, **Duplicar eletrodo** e a **lista de corte na serra**; e em aberto a
+receita da rosca física M6, os ícones da ribbon e o orquestrador completo.

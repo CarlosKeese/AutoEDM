@@ -34,6 +34,9 @@ Verify every numeric value against the dump for your own version before trusting
 - **Face bounding box**: `Face.GetRange(MinRangePoint, MaxRangePoint)` (also
   `GetExactRange`) — both corners are `[out]` SAFEARRAY of 3 doubles (meters). In late
   binding, mark the args by-ref with a `ParameterModifier` or they come back empty.
+  The two are **not** interchangeable: on B-spline geometry `GetRange` comes back padded
+  and `GetExactRange` tight — see "`GetRange` is a PADDED box on B-spline edges" below
+  before comparing a range against any fine tolerance.
 - **Box feature** needs a RefPlane and 13 args:
   `AddBoxByTwoPoints(x1,y1,z1, x2,y2,z2, dAngle, dDepth, pPlane, ExtentSide,
   vbKeyPointExtent, pKeyPointObj, pKeyPointFlags)`. Pass `RefPlanes.Item(1)` as pPlane.
@@ -384,6 +387,36 @@ alone — also read the parent BODY's own `GetRange`/`GetExactRange`** (same by-
 shape, works on `Body`/`CopySurface` items too, confirmed live) and **expand** (never shrink)
 the per-face box with it. The body-level range doesn't depend on any single face succeeding,
 so it catches what individual faces silently drop.
+
+**`GetRange` is a PADDED box on B-spline edges — `GetExactRange` is the tight one** (found
+2026-09-16, AutoEDM). They are not interchangeable, and the difference only shows up on
+spline geometry. Measured on a BlueSurf lofted between two horizontal splines, same edge,
+same call shape:
+
+```
+Edge.GetRange       ->  Z -0.0050 .. 0.0050   (Δ = 0.01000 mm)
+Edge.GetExactRange  ->  Z  0.0000 .. 0.0000   (Δ = 0.00000 mm)
+```
+
+The rim edge is *exactly* planar; `GetRange` inflates it by ~±0.005 mm per side (the pad
+tracked the body diagonal, ~0.04% of it, not a fixed epsilon). On **lines and arcs the two
+agree**, so code that has only ever seen analytic geometry looks correct for years and then
+fails the first time a profile is a spline.
+
+**Consequence: pick the method by what the number is FOR.**
+- *Deciding whether something is planar / horizontal / degenerate* — anything compared against
+  a tight tolerance: use **`GetExactRange`**. A micron-level test against a padded box
+  rejects geometry that is perfectly flat, with no error and a plausible-looking number.
+- *Grouping by proximity, sizing stock, reserving clearance* — use `GetRange`; a box that
+  only ever errs **larger** is the safe one there, and 10 µm of slack is free.
+
+So keep **two** helpers rather than reordering one. In AutoEDM this is `TryGetRangeMm`
+(loose-first, unchanged for the electrode/machinability paths) alongside
+`TryGetExactRangeMm` (exact-first, used by the WEDM planarity test). Reordering the shared
+one would have silently changed every already-validated feature.
+
+The same warning applies to the circular-edge trick above: the axis is the direction whose
+extent is ~0, and "~0" is only really ~0 with `GetExactRange`.
 
 **Positioning a part by mates (alternative to `PutOrigin`).** When an exact origin isn't
 enough, constrain the occurrence: `Ref = AssemblyDocument.CreateReference(Occurrence, Face)`
