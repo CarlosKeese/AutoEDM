@@ -265,8 +265,11 @@ namespace AutoEDM.AddIn
                 {
                     int edges = System.Linq.Enumerable.Sum(g, c => c.EdgeCount);
                     int open = System.Linq.Enumerable.Count(g, c => !c.Closed);
+                    int pieces = System.Linq.Enumerable.Sum(g, c => c.PieceCount);
+                    int contours = System.Linq.Enumerable.Count(g);
                     sb.AppendLine($"   Z = {g.Key.Label} ({(g.Key.IsTop ? "topo" : "fundo")})  —  " +
-                                  $"{System.Linq.Enumerable.Count(g)} contorno(s), {edges} aresta(s)" +
+                                  $"{contours} contorno(s), {edges} aresta(s)" +
+                                  (pieces > contours ? $", em {pieces} curva(s) na árvore" : "") +
                                   (open > 0 ? $", {open} ABERTO(s)" : ""));
                 }
 
@@ -275,6 +278,12 @@ namespace AutoEDM.AddIn
                     notes.Add($"{r.Deleted} curva(s) desta mesma ferramenta, de uma rodada anterior, foram substituídas.");
                 if (r.LoopsOpen > 0)
                     notes.Add($"{r.LoopsOpen} contorno(s) não fecharam — confira na peça antes de cortar.");
+                if (r.LoopsSplit > 0)
+                    notes.Add($"{r.LoopsSplit} contorno(s) o Solid Edge recusou inteiros e saíram FATIADOS, uma curva por aresta. " +
+                              "O perfil está completo e a exportação não se importa, mas a árvore fica com várias curvas no mesmo Z.");
+                if (r.RenameFailed)
+                    notes.Add("Alguma curva não ficou com o nome \"WEDM Z = ...\" — a próxima rodada NÃO vai substituí-la. " +
+                              "Apague as curvas desta rodada à mão antes de clicar de novo, senão o perfil sai duplicado no .igs.");
                 if (r.EdgesDropped > 0)
                     notes.Add($"{r.EdgesDropped} aresta(s) horizontal(is) em alturas intermediárias ficaram de fora (só o Z mínimo e o máximo viram curva).");
                 if (r.SurfacesWithoutRim > 0)

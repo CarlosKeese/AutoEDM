@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
@@ -15,6 +16,8 @@ namespace AutoEDM.Wedm
         public string Label { get; set; }
         public bool IsTop { get; set; }
         public int EdgeCount { get; set; }
+        /// <summary>Quantas features saíram deste contorno: 1 quando a curva composta foi aceita, N quando foi preciso fatiar por aresta.</summary>
+        public int PieceCount { get; set; } = 1;
         /// <summary>O contorno fechou (voltou ao ponto de partida) — perfil de corte inteiro.</summary>
         public bool Closed { get; set; }
         public string Surface { get; set; }
@@ -34,6 +37,10 @@ namespace AutoEDM.Wedm
         public int EdgesDropped { get; set; }
         public int LoopsOpen { get; set; }
         public int LoopsFailed { get; set; }
+        /// <summary>Contornos que o SE recusou inteiros e saíram como uma curva por aresta.</summary>
+        public int LoopsSplit { get; set; }
+        /// <summary>Alguma curva não ficou com o nome "WEDM Z = …" — a próxima rodada não vai substituí-la.</summary>
+        public bool RenameFailed { get; set; }
         /// <summary>Curvas de uma rodada anterior deste mesmo botão, apagadas antes de recriar.</summary>
         public int Deleted { get; set; }
 
@@ -78,9 +85,18 @@ namespace AutoEDM.Wedm
         /// <summary>Prefixo do nome das curvas criadas aqui — é por ele que a rodada seguinte as reconhece e substitui.</summary>
         public const string NamePrefix = "WEDM Z = ";
 
+        /// <summary>
+        /// Alguma renomeação não pegou nesta rodada. Estático porque quem cria a curva
+        /// (<see cref="AddDerivedCurve"/>) não carrega o resultado; zerado no início de cada
+        /// <see cref="Build"/> e copiado para o <see cref="SurfaceRimResult"/> no fim. O add-in é
+        /// STA e roda um comando por vez, então não há duas execuções disputando o campo.
+        /// </summary>
+        private static bool RenameFailed;
+
         public static SurfaceRimResult Build(object partDoc)
         {
             var res = new SurfaceRimResult();
+            RenameFailed = false;
             string source;
             List<object> surfaces = CollectSurfaces(partDoc, out source);
             res.Source = source;
@@ -99,8 +115,14 @@ namespace AutoEDM.Wedm
             {
                 res.SurfacesRead++;
                 string label = SurfaceName(surf, res.SurfacesRead);
-                List<OpenEdgeSegment> edges = ReadEdges(surf, label, res);
-                if (edges.Count == 0) { res.SurfacesWithoutRim++; continue; }
+                var identity = new Dictionary<OpenEdgeSegment, string>();
+                List<OpenEdgeSegment> edges = ReadEdges(surf, label, res, identity);
+                if (edges.Count == 0)
+                {
+                    res.SurfacesWithoutRim++;
+                    res.Warnings.Add($"{label}: nenhuma aresta legível — veja no log o que essa construção é.");
+                    continue;
+                }
 
                 SurfaceRimPick pick = SurfaceRims.Pick(edges);
                 res.EdgesDropped += pick.EdgesDropped;
@@ -125,9 +147,10 @@ namespace AutoEDM.Wedm
                     Log.Info($"WEDM rim: '{label}' tem {pick.LevelCount} níveis horizontais; só o Z mínimo e o máximo viram curva ({pick.EdgesDropped} aresta(s) intermediária(s) fora).");
 
                 foreach (SurfaceRim rim in pick.Rims)
-                    CreateRimCurves(partDoc, rim, label, res, ref index);
+                    CreateRimCurves(partDoc, surf, rim, label, identity, res, ref index);
             }
 
+            res.RenameFailed = RenameFailed;
             if (res.Curves.Count == 0)
             {
                 res.Message = BuildEmptyMessage(res);
@@ -168,13 +191,38 @@ namespace AutoEDM.Wedm
             for (int i = 1; i <= c; i++)
             {
                 object item = Item(constructions, i);
-                if (item == null) continue;
+                if (item == null) { Log.Warn($"WEDM rim: construção {i} não devolveu item."); continue; }
+
+                string what = Describe(item, i);
                 object visible = Get(item, "Visible");
-                if (visible is bool && !(bool)visible) continue;
-                if (HasFaces(item)) surfaces.Add(item);
+                if (visible is bool && !(bool)visible) { Log.Info($"WEDM rim: {what} — OCULTA, fora."); continue; }
+                if (HasFaces(item)) { surfaces.Add(item); Log.Info($"WEDM rim: {what} — superfície, ENTRA."); }
+                else Log.Info($"WEDM rim: {what} — sem face, fora (curva ou outro tipo).");
             }
             source = $"construções da peça ({surfaces.Count} de {c})";
             return surfaces;
+        }
+
+        /// <summary>
+        /// O que ESTE item de construção é, por todas as rotas de uma vez (Carlos, 2026-09-16,
+        /// log `093112`): uma das duas construções entrou na lista como superfície e depois deu
+        /// "0 aresta(s)" — com o contador sozinho não dá para saber se é um tipo mal classificado,
+        /// se a coleção responde <c>Count</c> mas não entrega item, ou se as arestas estão noutra
+        /// rota. Uma linha por construção resolve isso sem gastar outra rodada.
+        /// </summary>
+        private static string Describe(object item, int ordinal)
+        {
+            string name = Get(item, "Name") as string;
+            string display = Get(item, "DisplayName") as string ?? Get(item, "EdgebarName") as string;
+            object body = Get(item, "Body");
+            return string.Format(CultureInfo.InvariantCulture,
+                "construção {0} '{1}'{2} Type={3} | faces: item[1]={4} item={5} body[1]={6} | arestas: item[1]={7} body[1]={8}{9}",
+                ordinal, string.IsNullOrWhiteSpace(name) ? "(sem nome)" : name,
+                string.IsNullOrWhiteSpace(display) ? "" : " (" + display + ")",
+                Get(item, "Type") ?? "?",
+                Count(Indexed(item, "Faces", IgQueryAll)), Count(Get(item, "Faces")), Count(Indexed(body, "Faces", IgQueryAll)),
+                Count(Indexed(item, "Edges", IgQueryAll)), Count(Indexed(body, "Edges", IgQueryAll)),
+                body == null ? " | sem Body" : "");
         }
 
         /// <summary>A superfície tem face? (corpo com face é superfície; sem face é curva).</summary>
@@ -218,35 +266,17 @@ namespace AutoEDM.Wedm
         /// face) e a repetição QUEBRARIA o encadeamento, por isso o filtro por <c>Edge.ID</c> e,
         /// quando ele não responde, pelas próprias extremidades.
         /// </summary>
-        private static List<OpenEdgeSegment> ReadEdges(object surf, string label, SurfaceRimResult res)
+        private static List<OpenEdgeSegment> ReadEdges(object surf, string label, SurfaceRimResult res,
+            Dictionary<OpenEdgeSegment, string> identity)
         {
-            var edges = new List<object>();
-            object direct = Indexed(surf, "Edges", IgQueryAll) ?? Indexed(Get(surf, "Body"), "Edges", IgQueryAll);
-            int n = Count(direct);
-            for (int i = 1; i <= n; i++) { object e = Item(direct, i); if (e != null) edges.Add(e); }
-
-            if (edges.Count == 0)
-            {
-                object faces = FacesOf(surf);
-                int nf = Count(faces);
-                for (int i = 1; i <= nf; i++)
-                {
-                    object face = Item(faces, i);
-                    object fedges = Indexed(face, "Edges", IgQueryAll) ?? Get(face, "Edges");
-                    int ne = Count(fedges);
-                    for (int k = 1; k <= ne; k++) { object e = Item(fedges, k); if (e != null) edges.Add(e); }
-                }
-            }
+            string route;
+            List<object> edges = ReadRawEdges(surf, out route);
 
             var segments = new List<OpenEdgeSegment>();
-            var seenIds = new HashSet<int>();
-            var seenEnds = new HashSet<string>();
-            int noRange = 0, noEnds = 0;
+            var seen = new HashSet<string>();
+            int noRange = 0, noEnds = 0, repeated = 0;
             foreach (object e in edges)
             {
-                int id;
-                if (TryEdgeId(e, out id) && !seenIds.Add(id)) continue;
-
                 // GetExactRange, NÃO GetRange: aqui o bbox decide se a aresta é PLANA, e a caixa
                 // inflada que o GetRange devolve em spline (±0,005 mm medidos) reprovava rim
                 // perfeitamente horizontal contra a tolerância de 1 µm. Ver TryGetExactRangeMm.
@@ -255,9 +285,14 @@ namespace AutoEDM.Wedm
 
                 double[] start, end; string why;
                 if (!EdgeGeometry.TryGetEndPointsMm(e, out start, out end, out why)) { noEnds++; continue; }
-                if (!seenEnds.Add(EdgeKey(start, end, min, max))) continue;
 
-                segments.Add(new OpenEdgeSegment
+                // Identidade: o ID quando o SE dá (é ele que sobrevive a uma regeneração); senão a
+                // geometria. Serve para não contar a mesma aresta 2× (ela vem uma vez por face) E
+                // para reencontrá-la depois, já que o proxy da aresta envelhece a cada Add.
+                string key = EdgeIdentity(e, start, end, min, max);
+                if (!seen.Add(key)) { repeated++; continue; }
+
+                var seg = new OpenEdgeSegment
                 {
                     Com = e,
                     StartMm = start,
@@ -265,16 +300,67 @@ namespace AutoEDM.Wedm
                     ZMinMm = min[2],
                     ZMaxMm = max[2],
                     IsVertical = (max[2] - min[2]) > WedmLevels.PlanarToleranceMm,
-                });
+                };
+                segments.Add(seg);
+                if (identity != null) identity[seg] = key;
             }
 
-            Log.Info($"WEDM rim: '{label}': {edges.Count} aresta(s), {segments.Count} legível(is)" +
+            Log.Info($"WEDM rim: '{label}': {edges.Count} aresta(s) por {route}, {segments.Count} legível(is)" +
+                     (repeated > 0 ? $", {repeated} repetida(s)" : "") +
                      (noRange > 0 ? $", {noRange} sem bbox" : "") +
                      (noEnds > 0 ? $", {noEnds} sem extremidades" : "") + ".");
             LogZSpans(segments, label);
             if (noRange + noEnds > 0)
                 res.Warnings.Add($"{label}: {noRange + noEnds} aresta(s) não puderam ser lidas — veja o log.");
             return segments;
+        }
+
+        /// <summary>
+        /// As arestas CRUAS da superfície, com a rota que as achou no log — "0 aresta(s)" sem dizer
+        /// por onde se tentou não deixa consertar nada (log `093112`: a 2ª construção entrou como
+        /// superfície e não deu aresta nenhuma).
+        /// </summary>
+        private static List<object> ReadRawEdges(object surf, out string route)
+        {
+            var edges = new List<object>();
+            object body = Get(surf, "Body");
+
+            foreach (var source in new[]
+            {
+                new { Name = "item.Edges[1]", Col = Indexed(surf, "Edges", IgQueryAll) },
+                new { Name = "body.Edges[1]", Col = Indexed(body, "Edges", IgQueryAll) },
+                new { Name = "item.Edges",    Col = Get(surf, "Edges") },
+            })
+            {
+                int n = Count(source.Col);
+                if (n == 0) continue;
+                for (int i = 1; i <= n; i++) { object e = Item(source.Col, i); if (e != null) edges.Add(e); }
+                if (edges.Count > 0) { route = $"{source.Name} ({n})"; return edges; }
+            }
+
+            // Sem coleção de arestas no item: face a face (cada aresta vem uma vez por face, e a
+            // repetição é filtrada pela identidade depois).
+            object faces = FacesOf(surf);
+            int nf = Count(faces), noEdges = 0;
+            for (int i = 1; i <= nf; i++)
+            {
+                object face = Item(faces, i);
+                if (face == null) { noEdges++; continue; }
+                object fedges = Get(face, "Edges") ?? Indexed(face, "Edges", IgQueryAll);
+                int ne = Count(fedges);
+                if (ne == 0) { noEdges++; continue; }
+                for (int k = 1; k <= ne; k++) { object e = Item(fedges, k); if (e != null) edges.Add(e); }
+            }
+            route = $"{nf} face(s)" + (noEdges > 0 ? $", {noEdges} sem arestas legíveis" : "");
+            return edges;
+        }
+
+        /// <summary>Identidade da aresta: <c>Edge.ID</c> quando existe (sobrevive à regeneração), senão a geometria.</summary>
+        private static string EdgeIdentity(object edge, double[] start, double[] end, double[] min, double[] max)
+        {
+            int id;
+            return TryEdgeId(edge, out id) ? "#" + id.ToString(CultureInfo.InvariantCulture)
+                                           : EdgeKey(start, end, min, max);
         }
 
         /// <summary>
@@ -348,25 +434,48 @@ namespace AutoEDM.Wedm
 
         // ------------------------------------------------------------ curvas derivadas
 
-        /// <summary>Encadeia o rim em contornos e cria uma curva derivada por contorno.</summary>
-        private static void CreateRimCurves(object partDoc, SurfaceRim rim, string surface, SurfaceRimResult res, ref int index)
+        /// <summary>
+        /// Encadeia o rim em contornos e cria uma curva derivada por contorno. O que o contorno É
+        /// (arestas, fechado, identidades) vai para o log ANTES do <c>Add</c>: na 1ª versão só o
+        /// SUCESSO era descrito, então o contorno que falhava não deixava rastro nenhum
+        /// (log `093112`: o rim de topo recusado com E_INVALIDARG e nem o nº de arestas dele se
+        /// sabia). Antes de cada <c>Add</c> as arestas são RELIDAS da peça — ver
+        /// <see cref="RefreshEdges"/>.
+        /// </summary>
+        private static void CreateRimCurves(object partDoc, object surf, SurfaceRim rim, string surface,
+            Dictionary<OpenEdgeSegment, string> identity, SurfaceRimResult res, ref int index)
         {
             List<OpenEdgeLoop> loops = OpenEdgeLoops.Chain(rim.Edges, OpenEdgeLoops.DefaultJoinToleranceMm);
             foreach (OpenEdgeLoop loop in loops)
             {
                 var comEdges = new List<object>();
-                foreach (OpenEdgeSegment s in loop.Segments) if (s.Com != null) comEdges.Add(s.Com);
+                var keys = new List<string>();
+                foreach (OpenEdgeSegment s in loop.Segments)
+                {
+                    if (s.Com == null) continue;
+                    comEdges.Add(s.Com);
+                    string key;
+                    keys.Add(identity != null && identity.TryGetValue(s, out key) ? key : null);
+                }
                 if (comEdges.Count == 0) continue;
 
                 string name = $"{NamePrefix}{rim.Label} ({index + 1})";
-                object curve = AddDerivedCurve(partDoc, comEdges, name);
-                if (curve == null)
+                Log.Info($"WEDM rim: contorno {(rim.IsTop ? "de topo" : "de fundo")} de '{surface}' em Z = {rim.Label}: " +
+                         $"{comEdges.Count} aresta(s) [{string.Join(" ", keys.Select(k => k ?? "?"))}], " +
+                         $"{(loop.Closed ? "FECHADO" : "ABERTO")} — criando '{name}'.");
+
+                RefreshEdges(surf, keys, comEdges, name);
+
+                bool split;
+                List<object> created = AddRimCurve(partDoc, comEdges, name, out split);
+                if (created.Count == 0)
                 {
                     res.LoopsFailed++;
                     res.Warnings.Add($"{surface}: contorno em Z = {rim.Label} não virou curva — veja o log.");
                     continue;
                 }
                 index++;
+                if (split) res.LoopsSplit++;
 
                 if (!loop.Closed)
                 {
@@ -379,12 +488,81 @@ namespace AutoEDM.Wedm
                     Label = rim.Label,
                     IsTop = rim.IsTop,
                     EdgeCount = comEdges.Count,
+                    PieceCount = created.Count,
                     Closed = loop.Closed,
                     Surface = surface,
                 });
                 Log.Info($"WEDM rim: '{name}' — {comEdges.Count} aresta(s), {(loop.Closed ? "FECHADO" : "ABERTO")}, " +
-                         $"{(rim.IsTop ? "topo" : "fundo")} de '{surface}'.");
+                         $"{(rim.IsTop ? "topo" : "fundo")} de '{surface}'" +
+                         (split ? $" — FATIADO em {created.Count} curva(s), uma por aresta." : "") + ".");
             }
+        }
+
+        /// <summary>
+        /// Troca as arestas em mãos pelas MESMAS arestas relidas agora da peça, casando pelo
+        /// <c>Edge.ID</c>/geometria (<see cref="EdgeIdentity"/>).
+        ///
+        /// Por quê: as arestas são lidas uma vez por superfície, mas cada <c>DerivedCurves.Add</c>
+        /// regenera o modelo — e no log `093112` o rim de FUNDO virou curva e o de TOPO, da mesma
+        /// superfície e com a mesma forma de chamada, foi recusado com E_INVALIDARG nas quatro
+        /// tentativas. Proxy envelhecido é a explicação que cabe: o que mudou entre as duas
+        /// chamadas foi só o Add que aconteceu no meio. Releitura barata (uma varredura de arestas)
+        /// contra um erro que custa a curva inteira. Se a releitura não achar alguma aresta, as
+        /// antigas ficam — pior que hoje não fica.
+        /// </summary>
+        private static void RefreshEdges(object surf, List<string> keys, List<object> comEdges, string name)
+        {
+            if (keys.Count != comEdges.Count || keys.All(k => k == null)) return;
+
+            string route;
+            var fresh = new Dictionary<string, object>();
+            foreach (object e in ReadRawEdges(surf, out route))
+            {
+                double[] min, max, start, end; string why;
+                if (!FaceGeometry.TryGetExactRangeMm(e, out min, out max)) continue;
+                if (!EdgeGeometry.TryGetEndPointsMm(e, out start, out end, out why)) continue;
+                string key = EdgeIdentity(e, start, end, min, max);
+                if (!fresh.ContainsKey(key)) fresh[key] = e;
+            }
+
+            int swapped = 0, missing = 0;
+            for (int i = 0; i < comEdges.Count; i++)
+            {
+                object e;
+                if (keys[i] != null && fresh.TryGetValue(keys[i], out e)) { comEdges[i] = e; swapped++; }
+                else missing++;
+            }
+            if (missing > 0)
+                Log.Warn($"WEDM rim: '{name}' — {missing} de {comEdges.Count} aresta(s) não foram reencontradas na releitura; usando as originais.");
+            else
+                Log.Info($"WEDM rim: '{name}' — {swapped} aresta(s) relida(s) da peça antes do Add.");
+        }
+
+        /// <summary>
+        /// Cria a curva do contorno: UMA curva composta com todas as arestas e, se o SE recusar,
+        /// uma curva POR ARESTA (Carlos, 2026-09-16). O fatiado é feio na árvore, mas o perfil sai
+        /// — e para a exportação tanto faz quantas features são, ela lê as arestas de todas.
+        /// </summary>
+        private static List<object> AddRimCurve(object partDoc, List<object> comEdges, string name, out bool split)
+        {
+            split = false;
+            var created = new List<object>();
+
+            object whole = AddDerivedCurve(partDoc, comEdges, name, quiet: false);
+            if (whole != null) { created.Add(whole); return created; }
+            if (comEdges.Count < 2) return created;
+
+            Log.Warn($"WEDM rim: '{name}' — curva composta recusada; tentando uma curva por aresta.");
+            for (int i = 0; i < comEdges.Count; i++)
+            {
+                string pieceName = $"{name.Substring(0, name.Length - 1)}.{i + 1})";
+                object piece = AddDerivedCurve(partDoc, new List<object> { comEdges[i] }, pieceName, quiet: true);
+                if (piece != null) created.Add(piece);
+                else Log.Warn($"WEDM rim: '{pieceName}' — aresta {i + 1} também foi recusada sozinha.");
+            }
+            split = created.Count > 0;
+            if (split) Log.Info($"WEDM rim: '{name}' — {created.Count} de {comEdges.Count} aresta(s) viraram curva separada.");
+            return created;
         }
 
         /// <summary>
@@ -393,8 +571,11 @@ namespace AutoEDM.Wedm
         /// pode estar morta, 0x80010114). Tenta composta e, se falhar, curva única; o array vai
         /// by-ref (a PIA 219 declara arrays de entrada como <c>out Array&amp;</c>) e, se não colar,
         /// por valor. Nunca lança: falha vira log + aviso.
+        ///
+        /// <paramref name="quiet"/> cala as tentativas individuais: no fallback por aresta são
+        /// 4 tentativas × N arestas, e o log viraria despejo — quem chama resume o resultado.
         /// </summary>
-        private static object AddDerivedCurve(object partDoc, List<object> comEdges, string name)
+        private static object AddDerivedCurve(object partDoc, List<object> comEdges, string name, bool quiet)
         {
             foreach (int curveType in new[] { IgDCComposite, IgDCCurve })
             {
@@ -426,7 +607,7 @@ namespace AutoEDM.Wedm
                             collection, args, new[] { mod }, CultureInfo.InvariantCulture, null);
                         if (curve == null)
                         {
-                            Log.Warn($"WEDM rim: '{name}' — DerivedCurves.Add devolveu nulo ({how}).");
+                            if (!quiet) Log.Warn($"WEDM rim: '{name}' — DerivedCurves.Add devolveu nulo ({how}).");
                             continue;
                         }
 
@@ -439,11 +620,12 @@ namespace AutoEDM.Wedm
                         }
                         Rename(curve, name);
                         TrySet(curve, "Visible", true);
+                        if (!quiet) Log.Info($"WEDM rim: '{name}' — DerivedCurves.Add aceitou ({how}), Status {status}.");
                         return curve;
                     }
                     catch (Exception ex)
                     {
-                        Log.Warn($"WEDM rim: '{name}' — DerivedCurves.Add ({how}) falhou: {ex.GetBaseException().Message}");
+                        if (!quiet) Log.Warn($"WEDM rim: '{name}' — DerivedCurves.Add ({how}) falhou: {ex.GetBaseException().Message}");
                     }
                 }
             }
@@ -487,10 +669,23 @@ namespace AutoEDM.Wedm
             }
         }
 
+        /// <summary>
+        /// Nomeia a curva e CONFERE lendo o nome de volta (Carlos, 2026-09-16): se a gravação não
+        /// pegar sem lançar, a curva fica com o nome de fábrica do SE ("Derived Curve_1"), a
+        /// <see cref="DeletePreviousCurves"/> nunca a reconhece e cada rodada empilha um perfil
+        /// duplicado na peça — exatamente o sintoma "0 curva(s) anterior(es) apagada(s)" do log
+        /// `093112`, que o aviso de exceção sozinho não explicava.
+        /// </summary>
         private static void Rename(object curve, string name)
         {
-            if (!TrySet(curve, "Name", name))
-                Log.Warn($"WEDM rim: curva criada mas não foi possível nomeá-la '{name}' — a próxima rodada não vai reconhecê-la para substituir.");
+            bool set = TrySet(curve, "Name", name);
+            string readBack = Get(curve, "Name") as string;
+            if (set && string.Equals(readBack, name, StringComparison.Ordinal)) return;
+
+            RenameFailed = true;
+            Log.Warn($"WEDM rim: a curva criada não ficou com o nome '{name}' " +
+                     $"(gravação {(set ? "aceita" : "recusada")}, nome agora: '{readBack ?? "?"}') — " +
+                     "a próxima rodada não vai reconhecê-la para substituir; apague à mão antes de rodar de novo.");
         }
 
         private static bool TrySet(object com, string property, object value)
