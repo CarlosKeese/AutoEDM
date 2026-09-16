@@ -38,11 +38,12 @@ namespace AutoEDM.Wedm
     /// — corpo de arame é curva; com face é superfície e fica de fora.
     ///
     /// Cada aresta vira <see cref="WireCurve"/> EXATA quando dá: reta pelas pontas; arco por
-    /// <c>Circle</c> (centro, raio, eixo) + um ponto no meio da aresta para saber o sentido;
-    /// B-spline por <c>GetBSplineInfo</c>/<c>GetBSplineData</c>, CONFERIDA avaliando a spline nas
-    /// pontas do trecho da aresta. O que não passa (elipse, spline periódica, conferência que não
-    /// bate) sai como polilinha pelo <c>GetStrokeData</c> a 0,001 mm — e é contado e avisado.
-    /// A VALIDAR no SE: tudo daqui (API de curvas nunca foi usada pelo AutoEDM).
+    /// <c>Circle</c> (centro, raio, eixo) OU por <c>Ellipse</c> de razão 1 — é assim que o SE
+    /// devolve o RAIO DE CANTO, ver <see cref="TryArc"/> — sempre com um ponto no meio da aresta
+    /// para saber o sentido; B-spline por <c>GetBSplineInfo</c>/<c>GetBSplineData</c>, CONFERIDA
+    /// avaliando a spline nas pontas do trecho da aresta. O que não passa (elipse de verdade,
+    /// spline periódica, conferência que não bate) sai como polilinha pelo <c>GetStrokeData</c>
+    /// a 0,001 mm — e é contado e avisado.
     /// </summary>
     public static class WedmCurveReader
     {
@@ -50,8 +51,12 @@ namespace AutoEDM.Wedm
 
         // GNTTypePropertyConstants (dump SE 2023, mesmos valores de ORingTargetReader).
         private const int IgCircle = 167551105;
+        private const int IgEllipse = 167551107;
         private const int IgLine = 167551109;
         private const int IgBSplineCurve = 167551103;
+
+        /// <summary>Razão menor/maior a partir da qual a elipse deixa de ser um arco circular.</summary>
+        private const double EllipseRatioTolerance = 1e-6;
 
         private const double StrokeToleranceM = 0.000001;   // 0,001 mm
         private const double CheckToleranceMm = 0.001;
@@ -175,7 +180,8 @@ namespace AutoEDM.Wedm
             switch (type)
             {
                 case IgLine: return WireCurve.Line(a, b);
-                case IgCircle: exact = TryArc(edge, geom, a, b, out why); break;
+                case IgCircle: exact = TryArc(edge, geom, a, b, fromEllipse: false, why: out why); break;
+                case IgEllipse: exact = TryArc(edge, geom, a, b, fromEllipse: true, why: out why); break;
                 case IgBSplineCurve: exact = TryBSpline(edge, geom, a, b, out why); break;
                 default: why = $"curva do tipo {type} sem leitura exata"; break;
             }
@@ -191,18 +197,31 @@ namespace AutoEDM.Wedm
             return WireCurve.Polyline(pts);
         }
 
-        private static WireCurve TryArc(object edge, object circle, double[] a, double[] b, out string why)
+        /// <summary>
+        /// Arco horizontal (IGES 100) a partir de um <c>Circle</c> ou de uma <c>Ellipse</c>.
+        ///
+        /// A ELIPSE existe aqui por causa de um achado real (Carlos, 2026-09-16, log `093112`): os
+        /// RAIOS DE CANTO do perfil chegam como <c>igEllipse</c> (167551107), não como
+        /// <c>igCircle</c> — por isso todo raio saía como polilinha pelo botão, enquanto o "Salvar
+        /// como" do próprio SE exportava o arco perfeito. Elipse de razão menor/maior 1 É um arco
+        /// circular; só o nome do tipo difere.
+        ///
+        /// No caminho da elipse o raio é MEDIDO nas pontas (a <c>Ellipse</c> não tem
+        /// <c>Radius</c>, e o comprimento do <c>GetMajorAxis</c> não é confiável sem validação) e
+        /// conferido no PONTO DO MEIO: é isso que separa um raio de canto de uma elipse de
+        /// verdade cujas pontas por acaso equidistam do centro. Não passando na conferência, a
+        /// aresta cai na polilinha de sempre — nunca sai um arco errado.
+        /// </summary>
+        private static WireCurve TryArc(object edge, object geom, double[] a, double[] b, bool fromEllipse, out string why)
         {
-            if (!FaceGeometry.TryOneArrayOut(circle, "GetCenterPoint", out double[] centerM, out why))
+            string what = fromEllipse ? "Ellipse" : "Circle";
+            if (!FaceGeometry.TryOneArrayOut(geom, "GetCenterPoint", out double[] centerM, out why))
             {
-                why = "Circle.GetCenterPoint: " + why;
+                why = what + ".GetCenterPoint: " + why;
                 return null;
             }
-            double radiusMm;
-            try { radiusMm = Units.MToMm(Convert.ToDouble(Get(circle, "Radius"))); }
-            catch (Exception ex) { why = "Circle.Radius: " + ex.GetBaseException().Message; return null; }
 
-            if (FaceGeometry.TryOneArrayOut(circle, "GetAxisVector", out double[] axis, out string _) &&
+            if (FaceGeometry.TryOneArrayOut(geom, "GetAxisVector", out double[] axis, out string _) &&
                 Math.Abs(Math.Abs(axis[2]) - 1.0) > 1e-9)
             {
                 why = "arco fora de um plano horizontal";
@@ -210,7 +229,33 @@ namespace AutoEDM.Wedm
             }
 
             double[] center = ToMm(centerM);
-            double off = Math.Abs(Math.Sqrt(Sq(a[0] - center[0]) + Sq(a[1] - center[1])) - radiusMm);
+            double radiusMm;
+            if (fromEllipse)
+            {
+                double ratio;
+                if (TryDouble(geom, "MinorMajorRatio", out ratio) && Math.Abs(ratio - 1.0) > EllipseRatioTolerance)
+                {
+                    why = $"elipse de verdade (razão menor/maior {ratio:0.0000})";
+                    return null;
+                }
+
+                // Sem Radius na Ellipse: o raio é o MEDIDO, e quem prova que é circular é o ponto
+                // do meio (WireCurve.TryCircularRadiusMm).
+                double[] midE = MidPointMm(edge, out why);
+                if (midE == null) return null;
+
+                radiusMm = WireCurve.TryCircularRadiusMm(center, a, b, midE, CheckToleranceMm);
+                if (double.IsNaN(radiusMm))
+                {
+                    why = "não é arco circular (pontas e meio em raios diferentes do centro)";
+                    return null;
+                }
+                return WireCurve.HorizontalArc(center, radiusMm, a, b, midE);
+            }
+
+            if (!TryDouble(geom, "Radius", out double radiusM)) { why = "Circle.Radius indisponível"; return null; }
+            radiusMm = Units.MToMm(radiusM);
+            double off = Math.Abs(WireCurve.RadiusXY(center, a) - radiusMm);
             if (off > CheckToleranceMm)
             {
                 why = $"ponta do arco a {off:0.0000} mm do círculo";
@@ -224,6 +269,19 @@ namespace AutoEDM.Wedm
                 if (mid == null) return null;
             }
             return WireCurve.HorizontalArc(center, radiusMm, a, b, mid ?? a);
+        }
+
+        private static bool TryDouble(object com, string property, out double value)
+        {
+            value = 0;
+            try
+            {
+                object v = Get(com, property);
+                if (v == null) return false;
+                value = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch { return false; }
         }
 
         private static WireCurve TryBSpline(object edge, object spline, double[] a, double[] b, out string why)

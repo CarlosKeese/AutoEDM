@@ -74,5 +74,51 @@ namespace AutoEDM.Core.Tests
             Assert.Equal(3, min);
             Assert.Equal(3.5, max);
         }
+
+        // --- é arco circular? (o raio de canto que o SE devolve como "elipse") ---
+
+        private static double[] OnCircle(double[] center, double r, double degrees)
+        {
+            double t = degrees * Math.PI / 180.0;
+            return new[] { center[0] + r * Math.Cos(t), center[1] + r * Math.Sin(t), center[2] };
+        }
+
+        [Fact]
+        public void CircularRadius_OfAQuarterRound_IsTheMeasuredRadius()
+        {
+            var c = new double[] { 10, 5, 23 };
+            double r = WireCurve.TryCircularRadiusMm(c, OnCircle(c, 2.5, 0), OnCircle(c, 2.5, 90), OnCircle(c, 2.5, 45), 0.001);
+            Assert.Equal(2.5, r, 6);
+        }
+
+        [Fact]
+        public void CircularRadius_RejectsARealEllipse_EvenWithEndsAtTheSameRadius()
+        {
+            // Pontas simétricas (mesmo raio), mas o meio da elipse fica no semieixo MENOR.
+            var c = new double[] { 0, 0, 0 };
+            double r = WireCurve.TryCircularRadiusMm(c,
+                new double[] { 4 * Math.Cos(Math.PI / 4), 2 * Math.Sin(Math.PI / 4), 0 },
+                new double[] { -4 * Math.Cos(Math.PI / 4), 2 * Math.Sin(Math.PI / 4), 0 },
+                new double[] { 0, 2, 0 }, 0.001);
+            Assert.True(double.IsNaN(r));
+        }
+
+        [Fact]
+        public void CircularRadius_IgnoresZ_TheArcIsMeasuredInXY()
+        {
+            var c = new double[] { 0, 0, 0 };
+            double r = WireCurve.TryCircularRadiusMm(c,
+                new double[] { 3, 0, 12 }, new double[] { -3, 0, 12 }, new double[] { 0, 3, 12 }, 0.001);
+            Assert.Equal(3, r, 6);
+        }
+
+        [Fact]
+        public void CircularRadius_RejectsWhenTheEndsDisagree()
+        {
+            var c = new double[] { 0, 0, 0 };
+            double r = WireCurve.TryCircularRadiusMm(c,
+                new double[] { 3, 0, 0 }, new double[] { 0, 3.01, 0 }, new double[] { 2.12, 2.12, 0 }, 0.001);
+            Assert.True(double.IsNaN(r));
+        }
     }
 }

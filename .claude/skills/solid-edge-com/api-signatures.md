@@ -418,6 +418,24 @@ one would have silently changed every already-validated feature.
 The same warning applies to the circular-edge trick above: the axis is the direction whose
 extent is ~0, and "~0" is only really ~0 with `GetExactRange`.
 
+**A corner radius comes back as `igEllipse`, not `igCircle`** (found 2026-09-16, AutoEDM).
+`Edge.Geometry.Type` on the fillet edges of a profile read **167551107 = `igEllipse`**
+(`GNTTypePropertyConstants`: `igVertex`=167551101, `igBSplineCurve`=167551103,
+`igCircle`=167551105, `igEllipse`=167551107, `igLine`=167551109). An ellipse whose
+`MinorMajorRatio` is 1 **is** a circular arc — so a `switch` that only handles `igCircle`
+silently degrades every radius to a stroked polyline, while SE's own "Save As IGES" writes
+the arcs perfectly. That contrast (our export vs. `SaveAs`) is the symptom to recognize.
+
+The `Ellipse` interface is **not** `Circle`: no `Radius` property. It has `MinorMajorRatio`,
+`GetCenterPoint`, `GetAxisVector`, `GetMajorAxis` and `GetEllipseData([out] CenterPoint,
+[out] AxisVector, [out] MajorAxis, [out] MinorMajorRatio)`. Rather than trusting the length
+of the `GetMajorAxis` vector (unverified whether it is unit or semi-axis length), **measure**
+the radius at the edge's endpoints and **prove circularity at the edge's MIDPOINT**
+(`GetPointAtParam` at the middle of `GetParamExtents`): all three at the same distance from
+the centre. Endpoints alone are not proof — a real ellipse cut symmetrically has endpoints
+equidistant from the centre and would pass. Failing the midpoint check, fall back to the
+polyline instead of emitting a wrong arc.
+
 **Positioning a part by mates (alternative to `PutOrigin`).** When an exact origin isn't
 enough, constrain the occurrence: `Ref = AssemblyDocument.CreateReference(Occurrence, Face)`
 for each side, then `Relations3d.AddPlanar(Ref1, Ref2, NormalsAligned, cp1[3], cp2[3])`

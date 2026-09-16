@@ -79,6 +79,34 @@ namespace AutoEDM.Wedm
             };
         }
 
+        /// <summary>
+        /// A curva que passa por estes três pontos é um ARCO CIRCULAR em torno de
+        /// <paramref name="center"/>? Devolve o raio medido (mm) ou <see cref="double.NaN"/>.
+        ///
+        /// Existe por causa do raio de canto que o Solid Edge devolve como <c>igEllipse</c>
+        /// (Carlos, 2026-09-16): elipse de razão 1 É arco circular, e sem reconhecer isso todo
+        /// raio saía como polilinha no .igs. Como o tipo declarado deixou de ser a prova, a prova
+        /// passa a ser a geometria — as duas pontas E o ponto do meio no mesmo raio. O ponto do
+        /// meio é o que importa: só com as pontas, uma elipse de verdade cujas pontas por acaso
+        /// equidistam do centro passaria por arco e sairia deformada no corte.
+        ///
+        /// Só XY: o arco de perfil está num plano horizontal (quem confere o plano é o chamador).
+        /// </summary>
+        public static double TryCircularRadiusMm(double[] center, double[] start, double[] end, double[] mid,
+            double toleranceMm)
+        {
+            if (center == null || start == null || end == null || mid == null) return double.NaN;
+            double rs = RadiusXY(center, start), re = RadiusXY(center, end), rm = RadiusXY(center, mid);
+            double radius = (rs + re) / 2.0;
+            if (Math.Abs(rs - re) > toleranceMm) return double.NaN;
+            if (Math.Abs(rm - radius) > toleranceMm) return double.NaN;
+            return radius;
+        }
+
+        /// <summary>Distância do ponto ao centro NO PLANO XY (mm) — o raio medido do arco horizontal.</summary>
+        public static double RadiusXY(double[] center, double[] p) =>
+            Math.Sqrt((p[0] - center[0]) * (p[0] - center[0]) + (p[1] - center[1]) * (p[1] - center[1]));
+
         /// <summary>B-spline. Lança <see cref="ArgumentException"/> se nós/pesos não fecharem com os polos.</summary>
         public static WireCurve BSpline(int degree, double[] knots, double[] weights, double[][] poles, double paramStart, double paramEnd)
         {
