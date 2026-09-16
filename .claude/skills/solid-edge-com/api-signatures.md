@@ -442,6 +442,11 @@ wrong geometry reads. The pattern that fixes it generalizes to any feature-creat
 3. Log how many edges matched by ID vs by geometry. That number is what tells you the model
    regenerated underneath you, and it is invisible otherwise.
 
+Confirmed on the same part that used to fail: with the read/create split in place, **7 derived
+curves in one run, every `Add` accepted, zero `E_INVALIDARG`** — where before it was one curve
+and then nothing. Worth applying preemptively to any loop that creates one feature per iteration
+off a shared parent.
+
 **A corner radius comes back as `igEllipse`, not `igCircle`** (found 2026-09-16, AutoEDM).
 `Edge.Geometry.Type` on the fillet edges of a profile read **167551107 = `igEllipse`**
 (`GNTTypePropertyConstants`: `igVertex`=167551101, `igBSplineCurve`=167551103,

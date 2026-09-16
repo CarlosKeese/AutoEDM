@@ -121,7 +121,8 @@ namespace AutoEDM.Wedm
     /// só, e as superfícies lidas depois dele vinham com arestas sem sentido. Daí a divisão em
     /// duas fases de <see cref="Build"/> — e por isso nada aqui guarda proxy COM entre um Add e o
     /// próximo: guarda-se a IDENTIDADE (índice + caixa da superfície, ID + geometria da aresta) e
-    /// reencontra-se tudo na hora.
+    /// reencontra-se tudo na hora. CONFIRMADO no SE (log `123058`): 7 curvas na mesma rodada,
+    /// TODAS aceitas, 0 falhas — contra 1 curva e o resto em E_INVALIDARG antes da separação.
     ///
     /// O que fez a 1ª rodada não achar extremidade nenhuma num loft entre duas splines NÃO era o
     /// ângulo da superfície: <c>Edge.GetRange</c> devolve caixa INFLADA em aresta B-spline
