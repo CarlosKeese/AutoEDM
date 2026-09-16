@@ -72,7 +72,7 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Configuração externa (`config.json`) | ✅ construído, coberto por teste |
 | Análise de usinabilidade (nível 1: raio + canto vivo) | ✅ construído, coberto por teste; raio validado no SE |
 | Curvas das superfícies (WEDM) | ✅ validado no SE (2026-09-16) |
-| Exportar perfis WEDM (IGES por Z) | ✅ validado no SE (2026-09-16); **importação do 126 no Pitágoras ainda não conferida** |
+| Exportar perfis WEDM (IGES por Z) | ✅ validado no SE e **no Pitágoras** (2026-09-16) — a cadeia inteira, da peça ao programa da máquina |
 | Lista de corte na serra | 🚧 construído, coberto por teste, **aguardando validação no SE** |
 | Testes de unidade | ✅ 209 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
@@ -202,17 +202,32 @@ Antes disso, confirmar no SE o **canto vivo**: o log dirá se a calibração do
 sinal de concavidade (pelas arestas da borda da caixa envolvente) fecha, e
 quantas arestas a versão plano↔plano descarta por encostar em face curva.
 
-No WEDM a cadeia fechou em 2026-09-16: o "Curvas das superfícies" criou 4 curvas
-em 2 superfícies e o "Exportar perfis (IGES)" gravou os 4 `.igs` na sequência,
-**um por altura Z, todos como B-spline (entidade 126), nenhuma queda para
-polilinha**. Falta o outro lado da ponte: **abrir esses IGES no Pitágoras** e
-confirmar que o 126 entra com a geometria certa — é o único elo do WEDM que
-ainda não foi visto funcionando.
+**No WEDM a cadeia fechou de ponta a ponta em 2026-09-16**, da peça ao programa
+da máquina: o "Curvas das superfícies" cria as curvas, o "Exportar perfis (IGES)"
+grava um `.igs` por altura Z e **o Pitágoras abriu esses arquivos sem problema**.
+Não sobrou elo por ver funcionando.
 
-O mesmo run deixou um ponto de projeto em aberto: os quatro contornos saíram
-**ABERTOS** (uma aresta cada), o que é o esperado para loft entre splines
-abertas, mas perfil de corte a fio normalmente precisa fechar. Decidir se o
-botão deve fechar o contorno sozinho ou se isso é responsabilidade do desenho.
+Três correções desse mesmo dia, todas achadas por log e já na skill
+`solid-edge-com`, valem para qualquer automação COM daqui em diante:
+
+1. `Edge.GetRange` devolve caixa **inflada** em aresta B-spline (±0,005 mm
+   medidos) — para DECIDIR planaridade só serve `GetExactRange`.
+2. O raio de canto chega como **`igEllipse`**, com `MinorMajorRatio` 0,9999.
+   Quem decide se é arco é a geometria medida ao longo da aresta, não o tipo nem
+   a razão declarada — senão todo raio vira polilinha enquanto o "Salvar como" do
+   próprio SE exporta o arco perfeito.
+3. Cada `DerivedCurves.Add` **mata a superfície de origem e as arestas dela**: só
+   a primeira curva da rodada saía, e as superfícies lidas depois dele vinham com
+   arestas sem sentido. A cura é estrutural — ler tudo antes com o modelo parado,
+   guardar identidade (índice + caixa da superfície, ID + geometria da aresta) e
+   nunca proxy, e reencontrar documento, superfície e arestas antes de cada Add.
+   Depois disso: 7 curvas numa rodada, todas aceitas.
+
+Fica um ponto de projeto em aberto: os contornos têm saído **ABERTOS**, o que é
+esperado para loft entre splines abertas, mas perfil de corte a fio normalmente
+precisa fechar. Decidir se o botão deve fechar o contorno sozinho, se a
+tolerância de encadeamento (0,01 mm) está apertada para essas peças, ou se isso é
+responsabilidade do desenho.
 
 Continuam pendentes de validação no CAD: **Alojamento de O'ring**, **Aplicar
 GAP**, **Duplicar eletrodo** e a **lista de corte na serra**; e em aberto a
