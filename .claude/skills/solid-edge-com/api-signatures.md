@@ -418,6 +418,30 @@ one would have silently changed every already-validated feature.
 The same warning applies to the circular-edge trick above: the axis is the direction whose
 extent is ~0, and "~0" is only really ~0 with `GetExactRange`.
 
+**`Constructions.DerivedCurves.Add` kills the source surface AND its edges** (found 2026-09-16,
+AutoEDM). `Add(nEdges, Edge[] typed, CurveType)` works — `igDCComposite=1`, and the resulting
+`DerivedCurve` exposes `Name`/`Visible`/`Edges[igQueryAll]` so a later pass can read it back.
+But it regenerates the construction tree, and **everything you were holding from the surface it
+came from dies with it**: in one run only the *first* Add of the session succeeded, and every
+later one returned `E_INVALIDARG (0x80070057)` — even a single-edge call. Re-reading the cached
+surface object after that first Add returned edges that matched **nothing**, neither by
+`Edge.ID` (SE renumbers them) nor by geometry, so a surface whose edges were read *after* the
+first Add produced nonsense contours: one-edge "loops" that never close.
+
+This is the same family as the `RPC_E_DISCONNECTED`/`0x80010114` traps above, but it does not
+announce itself — no disconnect error, just an invalid-argument on the *next* call and silently
+wrong geometry reads. The pattern that fixes it generalizes to any feature-creating loop:
+
+1. **Read everything first, with the model untouched**, and keep only identities, never COM
+   proxies: for a feature, its index in its collection plus its body bounding box and face count;
+   for an edge, its `ID` *and* a geometric key (endpoints + exact bbox, rounded).
+2. **Then create**, and before *each* `Add` re-acquire the whole chain — document from
+   `Application.ActiveDocument` (the Application never disconnects), the feature by scanning its
+   collection for the matching fingerprint, the edges by matching identity — falling back from ID
+   to geometry, because only the geometry survives a renumber.
+3. Log how many edges matched by ID vs by geometry. That number is what tells you the model
+   regenerated underneath you, and it is invisible otherwise.
+
 **A corner radius comes back as `igEllipse`, not `igCircle`** (found 2026-09-16, AutoEDM).
 `Edge.Geometry.Type` on the fillet edges of a profile read **167551107 = `igEllipse`**
 (`GNTTypePropertyConstants`: `igVertex`=167551101, `igBSplineCurve`=167551103,
