@@ -35,6 +35,17 @@ namespace AutoEDM.Electrode
         /// <summary>Quantas arestas do contorno são verticais.</summary>
         public int VerticalCount;
 
+        /// <summary>
+        /// As duas PONTAS SOLTAS do contorno (mm): onde ele começou e onde parou. Num contorno
+        /// fechado são o mesmo ponto; num aberto, a distância entre elas é o que separa "aberto de
+        /// propósito" (corte reto, que entra e sai da peça — pontas a dezenas de mm) de
+        /// "encadeamento quebrado" (folga de centésimos que estourou a tolerância).
+        /// </summary>
+        public double[] StartMm, EndMm;
+
+        /// <summary>Distância entre as pontas soltas (mm); 0 no contorno fechado.</summary>
+        public double GapMm { get { return Closed ? 0 : OpenEdgeLoops.Dist(StartMm, EndMm); } }
+
         public double XMinMm, XMaxMm, YMinMm, YMaxMm, ZMinMm, ZMaxMm;
 
         /// <summary>
@@ -121,6 +132,8 @@ namespace AutoEDM.Electrode
                     tip = flip ? next.StartMm : next.EndMm;
                 }
 
+                loop.StartMm = loopStart;
+                loop.EndMm = loop.Closed ? loopStart : tip;
                 Summarize(loop);
                 loops.Add(loop);
             }
@@ -158,7 +171,8 @@ namespace AutoEDM.Electrode
             return Dist(a, b) <= tolMm;
         }
 
-        private static double Dist(double[] a, double[] b)
+        /// <summary>Distância entre dois pontos (mm); <see cref="double.MaxValue"/> quando falta algum.</summary>
+        public static double Dist(double[] a, double[] b)
         {
             if (a == null || b == null || a.Length < 3 || b.Length < 3) return double.MaxValue;
             double dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];

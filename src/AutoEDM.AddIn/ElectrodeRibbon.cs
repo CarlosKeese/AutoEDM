@@ -270,14 +270,17 @@ namespace AutoEDM.AddIn
                     sb.AppendLine($"   Z = {g.Key.Label} ({(g.Key.IsTop ? "topo" : "fundo")})  —  " +
                                   $"{contours} contorno(s), {edges} aresta(s)" +
                                   (pieces > contours ? $", em {pieces} curva(s) na árvore" : "") +
-                                  (open > 0 ? $", {open} ABERTO(s)" : ""));
+                                  (open > 0 ? $", {open} aberto(s)" : ""));
                 }
 
                 var notes = new System.Collections.Generic.List<string>();
                 if (r.Deleted > 0)
                     notes.Add($"{r.Deleted} curva(s) desta mesma ferramenta, de uma rodada anterior, foram substituídas.");
-                if (r.LoopsOpen > 0)
-                    notes.Add($"{r.LoopsOpen} contorno(s) não fecharam — confira na peça antes de cortar.");
+                // Contorno aberto é normal em corte reto (o fio entra e sai da peça), então só
+                // vira ATENÇÃO quando as pontas ficaram perto demais para ser abertura de projeto.
+                if (r.LoopsSuspect > 0)
+                    notes.Add($"{r.LoopsSuspect} contorno(s) abertos com as pontas a menos de 1 mm uma da outra (ou de outro contorno) — " +
+                              "provavelmente é um perfil só que se partiu em pedaços por uma folga entre as arestas. Veja as distâncias no log.");
                 if (r.LoopsSplit > 0)
                     notes.Add($"{r.LoopsSplit} contorno(s) o Solid Edge recusou inteiros e saíram FATIADOS, uma curva por aresta. " +
                               "O perfil está completo e a exportação não se importa, mas a árvore fica com várias curvas no mesmo Z.");

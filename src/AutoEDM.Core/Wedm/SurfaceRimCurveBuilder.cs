@@ -49,6 +49,19 @@ namespace AutoEDM.Wedm
         public bool IsTop;
         public bool Closed;
 
+        /// <summary>Distância entre as duas pontas soltas do contorno (mm).</summary>
+        public double GapMm;
+
+        /// <summary>Distância até a ponta solta MAIS PRÓXIMA de outro contorno do mesmo rim (mm).</summary>
+        public double NeighbourMm = double.MaxValue;
+
+        /// <summary>
+        /// Aberto de um jeito SUSPEITO: alguma dessas distâncias é pequena demais para ser uma
+        /// abertura de projeto. Contorno de corte reto tem as pontas longe (nas bordas da peça);
+        /// pontas a centésimos de milímetro querem dizer que o encadeamento quebrou por tolerância.
+        /// </summary>
+        public bool Suspect;
+
         /// <summary>Identidade de cada aresta do contorno, na ordem do encadeamento.</summary>
         public List<EdgeKeys> Keys = new List<EdgeKeys>();
 
@@ -82,7 +95,15 @@ namespace AutoEDM.Wedm
         public int SurfacesRead { get; set; }
         public int SurfacesWithoutRim { get; set; }
         public int EdgesDropped { get; set; }
+        /// <summary>Contornos que não fecham — normal num corte reto, que entra e sai da peça.</summary>
         public int LoopsOpen { get; set; }
+
+        /// <summary>
+        /// Dos abertos, os que abriram por POUCO (pontas a ≤ 1 mm, ou encostando em outro contorno):
+        /// esses provavelmente são um perfil só que não encadeou, e é só desses que a janela avisa.
+        /// </summary>
+        public int LoopsSuspect { get; set; }
+
         public int LoopsFailed { get; set; }
         /// <summary>Contornos que o SE recusou inteiros e saíram como uma curva por aresta.</summary>
         public int LoopsSplit { get; set; }
@@ -570,7 +591,10 @@ namespace AutoEDM.Wedm
 
             foreach (SurfaceRim rim in pick.Rims)
             {
-                foreach (OpenEdgeLoop loop in OpenEdgeLoops.Chain(rim.Edges, OpenEdgeLoops.DefaultJoinToleranceMm))
+                List<OpenEdgeLoop> loops = OpenEdgeLoops.Chain(rim.Edges, OpenEdgeLoops.DefaultJoinToleranceMm);
+                var made = new List<RimLoopPlan>();
+
+                foreach (OpenEdgeLoop loop in loops)
                 {
                     var plan = new RimLoopPlan
                     {
@@ -578,6 +602,8 @@ namespace AutoEDM.Wedm
                         Label = rim.Label,
                         IsTop = rim.IsTop,
                         Closed = loop.Closed,
+                        GapMm = loop.GapMm,
+                        NeighbourMm = NearestLooseEnd(loop, loops),
                     };
                     foreach (OpenEdgeSegment s in loop.Segments)
                     {
@@ -588,12 +614,56 @@ namespace AutoEDM.Wedm
                     }
                     if (plan.Cached.Count == 0) continue;
 
+                    plan.Suspect = !loop.Closed &&
+                                   (plan.GapMm <= SuspectGapMm || plan.NeighbourMm <= SuspectGapMm);
                     plans.Add(plan);
-                    Log.Info($"WEDM rim: contorno {(rim.IsTop ? "de topo" : "de fundo")} de '{surf.Label}' em Z = {rim.Label}: " +
-                             $"{plan.Cached.Count} aresta(s) [{string.Join(" ", plan.Keys.Select(k => k?.Id ?? "?"))}], " +
-                             $"{(loop.Closed ? "FECHADO" : "ABERTO")}.");
+                    made.Add(plan);
+
+                    string shape = loop.Closed ? "FECHADO" : $"ABERTO ({DescribeOpening(plan)})";
+                    string line = $"WEDM rim: contorno {(rim.IsTop ? "de topo" : "de fundo")} de '{surf.Label}' em Z = {rim.Label}: " +
+                                  $"{plan.Cached.Count} aresta(s) [{string.Join(" ", plan.Keys.Select(k => k?.Id ?? "?"))}], {shape}.";
+                    if (plan.Suspect) Log.Warn(line);
+                    else Log.Info(line);
                 }
+
+                int suspect = made.Count(p => p.Suspect);
+                if (suspect > 0)
+                    res.Warnings.Add($"{surf.Label}, Z = {rim.Label}: {suspect} contorno(s) abertos com as pontas MUITO perto " +
+                                     $"(≤ {SuspectGapMm:0.0} mm) — provavelmente é um perfil só que não encadeou.");
             }
+        }
+
+        /// <summary>
+        /// Contorno aberto com pontas a menos disto (mm) é SUSPEITO: corte reto de verdade tem as
+        /// pontas lá nas bordas da peça, a dezenas de milímetros. Perto disso, o que houve foi uma
+        /// folga entre arestas maior que a tolerância de encadeamento (0,01 mm) partindo um perfil
+        /// só em pedaços.
+        /// </summary>
+        private const double SuspectGapMm = 1.0;
+
+        /// <summary>Ponta solta mais próxima, entre os OUTROS contornos do mesmo rim (mm).</summary>
+        private static double NearestLooseEnd(OpenEdgeLoop loop, List<OpenEdgeLoop> loops)
+        {
+            if (loop.Closed) return double.MaxValue;
+            double best = double.MaxValue;
+            foreach (OpenEdgeLoop other in loops)
+            {
+                if (ReferenceEquals(other, loop) || other.Closed) continue;
+                foreach (double[] mine in new[] { loop.StartMm, loop.EndMm })
+                    foreach (double[] theirs in new[] { other.StartMm, other.EndMm })
+                        best = Math.Min(best, OpenEdgeLoops.Dist(mine, theirs));
+            }
+            return best;
+        }
+
+        /// <summary>Como o contorno está aberto, em números — é o que separa corte reto de encadeamento quebrado.</summary>
+        private static string DescribeOpening(RimLoopPlan plan)
+        {
+            string gap = string.Format(CultureInfo.InvariantCulture, "pontas a {0:0.000} mm uma da outra", plan.GapMm);
+            string neighbour = plan.NeighbourMm == double.MaxValue
+                ? "único contorno aberto deste nível"
+                : string.Format(CultureInfo.InvariantCulture, "outro contorno a {0:0.000} mm", plan.NeighbourMm);
+            return plan.Suspect ? $"{gap}; {neighbour} — SUSPEITO, devia ter encadeado" : $"{gap}; {neighbour}";
         }
 
         // ------------------------------------------------------------ fase 2: criar
@@ -634,8 +704,12 @@ namespace AutoEDM.Wedm
 
             if (!plan.Closed)
             {
+                // Aberto NÃO é defeito (Carlos, 2026-09-16): corte reto entra e sai da peça e não
+                // tem por que fechar. Só vira aviso quando as pontas estão perto demais para isso.
                 res.LoopsOpen++;
-                Log.Warn($"WEDM rim: '{name}' ({plan.Surface.Label}) é um contorno ABERTO — o perfil não fecha sozinho.");
+                string line = $"WEDM rim: '{name}' ({plan.Surface.Label}) é um contorno ABERTO — {DescribeOpening(plan)}.";
+                if (plan.Suspect) { res.LoopsSuspect++; Log.Warn(line); }
+                else Log.Info(line);
             }
             res.Curves.Add(new RimCurveCreated
             {

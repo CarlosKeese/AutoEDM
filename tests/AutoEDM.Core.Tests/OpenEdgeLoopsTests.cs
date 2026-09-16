@@ -171,5 +171,54 @@ namespace AutoEDM.Core.Tests
             Assert.Equal(segs.Count, loops.Sum(l => l.Segments.Count));
             Assert.Equal(1, loops.Count(l => l.IsSideGap));
         }
+
+        // --- pontas soltas: é o que separa "corte reto" de "encadeamento quebrado" ---
+
+        [Fact]
+        public void Contorno_fechado_nao_tem_folga_entre_as_pontas()
+        {
+            OpenEdgeLoop loop = OpenEdgeLoops.Chain(SideGapRectangle(), Tol).Single();
+
+            Assert.True(loop.Closed);
+            Assert.Equal(0, loop.GapMm);
+        }
+
+        [Fact]
+        public void Corte_reto_deixa_as_pontas_longe_uma_da_outra()
+        {
+            // Perfil que atravessa a peça: começa numa borda e termina na outra, 40 mm adiante.
+            var segs = new List<OpenEdgeSegment>
+            {
+                Seg(0, 0, 0,   20, 0, 0),
+                Seg(20, 0, 0,  20, 15, 0),
+                Seg(20, 15, 0, 40, 15, 0),
+            };
+
+            OpenEdgeLoop loop = OpenEdgeLoops.Chain(segs, Tol).Single();
+
+            Assert.False(loop.Closed);
+            Assert.Equal(new double[] { 0, 0, 0 }, loop.StartMm);
+            Assert.Equal(new double[] { 40, 15, 0 }, loop.EndMm);
+            Assert.True(loop.GapMm > 40, $"folga {loop.GapMm} mm");
+        }
+
+        [Fact]
+        public void Folga_maior_que_a_tolerancia_parte_um_perfil_so_em_dois_contornos()
+        {
+            // Quadrado com um vão de 0,05 mm num canto: passa da tolerância de 0,01 mm e quebra.
+            var segs = new List<OpenEdgeSegment>
+            {
+                Seg(0, 0, 0,    10, 0, 0),
+                Seg(10, 0, 0,   10, 10, 0),
+                Seg(10, 10, 0,  0, 10, 0),
+                Seg(0, 10, 0,   0, 0.05, 0),   // não encosta no início por 0,05 mm
+            };
+
+            List<OpenEdgeLoop> loops = OpenEdgeLoops.Chain(segs, Tol);
+
+            OpenEdgeLoop loop = Assert.Single(loops);
+            Assert.False(loop.Closed);
+            Assert.Equal(0.05, loop.GapMm, 6);   // a folga denuncia: devia ter fechado
+        }
     }
 }
