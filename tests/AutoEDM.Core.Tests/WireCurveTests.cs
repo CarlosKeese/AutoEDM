@@ -83,42 +83,71 @@ namespace AutoEDM.Core.Tests
             return new[] { center[0] + r * Math.Cos(t), center[1] + r * Math.Sin(t), center[2] };
         }
 
+        /// <summary>Amostras como o leitor monta: as duas pontas + 1/4, 1/2 e 3/4 da aresta.</summary>
+        private static double[][] ArcSamples(double[] center, double r, double fromDeg, double toDeg)
+        {
+            double[] At(double f) => OnCircle(center, r, fromDeg + (toDeg - fromDeg) * f);
+            return new[] { At(0), At(1), At(0.25), At(0.5), At(0.75) };
+        }
+
         [Fact]
         public void CircularRadius_OfAQuarterRound_IsTheMeasuredRadius()
         {
             var c = new double[] { 10, 5, 23 };
-            double r = WireCurve.TryCircularRadiusMm(c, OnCircle(c, 2.5, 0), OnCircle(c, 2.5, 90), OnCircle(c, 2.5, 45), 0.001);
+            double r = WireCurve.TryCircularRadiusMm(c, ArcSamples(c, 2.5, 0, 90), 0.001, out double dev);
             Assert.Equal(2.5, r, 6);
+            Assert.True(dev < 1e-9);
+        }
+
+        [Fact]
+        public void CircularRadius_AcceptsTheRatioTheSolidEdgeReportsForACornerRound()
+        {
+            // O SE devolve MinorMajorRatio 0,9999 em raio de canto (log 112004). Num raio de
+            // 2,5 mm isso é meio mícron de diferença: é círculo para o fio.
+            var c = new double[] { 0, 0, 0 };
+            var samples = ArcSamples(c, 2.5, 0, 90);
+            foreach (double[] p in samples) p[1] *= 0.9999;   // achata o semieixo Y
+
+            double r = WireCurve.TryCircularRadiusMm(c, samples, 0.001, out double dev);
+            Assert.False(double.IsNaN(r));
+            Assert.True(dev < 0.001, $"desvio {dev} mm");
         }
 
         [Fact]
         public void CircularRadius_RejectsARealEllipse_EvenWithEndsAtTheSameRadius()
         {
-            // Pontas simétricas (mesmo raio), mas o meio da elipse fica no semieixo MENOR.
+            // Pontas simétricas (mesmo raio), mas os pontos de dentro caem no semieixo MENOR.
             var c = new double[] { 0, 0, 0 };
-            double r = WireCurve.TryCircularRadiusMm(c,
+            var samples = new[]
+            {
                 new double[] { 4 * Math.Cos(Math.PI / 4), 2 * Math.Sin(Math.PI / 4), 0 },
                 new double[] { -4 * Math.Cos(Math.PI / 4), 2 * Math.Sin(Math.PI / 4), 0 },
-                new double[] { 0, 2, 0 }, 0.001);
+                new double[] { 2, 1.73, 0 }, new double[] { 0, 2, 0 }, new double[] { -2, 1.73, 0 },
+            };
+            double r = WireCurve.TryCircularRadiusMm(c, samples, 0.001, out double dev);
             Assert.True(double.IsNaN(r));
+            Assert.True(dev > 0.5, $"desvio {dev} mm");
         }
 
         [Fact]
         public void CircularRadius_IgnoresZ_TheArcIsMeasuredInXY()
         {
             var c = new double[] { 0, 0, 0 };
-            double r = WireCurve.TryCircularRadiusMm(c,
-                new double[] { 3, 0, 12 }, new double[] { -3, 0, 12 }, new double[] { 0, 3, 12 }, 0.001);
+            var samples = ArcSamples(c, 3, 0, 180);
+            foreach (double[] p in samples) p[2] = 12;
+
+            double r = WireCurve.TryCircularRadiusMm(c, samples, 0.001, out double _);
             Assert.Equal(3, r, 6);
         }
 
         [Fact]
-        public void CircularRadius_RejectsWhenTheEndsDisagree()
+        public void CircularRadius_RejectsWhenOneSampleIsOffTheCircle()
         {
             var c = new double[] { 0, 0, 0 };
-            double r = WireCurve.TryCircularRadiusMm(c,
-                new double[] { 3, 0, 0 }, new double[] { 0, 3.01, 0 }, new double[] { 2.12, 2.12, 0 }, 0.001);
-            Assert.True(double.IsNaN(r));
+            var samples = ArcSamples(c, 3, 0, 90);
+            samples[3] = new double[] { samples[3][0] * 1.01, samples[3][1] * 1.01, 0 };
+
+            Assert.True(double.IsNaN(WireCurve.TryCircularRadiusMm(c, samples, 0.001, out double _)));
         }
     }
 }

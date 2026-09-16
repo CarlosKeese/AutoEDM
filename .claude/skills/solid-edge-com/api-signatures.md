@@ -428,13 +428,22 @@ the arcs perfectly. That contrast (our export vs. `SaveAs`) is the symptom to re
 
 The `Ellipse` interface is **not** `Circle`: no `Radius` property. It has `MinorMajorRatio`,
 `GetCenterPoint`, `GetAxisVector`, `GetMajorAxis` and `GetEllipseData([out] CenterPoint,
-[out] AxisVector, [out] MajorAxis, [out] MinorMajorRatio)`. Rather than trusting the length
-of the `GetMajorAxis` vector (unverified whether it is unit or semi-axis length), **measure**
-the radius at the edge's endpoints and **prove circularity at the edge's MIDPOINT**
-(`GetPointAtParam` at the middle of `GetParamExtents`): all three at the same distance from
-the centre. Endpoints alone are not proof — a real ellipse cut symmetrically has endpoints
-equidistant from the centre and would pass. Failing the midpoint check, fall back to the
-polyline instead of emitting a wrong arc.
+[out] AxisVector, [out] MajorAxis, [out] MinorMajorRatio)`.
+
+**And `MinorMajorRatio` is not a usable test either** — SE reported **0.9999** for the corner
+radii of a profile, so `ratio == 1` (even at 1e-6) still stroked every one of them to a
+polyline. Treat the declared ratio as commentary, not evidence.
+
+What works is measuring the geometry: take the two endpoints **plus interior samples** along
+the edge (`GetPointAtParam` at ¼, ½, ¾ of `GetParamExtents`) and require all of them at the
+same distance from the centre, within the tolerance the output actually needs. Don't trust
+the length of the `GetMajorAxis` vector either (unverified whether it is a unit vector or the
+semi-axis). Endpoints alone are never proof — a real ellipse cut symmetrically has endpoints
+equidistant from the centre — and three points are exactly a circle, so sample more than
+three or the interior point cannot disagree. Failing the check, fall back to the polyline
+instead of emitting a wrong arc, and **log the measured radius spread in mm**: that number
+says whether the tolerance is too tight or the curve is genuinely an ellipse, which the
+ratio never did.
 
 **Positioning a part by mates (alternative to `PutOrigin`).** When an exact origin isn't
 enough, constrain the occurrence: `Ref = AssemblyDocument.CreateReference(Occurrence, Face)`

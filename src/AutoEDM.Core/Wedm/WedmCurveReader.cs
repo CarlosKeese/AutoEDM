@@ -38,9 +38,9 @@ namespace AutoEDM.Wedm
     /// — corpo de arame é curva; com face é superfície e fica de fora.
     ///
     /// Cada aresta vira <see cref="WireCurve"/> EXATA quando dá: reta pelas pontas; arco por
-    /// <c>Circle</c> (centro, raio, eixo) OU por <c>Ellipse</c> de razão 1 — é assim que o SE
-    /// devolve o RAIO DE CANTO, ver <see cref="TryArc"/> — sempre com um ponto no meio da aresta
-    /// para saber o sentido; B-spline por <c>GetBSplineInfo</c>/<c>GetBSplineData</c>, CONFERIDA
+    /// <c>Circle</c> (centro, raio, eixo) OU por <c>Ellipse</c> que se PROVE circular medindo o
+    /// raio ao longo da aresta — é como o SE devolve o RAIO DE CANTO, ver <see cref="TryArc"/> —
+    /// sempre com um ponto no meio da aresta para saber o sentido; B-spline por <c>GetBSplineInfo</c>/<c>GetBSplineData</c>, CONFERIDA
     /// avaliando a spline nas pontas do trecho da aresta. O que não passa (elipse de verdade,
     /// spline periódica, conferência que não bate) sai como polilinha pelo <c>GetStrokeData</c>
     /// a 0,001 mm — e é contado e avisado.
@@ -54,9 +54,6 @@ namespace AutoEDM.Wedm
         private const int IgEllipse = 167551107;
         private const int IgLine = 167551109;
         private const int IgBSplineCurve = 167551103;
-
-        /// <summary>Razão menor/maior a partir da qual a elipse deixa de ser um arco circular.</summary>
-        private const double EllipseRatioTolerance = 1e-6;
 
         private const double StrokeToleranceM = 0.000001;   // 0,001 mm
         private const double CheckToleranceMm = 0.001;
@@ -232,25 +229,29 @@ namespace AutoEDM.Wedm
             double radiusMm;
             if (fromEllipse)
             {
-                double ratio;
-                if (TryDouble(geom, "MinorMajorRatio", out ratio) && Math.Abs(ratio - 1.0) > EllipseRatioTolerance)
-                {
-                    why = $"elipse de verdade (razão menor/maior {ratio:0.0000})";
-                    return null;
-                }
+                // A razão declarada NÃO decide: o SE devolveu 0,9999 nos raios do perfil (log
+                // `112004`) e, exigindo 1, todo raio continuava virando polilinha. Ela entra só no
+                // aviso. Quem decide é o raio MEDIDO nas pontas e em 1/4, 1/2 e 3/4 da aresta — a
+                // Ellipse não tem Radius, e o comprimento do GetMajorAxis não é confiável sem
+                // validação.
+                double[][] inner = PointsAlongMm(edge, new[] { 0.25, 0.5, 0.75 }, out why);
+                if (inner == null) return null;
 
-                // Sem Radius na Ellipse: o raio é o MEDIDO, e quem prova que é circular é o ponto
-                // do meio (WireCurve.TryCircularRadiusMm).
-                double[] midE = MidPointMm(edge, out why);
-                if (midE == null) return null;
+                var samples = new List<double[]> { a, b };
+                samples.AddRange(inner);
 
-                radiusMm = WireCurve.TryCircularRadiusMm(center, a, b, midE, CheckToleranceMm);
+                double deviation;
+                radiusMm = WireCurve.TryCircularRadiusMm(center, samples, CheckToleranceMm, out deviation);
                 if (double.IsNaN(radiusMm))
                 {
-                    why = "não é arco circular (pontas e meio em raios diferentes do centro)";
+                    double ratio;
+                    string ratioText = TryDouble(geom, "MinorMajorRatio", out ratio)
+                        ? $", razão menor/maior {ratio:0.000000}" : "";
+                    why = $"elipse de verdade: o raio varia {deviation:0.0000} mm entre as amostras " +
+                          $"(tolerância {CheckToleranceMm:0.0000} mm){ratioText}";
                     return null;
                 }
-                return WireCurve.HorizontalArc(center, radiusMm, a, b, midE);
+                return WireCurve.HorizontalArc(center, radiusMm, a, b, inner[1]);
             }
 
             if (!TryDouble(geom, "Radius", out double radiusM)) { why = "Circle.Radius indisponível"; return null; }
@@ -331,19 +332,45 @@ namespace AutoEDM.Wedm
         /// <summary>Ponto no meio do parâmetro da aresta; reserva: o vértice do meio do <c>GetStrokeData</c>.</summary>
         private static double[] MidPointMm(object edge, out string why)
         {
+            double[][] p = PointsAlongMm(edge, new[] { 0.5 }, out why);
+            return p == null ? null : p[0];
+        }
+
+        /// <summary>
+        /// Pontos AO LONGO da aresta, nas frações dadas do parâmetro (0,5 = meio) — é a amostragem
+        /// que prova se o "raio" é mesmo circular. Reserva quando o <c>GetPointAtParam</c> não
+        /// responde: os vértices correspondentes da polilinha do <c>GetStrokeData</c>, que tem
+        /// resolução de sobra (0,001 mm) para a conferência.
+        /// </summary>
+        private static double[][] PointsAlongMm(object edge, double[] fractions, out string why)
+        {
             if (TryParamExtents(edge, out double t0, out double t1, out why))
             {
-                var args = new object[] { 1, new[] { (t0 + t1) / 2.0 }, new double[0] };
-                if (Invoke(edge, "GetPointAtParam", args, new[] { false, true, true }, out why))
+                var points = new double[fractions.Length][];
+                bool ok = true;
+                for (int i = 0; i < fractions.Length && ok; i++)
                 {
+                    var args = new object[] { 1, new[] { t0 + (t1 - t0) * fractions[i] }, new double[0] };
+                    if (!Invoke(edge, "GetPointAtParam", args, new[] { false, true, true }, out why)) { ok = false; break; }
                     double[] p = ToDoubles(args[2]);
-                    if (p != null && p.Length >= 3) return ToMm(p);
-                    why = "GetPointAtParam sem ponto";
+                    if (p == null || p.Length < 3) { why = "GetPointAtParam sem ponto"; ok = false; break; }
+                    points[i] = ToMm(p);
                 }
+                if (ok) return points;
             }
-            List<double[]> pts = TryStrokeMm(edge, out string strokeWhy);
-            if (pts != null && pts.Count >= 3) return pts[pts.Count / 2];
-            why = $"ponto médio: {why}; polilinha: {strokeWhy}";
+
+            List<double[]> stroke = TryStrokeMm(edge, out string strokeWhy);
+            if (stroke != null && stroke.Count >= 3)
+            {
+                var points = new double[fractions.Length][];
+                for (int i = 0; i < fractions.Length; i++)
+                {
+                    int k = (int)Math.Round(fractions[i] * (stroke.Count - 1));
+                    points[i] = stroke[Math.Max(1, Math.Min(stroke.Count - 2, k))];
+                }
+                return points;
+            }
+            why = $"pontos ao longo da aresta: {why}; polilinha: {strokeWhy}";
             return null;
         }
 

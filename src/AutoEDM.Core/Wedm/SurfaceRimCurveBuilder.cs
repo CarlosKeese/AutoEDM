@@ -9,6 +9,21 @@ using AutoEDM.Selection;
 
 namespace AutoEDM.Wedm
 {
+    /// <summary>
+    /// As duas maneiras de reconhecer a MESMA aresta depois de o modelo regenerar: o
+    /// <c>Edge.ID</c> e a geometria. Guardadas juntas porque nenhuma das duas serve sempre — no
+    /// log `112004` a releitura por ID não reencontrou NENHUMA das 24 arestas do rim de topo (o SE
+    /// renumerou), e a geometria, que não muda, é quem salva.
+    /// </summary>
+    internal sealed class EdgeKeys
+    {
+        /// <summary>"#123" quando o SE dá o ID; null quando não dá.</summary>
+        public string Id;
+
+        /// <summary>Pontas + bbox arredondados a 0,001 mm.</summary>
+        public string Geometry;
+    }
+
     /// <summary>Uma curva derivada criada na peça (uma extremidade de uma superfície).</summary>
     public sealed class RimCurveCreated
     {
@@ -115,7 +130,7 @@ namespace AutoEDM.Wedm
             {
                 res.SurfacesRead++;
                 string label = SurfaceName(surf, res.SurfacesRead);
-                var identity = new Dictionary<OpenEdgeSegment, string>();
+                var identity = new Dictionary<OpenEdgeSegment, EdgeKeys>();
                 List<OpenEdgeSegment> edges = ReadEdges(surf, label, res, identity);
                 if (edges.Count == 0)
                 {
@@ -267,7 +282,7 @@ namespace AutoEDM.Wedm
         /// quando ele não responde, pelas próprias extremidades.
         /// </summary>
         private static List<OpenEdgeSegment> ReadEdges(object surf, string label, SurfaceRimResult res,
-            Dictionary<OpenEdgeSegment, string> identity)
+            Dictionary<OpenEdgeSegment, EdgeKeys> identity)
         {
             string route;
             List<object> edges = ReadRawEdges(surf, out route);
@@ -286,11 +301,11 @@ namespace AutoEDM.Wedm
                 double[] start, end; string why;
                 if (!EdgeGeometry.TryGetEndPointsMm(e, out start, out end, out why)) { noEnds++; continue; }
 
-                // Identidade: o ID quando o SE dá (é ele que sobrevive a uma regeneração); senão a
-                // geometria. Serve para não contar a mesma aresta 2× (ela vem uma vez por face) E
-                // para reencontrá-la depois, já que o proxy da aresta envelhece a cada Add.
-                string key = EdgeIdentity(e, start, end, min, max);
-                if (!seen.Add(key)) { repeated++; continue; }
+                // Identidade: o ID quando o SE dá, e SEMPRE a geometria. Serve para não contar a
+                // mesma aresta 2× (ela vem uma vez por face) E para reencontrá-la depois, já que o
+                // proxy da aresta envelhece a cada Add.
+                EdgeKeys key = EdgeIdentity(e, start, end, min, max);
+                if (!seen.Add(key.Id ?? key.Geometry)) { repeated++; continue; }
 
                 var seg = new OpenEdgeSegment
                 {
@@ -355,12 +370,15 @@ namespace AutoEDM.Wedm
             return edges;
         }
 
-        /// <summary>Identidade da aresta: <c>Edge.ID</c> quando existe (sobrevive à regeneração), senão a geometria.</summary>
-        private static string EdgeIdentity(object edge, double[] start, double[] end, double[] min, double[] max)
+        /// <summary>Identidade da aresta: o <c>Edge.ID</c> (quando o SE dá) e a geometria, sempre as duas.</summary>
+        private static EdgeKeys EdgeIdentity(object edge, double[] start, double[] end, double[] min, double[] max)
         {
             int id;
-            return TryEdgeId(edge, out id) ? "#" + id.ToString(CultureInfo.InvariantCulture)
-                                           : EdgeKey(start, end, min, max);
+            return new EdgeKeys
+            {
+                Id = TryEdgeId(edge, out id) ? "#" + id.ToString(CultureInfo.InvariantCulture) : null,
+                Geometry = EdgeKey(start, end, min, max),
+            };
         }
 
         /// <summary>
@@ -443,25 +461,25 @@ namespace AutoEDM.Wedm
         /// <see cref="RefreshEdges"/>.
         /// </summary>
         private static void CreateRimCurves(object partDoc, object surf, SurfaceRim rim, string surface,
-            Dictionary<OpenEdgeSegment, string> identity, SurfaceRimResult res, ref int index)
+            Dictionary<OpenEdgeSegment, EdgeKeys> identity, SurfaceRimResult res, ref int index)
         {
             List<OpenEdgeLoop> loops = OpenEdgeLoops.Chain(rim.Edges, OpenEdgeLoops.DefaultJoinToleranceMm);
             foreach (OpenEdgeLoop loop in loops)
             {
                 var comEdges = new List<object>();
-                var keys = new List<string>();
+                var keys = new List<EdgeKeys>();
                 foreach (OpenEdgeSegment s in loop.Segments)
                 {
                     if (s.Com == null) continue;
                     comEdges.Add(s.Com);
-                    string key;
+                    EdgeKeys key;
                     keys.Add(identity != null && identity.TryGetValue(s, out key) ? key : null);
                 }
                 if (comEdges.Count == 0) continue;
 
                 string name = $"{NamePrefix}{rim.Label} ({index + 1})";
                 Log.Info($"WEDM rim: contorno {(rim.IsTop ? "de topo" : "de fundo")} de '{surface}' em Z = {rim.Label}: " +
-                         $"{comEdges.Count} aresta(s) [{string.Join(" ", keys.Select(k => k ?? "?"))}], " +
+                         $"{comEdges.Count} aresta(s) [{string.Join(" ", keys.Select(k => k?.Id ?? "?"))}], " +
                          $"{(loop.Closed ? "FECHADO" : "ABERTO")} — criando '{name}'.");
 
                 RefreshEdges(surf, keys, comEdges, name);
@@ -509,33 +527,44 @@ namespace AutoEDM.Wedm
         /// chamadas foi só o Add que aconteceu no meio. Releitura barata (uma varredura de arestas)
         /// contra um erro que custa a curva inteira. Se a releitura não achar alguma aresta, as
         /// antigas ficam — pior que hoje não fica.
+        ///
+        /// Casa primeiro por ID e, quando ele não bate, PELA GEOMETRIA: no log `112004` a releitura
+        /// do rim de topo não reencontrou nenhuma das 24 arestas por ID (o SE renumerou depois do
+        /// Add anterior), e a geometria é o que não muda entre uma leitura e outra.
         /// </summary>
-        private static void RefreshEdges(object surf, List<string> keys, List<object> comEdges, string name)
+        private static void RefreshEdges(object surf, List<EdgeKeys> keys, List<object> comEdges, string name)
         {
             if (keys.Count != comEdges.Count || keys.All(k => k == null)) return;
 
             string route;
-            var fresh = new Dictionary<string, object>();
+            var byId = new Dictionary<string, object>();
+            var byGeometry = new Dictionary<string, object>();
             foreach (object e in ReadRawEdges(surf, out route))
             {
                 double[] min, max, start, end; string why;
                 if (!FaceGeometry.TryGetExactRangeMm(e, out min, out max)) continue;
                 if (!EdgeGeometry.TryGetEndPointsMm(e, out start, out end, out why)) continue;
-                string key = EdgeIdentity(e, start, end, min, max);
-                if (!fresh.ContainsKey(key)) fresh[key] = e;
+
+                EdgeKeys key = EdgeIdentity(e, start, end, min, max);
+                if (key.Id != null && !byId.ContainsKey(key.Id)) byId[key.Id] = e;
+                if (!byGeometry.ContainsKey(key.Geometry)) byGeometry[key.Geometry] = e;
             }
 
-            int swapped = 0, missing = 0;
+            int byIdCount = 0, byGeometryCount = 0, missing = 0;
             for (int i = 0; i < comEdges.Count; i++)
             {
+                EdgeKeys k = keys[i];
                 object e;
-                if (keys[i] != null && fresh.TryGetValue(keys[i], out e)) { comEdges[i] = e; swapped++; }
+                if (k?.Id != null && byId.TryGetValue(k.Id, out e)) { comEdges[i] = e; byIdCount++; }
+                else if (k?.Geometry != null && byGeometry.TryGetValue(k.Geometry, out e)) { comEdges[i] = e; byGeometryCount++; }
                 else missing++;
             }
+
+            string how = $"{byIdCount} por ID, {byGeometryCount} pela geometria";
             if (missing > 0)
-                Log.Warn($"WEDM rim: '{name}' — {missing} de {comEdges.Count} aresta(s) não foram reencontradas na releitura; usando as originais.");
+                Log.Warn($"WEDM rim: '{name}' — releitura: {how}, {missing} não reencontrada(s) (essas seguem com o proxy antigo).");
             else
-                Log.Info($"WEDM rim: '{name}' — {swapped} aresta(s) relida(s) da peça antes do Add.");
+                Log.Info($"WEDM rim: '{name}' — {comEdges.Count} aresta(s) relida(s) antes do Add ({how}).");
         }
 
         /// <summary>

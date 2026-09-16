@@ -80,27 +80,41 @@ namespace AutoEDM.Wedm
         }
 
         /// <summary>
-        /// A curva que passa por estes três pontos é um ARCO CIRCULAR em torno de
-        /// <paramref name="center"/>? Devolve o raio medido (mm) ou <see cref="double.NaN"/>.
+        /// A curva que passa por estas amostras é um ARCO CIRCULAR em torno de
+        /// <paramref name="center"/>? Devolve o raio médio (mm) ou <see cref="double.NaN"/>;
+        /// <paramref name="deviationMm"/> traz de volta o quanto o raio variou — é o número que o
+        /// aviso mostra quando recusa, porque é ele que diz se a tolerância está apertada demais
+        /// ou se a curva é mesmo uma elipse.
         ///
         /// Existe por causa do raio de canto que o Solid Edge devolve como <c>igEllipse</c>
-        /// (Carlos, 2026-09-16): elipse de razão 1 É arco circular, e sem reconhecer isso todo
-        /// raio saía como polilinha no .igs. Como o tipo declarado deixou de ser a prova, a prova
-        /// passa a ser a geometria — as duas pontas E o ponto do meio no mesmo raio. O ponto do
-        /// meio é o que importa: só com as pontas, uma elipse de verdade cujas pontas por acaso
-        /// equidistam do centro passaria por arco e sairia deformada no corte.
+        /// (Carlos, 2026-09-16): sem reconhecê-lo, todo raio saía como polilinha no .igs. A
+        /// primeira versão acreditava na <c>MinorMajorRatio</c> e exigia 1 — mas no log `112004`
+        /// o SE devolveu 0,9999 para os raios do perfil, e todos continuaram virando polilinha.
+        /// Então a razão declarada não decide nada: decide a GEOMETRIA, medida em vários pontos.
+        ///
+        /// Por que vários e não só as pontas: uma elipse cortada simétrica tem as pontas
+        /// equidistantes do centro e passaria por círculo, saindo deformada no corte. Três pontos
+        /// definem um círculo — o de dentro não teria como reprovar nada —, então quem chama passa
+        /// as pontas MAIS amostras internas (1/4, 1/2, 3/4): aí sobra ponto para discordar.
         ///
         /// Só XY: o arco de perfil está num plano horizontal (quem confere o plano é o chamador).
         /// </summary>
-        public static double TryCircularRadiusMm(double[] center, double[] start, double[] end, double[] mid,
-            double toleranceMm)
+        public static double TryCircularRadiusMm(double[] center, IReadOnlyList<double[]> samples,
+            double toleranceMm, out double deviationMm)
         {
-            if (center == null || start == null || end == null || mid == null) return double.NaN;
-            double rs = RadiusXY(center, start), re = RadiusXY(center, end), rm = RadiusXY(center, mid);
-            double radius = (rs + re) / 2.0;
-            if (Math.Abs(rs - re) > toleranceMm) return double.NaN;
-            if (Math.Abs(rm - radius) > toleranceMm) return double.NaN;
-            return radius;
+            deviationMm = double.NaN;
+            if (center == null || samples == null || samples.Count < 3) return double.NaN;
+
+            double sum = 0;
+            foreach (double[] p in samples)
+            {
+                if (p == null) return double.NaN;
+                sum += RadiusXY(center, p);
+            }
+            double radius = sum / samples.Count;
+
+            deviationMm = samples.Max(p => Math.Abs(RadiusXY(center, p) - radius));
+            return deviationMm > toleranceMm ? double.NaN : radius;
         }
 
         /// <summary>Distância do ponto ao centro NO PLANO XY (mm) — o raio medido do arco horizontal.</summary>
