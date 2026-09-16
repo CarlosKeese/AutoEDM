@@ -57,8 +57,17 @@ namespace AutoEDM.Wedm
     /// <see cref="OpenEdgeLoops"/> encadeia cada nível em contornos — um contorno, uma
     /// <c>Constructions.DerivedCurves.Add</c> composta, nomeada "WEDM Z = XX.XX (n)".
     ///
-    /// A VALIDAR no SE: se <c>DerivedCurves.Add</c> aceita as arestas de uma superfície em peça
-    /// SÍNCRONA (nunca foi chamado pelo AutoEDM) e como o array de arestas quer ser marshalado.
+    /// VALIDADO no SE 2026 em 2026-09-16: <c>DerivedCurves.Add</c> aceita as arestas de uma
+    /// superfície em peça SÍNCRONA — 4 curvas em 2 superfícies, 0 falhas, e o "Exportar perfis
+    /// (IGES)" leu as 4 na sequência, todas como B-spline 126. A cascata de tentativas
+    /// (composta → curva única, array by-ref → por valor) fica de pé de propósito: qual delas
+    /// pega não foi fixado, e o log diz em cada rodada qual respondeu.
+    ///
+    /// O que fez a 1ª rodada não achar extremidade nenhuma num loft entre duas splines NÃO era o
+    /// ângulo da superfície: <c>Edge.GetRange</c> devolve caixa INFLADA em aresta B-spline
+    /// (±0,005 mm medidos), e o rim plano era reprovado contra a tolerância de 1 µm. Daí o
+    /// <see cref="FaceGeometry.TryGetExactRangeMm"/> aqui — exato para DECIDIR planaridade,
+    /// folgado só para agrupar por proximidade.
     /// </summary>
     public static class SurfaceRimCurveBuilder
     {
