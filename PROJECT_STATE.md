@@ -1,4 +1,4 @@
-# PROJECT_STATE — AutoEDM
+﻿# PROJECT_STATE — AutoEDM
 
 > Fonte de verdade do estado deste projeto. Atualize ao fechar cada sessão,
 > e reflita a mesma coisa na linha do `HUB.md`.
@@ -86,7 +86,8 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Lista de corte na serra | 🚧 construído, coberto por teste, **aguardando validação no SE** |
 | Ponte MCP (Claude Code → Solid Edge) | 🚧 construída; protocolo validado ponta a ponta FORA do CAD, **aguardando o 1º run com a SE aberta** |
 | Sonda de malha (Eng. Reversa) | 🚧 construída, **aguardando rodar sobre uma malha real** |
-| Testes de unidade | ✅ 233 passando, 0 falhas |
+| Modelagem por primitivas (`se_modelar`) | 🚧 construída sobre receita já validada, **aguardando o 1º run no SE** |
+| Testes de unidade | ✅ 259 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -124,7 +125,8 @@ Três peças, e a divisão é imposta pelos alvos: o add-in é obrigatoriamente 
 |---|---|---|
 | `Mcp/BridgeProtocol` + `ToolCatalog` | `Core` (2 alvos) | Contrato de fio e catálogo — escritos uma vez, usados pelos dois lados |
 | `Mcp/BridgeServer` | `Core`, roda no add-in | Named pipe `AutoEDM.Bridge.v1`, um cliente por vez, reconecta |
-| `Mcp/SeToolRunner` | `Core`, roda na thread da SE | Executa as 9 ferramentas, aplica a guarda de documento/ambiente |
+| `Mcp/SeToolRunner` | `Core`, roda na thread da SE | Executa as 11 ferramentas, aplica a guarda de documento/ambiente |
+| `Modeling/PrimitiveModel` | `Core` | Caixas e cilindros declarativos sobre o `BlankModeler` ja validado |
 | `AddIn/McpBridgeHost` | add-in | Trampolim para a thread STA da SE + a chave de escrita |
 | `src/AutoEDM.Mcp` | processo próprio | JSON-RPC 2.0 em stdio ↔ pipe |
 
