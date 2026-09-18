@@ -8,6 +8,7 @@ using AutoEDM.Config;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Modeling;
+using AutoEDM.Reverse;
 using AutoEDM.Selection;
 using AutoEDM.Wedm;
 
@@ -48,6 +49,7 @@ namespace AutoEDM.Mcp
                 { "se_curvas_superficies",   new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_exportar_perfis_wedm", new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_planos",               new Requirement(DocKind.Part,     ModelingEnv.Any) },
+                { "se_reconhecer_malha",     new Requirement(DocKind.Part,     ModelingEnv.Any) },
                 // 'se_modelar' NÃO entra aqui de propósito: com novaPeca=true não existe peça ativa
                 // para conferir, porque o documento é criado durante a chamada. Ele resolve o
                 // documento primeiro e só então aplica a MESMA regra (peça + síncrono), lá dentro.
@@ -140,6 +142,7 @@ namespace AutoEDM.Mcp
                 case "se_coordenadas": return Coordinates(app, doc);
                 case "se_curvas_superficies": return SurfaceRimCurves(doc, captured);
                 case "se_exportar_perfis_wedm": return ExportWedm(doc, captured);
+                case "se_reconhecer_malha": return RecognizeMesh(doc, argsJson);
             }
             return $"Ferramenta '{spec.Name}' está no catálogo mas não tem implementação — isto é um defeito do AutoEDM.";
         }
@@ -612,6 +615,91 @@ namespace AutoEDM.Mcp
                     if (el.ValueKind == JsonValueKind.False) return false;
                     bool b;
                     if (el.ValueKind == JsonValueKind.String && bool.TryParse(el.GetString(), out b)) return b;
+                }
+            }
+            catch { }
+            return fallback;
+        }
+
+        /// <summary>
+        /// Lê os triângulos do corpo e devolve as superfícies reconhecidas. SÓ LEITURA: não cria
+        /// feature, não altera a peça, não salva — o reconhecimento acontece todo do lado de cá,
+        /// sobre a cópia dos triângulos.
+        ///
+        /// Por que a tolerância de tesselação é argumento: num corpo de FACETAS ela é irrelevante
+        /// (os triângulos já existem, a SE devolve os que tem), mas num corpo B-rep é ela que
+        /// decide o quão fina é a malha gerada — e portanto o quanto o ajuste tem para medir.
+        /// </summary>
+        private static string RecognizeMesh(dynamic doc, string argsJson)
+        {
+            int wanted = ReadInt(argsJson, "corpo", 1, 1, 1000);
+
+            dynamic models = null;
+            try { models = doc.Models; } catch { }
+            int count = 0;
+            if (models != null) { try { count = (int)models.Count; } catch { } }
+            if (count <= 0) return "Esta peça não tem corpo nenhum para ler.";
+            if (wanted > count) return $"A peça tem {count} corpo(s); você pediu o [{wanted}].";
+
+            dynamic model = null;
+            try { model = models.Item(wanted); }
+            catch (Exception ex) { return $"Models.Item({wanted}) falhou: {ex.GetBaseException().Message}"; }
+
+            string name = "Model[" + wanted + "]";
+            try { name = (string)model.Name; } catch { }
+
+            bool isFacet = false, isMixed = false;
+            try { isFacet = (bool)model.IsFacetBody; } catch { }
+            try { isMixed = (bool)model.IsMixedFacetBody; } catch { }
+
+            object body = null;
+            try { body = model.Body; } catch (Exception ex) { return "model.Body falhou: " + ex.GetBaseException().Message; }
+            if (body == null) return "O corpo não devolveu Body.";
+
+            double tolMm = ReadDouble(argsJson, "toleranciaMm", 0.01, 0.0001, 5.0);
+            MeshData mesh = MeshReader.Read(body, tolMm);
+            if (!mesh.Ok)
+                return $"Não consegui ler os triângulos do corpo '{name}': {mesh.Error}\n\n" +
+                       "O detalhe da tentativa está no log ('se_log').";
+
+            var options = new RecognizerOptions
+            {
+                PlaneAngleToleranceDeg = ReadDouble(argsJson, "anguloPlanoGraus", 2.0, 0.1, 30.0),
+                PlaneDistanceToleranceMm = ReadDouble(argsJson, "distanciaPlanoMm", 0.05, 0.0001, 5.0),
+                CreaseAngleDeg = ReadDouble(argsJson, "anguloQuinaGraus", 35.0, 1.0, 89.0)
+            };
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh.PointsMm, options);
+
+            string kind = isFacet ? "corpo de facetas" : isMixed ? "misto (facetas + B-rep)" : "B-rep tesselado";
+            string route = mesh.Route + $"  |  {kind}, tolerância {tolMm.ToString("0.####", CultureInfo.InvariantCulture)} mm";
+            if (mesh.FaceIds != null && mesh.FaceIds.Length > 0)
+                route += $"  |  {mesh.FaceIds.Length} FaceID(s) vieram junto";
+
+            Log.Info($"[MALHA] reconhecimento em '{name}': {r.Surfaces.Count} superfície(s) " +
+                     $"sobre {r.TriangleCount} triângulo(s).");
+
+            return SurfaceReport.Format(r, route, name);
+        }
+
+        /// <summary>Lê um double do JSON de argumentos, com limites. Mesma regra do ReadInt:
+        /// ausente, nulo ou fora de faixa cai no padrão em vez de virar erro.</summary>
+        private static double ReadDouble(string argsJson, string name, double fallback, double min, double max)
+        {
+            if (string.IsNullOrWhiteSpace(argsJson)) return fallback;
+            try
+            {
+                using (JsonDocument d = JsonDocument.Parse(argsJson))
+                {
+                    JsonElement el;
+                    if (!d.RootElement.TryGetProperty(name, out el)) return fallback;
+
+                    double v;
+                    if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out v))
+                        return v < min ? min : v > max ? max : v;
+                    if (el.ValueKind == JsonValueKind.String &&
+                        double.TryParse(el.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out v))
+                        return v < min ? min : v > max ? max : v;
                 }
             }
             catch { }

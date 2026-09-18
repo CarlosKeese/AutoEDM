@@ -6,6 +6,7 @@ description: >
   of guessing signatures from memory. Use this skill for ANY Solid Edge automation
   task: reading faces, colors, geometry or occurrence transforms; creating parts and
   features (extrude, holes, threaded holes, surfaces, booleans, surface-to-solid);
+  reading facet/mesh bodies and reverse-engineering a scanned mesh back into surfaces;
   editing in the context of an assembly; building ribbon add-ins; or debugging COM
   errors such as RPC_E_CALL_REJECTED, RPC_E_DISCONNECTED, DISP_E_TYPEMISMATCH,
   E_NOINTERFACE, RuntimeBinder failures and out-parameter marshaling. Trigger it
@@ -73,8 +74,14 @@ exceptions:
   return plausible all-zero values otherwise — an all-zero transform reads as "at the
   origin", which once caused a ~23 mm mis-placement that threw no error.
 - **SAFEARRAY params need a TYPED element array** (`SolidEdgeGeometry.Face[]`,
-  `SolidEdgePart.Profile[]`), never `object[]` — `object[]` marshals as
-  `SAFEARRAY(VARIANT)` and the call fails with a binder error.
+  `SolidEdgePart.Profile[]`, `SolidEdgeGeometry.Body[]`), never `object[]` — `object[]`
+  marshals as `SAFEARRAY(VARIANT)` and the call fails with `DISP_E_TYPEMISMATCH`.
+  **This one recurs** — it has now bitten `CopySurfaces.Add`, the extrusion calls and
+  `Sketches.CreateSectionSketches` (2026-09-18), because `object[]` is the natural thing
+  to write. Whenever the dump says `SAFEARRAY(IDispatch)*`, reach for the typed array
+  before running anything. And note what the error does *not* mean: the call never
+  reached the command, so **a marshaling failure says nothing about whether SE can do
+  the operation** — do not record it as "SE can't do X".
 - **Some ordered features are a silent no-op on a synchronous part** — they return a
   non-null object, create nothing, and set no error. Branch on `ModelingMode`.
 - **Worse than a no-op: an ordered method on a synchronous part can SUCCEED**, creating
@@ -145,6 +152,7 @@ Read only the file you need; each is self-contained.
 | Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered, placing a part in an assembly | `references/modeling-recipes.md` |
 | Putting a button inside SE: add-in registration, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, modeless dialogs, in-process hosting limits, picking a face or edge from the model | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |
+| Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser, reference-plane normals | `references/mesh-reverse.md` |
 
 ## The discovery loop, in order
 

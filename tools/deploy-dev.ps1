@@ -22,14 +22,24 @@
 .PARAMETER Target
     Pasta instalada. Padrão: %LOCALAPPDATA%\AutoEDM\addin (o CodeBase registrado).
 
+.PARAMETER IncludeMcp
+    Compila também o servidor MCP (src\AutoEDM.Mcp, Release x64 — o caminho que o .mcp.json
+    aponta). Necessário sempre que o CATÁLOGO de ferramentas mudar: o Claude Code lê a lista
+    do servidor, não do add-in, e os dois carregam CÓPIAS diferentes do AutoEDM.Core.dll.
+
+    Exige o Claude Code FECHADO: enquanto a sessão vive, o processo AutoEDM.Mcp está de pé e
+    trava o próprio exe e o Core.dll ao lado dele.
+
 .EXAMPLE
     pwsh tools\deploy-dev.ps1
     pwsh tools\deploy-dev.ps1 -Configuration Release
+    pwsh tools\deploy-dev.ps1 -Configuration Release -IncludeMcp
 #>
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
-    [string]$Target = ''
+    [string]$Target = '',
+    [switch]$IncludeMcp
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,3 +81,22 @@ Get-ChildItem $Target -Filter 'AutoEDM.*.dll' |
 
 Write-Host "Abra o Solid Edge e confira a primeira linha do log (%LOCALAPPDATA%\AutoEDM\logs):" -ForegroundColor Yellow
 Write-Host "o 'Build carregado' tem de bater com as datas acima." -ForegroundColor Yellow
+
+if ($IncludeMcp) {
+    # O servidor MCP é um processo SEPARADO, com a sua própria cópia do Core. Enquanto o Claude
+    # Code está aberto ele está rodando, e o build falha na cópia com MSB3027 — o que parece erro
+    # de compilação e não é.
+    $mcp = @(Get-Process -Name 'AutoEDM.Mcp' -ErrorAction SilentlyContinue)
+    if ($mcp.Count -gt 0) {
+        throw "Feche o Claude Code antes de usar -IncludeMcp (AutoEDM.Mcp PID $($mcp.Id -join ', ') está de pé e trava o exe)."
+    }
+
+    $mcpProj = Join-Path $repo 'src\AutoEDM.Mcp\AutoEDM.Mcp.csproj'
+    Write-Host "`nCompilando o servidor MCP (Release x64)..." -ForegroundColor Cyan
+    dotnet build $mcpProj -c Release -p:Platform=x64 --nologo -v m
+    if ($LASTEXITCODE -ne 0) { throw "A compilação do servidor MCP falhou." }
+
+    $mcpExe = Join-Path $repo 'src\AutoEDM.Mcp\bin\x64\Release\net8.0-windows\AutoEDM.Mcp.exe'
+    Write-Host "Servidor MCP pronto: $mcpExe" -ForegroundColor Green
+    Write-Host "(é o caminho que o .mcp.json usa — o Claude Code sobe este exe ao abrir)" -ForegroundColor Yellow
+}

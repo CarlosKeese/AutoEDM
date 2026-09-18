@@ -354,15 +354,25 @@ namespace AutoEDM.Reverse
             Log.Info("[MALHA] Tentando CreateSectionSketches (3 planos, reconhecendo retas/arcos/círculos/elipses)...");
             try
             {
-                // CreateSectionSketches(psaObjects, RefPlane, [out] SketchesGenerated,
-                //   [out] SketchCount, [out] enumErrorCode, [opt] NumOfPlanes,
-                //   [opt] enumReferenceSide, [opt] dPlaneOffset,
-                //   [opt] bRecognizeLines, bRecognizeArcs, bRecognizeCircles, bRecognizeEllipses)
+                // Assinatura real (docs/api/SolidEdgePart.md):
+                //   CreateSectionSketches(psaObjects: SAFEARRAY(IDispatch)*, RefPlane: IDispatch,
+                //     [out] SketchesGenerated: SAFEARRAY(IDispatch)*, [out] SketchCount: int*,
+                //     [out] enumErrorCode: SectionSketchesErrorCode*, [opt] NumOfPlanes: int,
+                //     [opt] enumReferenceSide, [opt] dPlaneOffset: double,
+                //     [opt] bRecognizeLines/Arcs/Circles/Ellipses: int)
+                //
+                // psaObjects é SAFEARRAY(IDispatch), e a 1ª versão disto passou um object[] —
+                // que marshala como SAFEARRAY(VARIANT). Resultado medido em 2026-09-18 na malha
+                // real: DISP_E_TYPEMISMATCH, sem a chamada sequer entrar no comando. É a MESMA
+                // armadilha já documentada para CopySurfaces.Add e AddFiniteExtrudedProtrusion;
+                // a cura é a mesma: array TIPADO de um tipo do interop.
+                var objetos = new SolidEdgeGeometry.Body[] { (SolidEdgeGeometry.Body)body };
+
                 object[] args =
                 {
-                    new object[] { body },      // psaObjects
+                    objetos,                    // psaObjects  (SAFEARRAY(IDispatch))
                     plane,                      // RefPlane
-                    new object[0],              // [out] SketchesGenerated
+                    new SolidEdgePart.Sketch[0],// [out] SketchesGenerated (idem)
                     0,                          // [out] SketchCount
                     0,                          // [out] enumErrorCode
                     3,                          // NumOfPlanes
@@ -384,7 +394,9 @@ namespace AutoEDM.Reverse
                 // Dump do 1º esboço: é onde se vê SE as primitivas saíram reconhecidas (Lines2d,
                 // Arcs2d, Circles2d) ou se veio tudo como polilinha — a diferença entre a rota
                 // prismática ser viável e não ser.
-                var generated = args[2] as object[];
+                // A volta pode chegar tipada (Sketch[]) ou como Array genérico: aceita as duas,
+                // senão um out que funcionou seria descartado por causa do cast.
+                object[] generated = AsObjectArray(args[2]);
                 if (generated != null && generated.Length > 0 && generated[0] != null)
                     ComDiagnostics.DumpObject("Esboço de seção [1] (procure Lines2d/Arcs2d/Circles2d)", generated[0], 2);
 
@@ -395,6 +407,22 @@ namespace AutoEDM.Reverse
                 Log.Warn("[MALHA] CreateSectionSketches falhou: " + ex.GetBaseException().Message);
                 Line(log, "Seccionamento: FALHOU — " + ex.GetBaseException().Message);
             }
+        }
+
+        /// <summary>Normaliza um SAFEARRAY que voltou de um [out]: ele pode chegar como um array
+        /// TIPADO (Sketch[]) ou como Array genérico, e um cast direto para object[] descartaria
+        /// silenciosamente o primeiro caso.</summary>
+        private static object[] AsObjectArray(object value)
+        {
+            var already = value as object[];
+            if (already != null) return already;
+
+            var arr = value as Array;
+            if (arr == null) return null;
+
+            var copy = new object[arr.Length];
+            for (int i = 0; i < arr.Length; i++) copy[i] = arr.GetValue(i);
+            return copy;
         }
 
         /// <summary>Desfaz o único efeito colateral da sonda. Se algum esboço não sair, diz —

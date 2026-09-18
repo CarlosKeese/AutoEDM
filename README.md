@@ -139,6 +139,22 @@ Ou seja: o ajuste terá de ser nosso. A sonda existe para que a escolha entre a 
 com eixo e Ø reais, raio) e um **kernel geral de free-form** seja feita com medida, e não por
 aposta.
 
+**A sonda rodou na malha real em 2026-09-18, e o ajuste próprio começou a existir.** O que a
+medida deu: `Body.GetFacetData` lê a malha inteira (4.168 facetas, 12.504 pontos), mas
+**`Body.Faces` é inacessível num corpo de facetas** — não há região pré-segmentada para agarrar,
+a segmentação tem mesmo de sair da sopa de triângulos. O seccionamento falhou, mas **por
+marshaling** (`DISP_E_TYPEMISMATCH`: a typelib pede `SAFEARRAY(IDispatch)*` e foi passado
+`object[]`), o que não é resposta sobre a malha — a chamada nem entrou no comando. Corrigido
+com array tipado, aguardando novo run.
+
+Daí saiu o **reconhecedor de superfície** (`se_reconhecer_malha`): quebra a malha pela **quina**
+e só então pergunta de cada região se é plano ou cilindro — nessa ordem, porque tentar planos
+primeiro faz cada faixa de um Ø20 tesselado virar uma plaquinha perfeita, e um furo sai como 64
+planos. Cada superfície vem com o **RMS do próprio ajuste**, e o cilindro com eixo, Ø,
+comprimento e **quanto da volta cobre** (é o que separa furo passante de raio de canto). Quando a
+área "plana" é só superfície curva cabendo na tolerância, o relatório marca **MOSAICO e suspende
+o veredito** em vez de imprimir "prismática" logo abaixo do próprio aviso.
+
 | Comando | Ambiente | O que faz |
 |---|---|---|
 | **Sonda de malha** | qualquer | Mede, na malha real: corpos de facetas, faces de malha, quantos triângulos leem e por qual método, a caixa envolvente em mm, e **quais membros da API de malha existem nesta versão** — presença conferida por introspecção **antes** de chamar, com o erro exato de tudo que falha. Pergunta antes de incluir o teste de **seccionamento**, o único que escreve (cria esboços, tenta apagá-los, nunca salva) e o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Resultado completo no log. |
@@ -170,16 +186,20 @@ confirmação e não sobrevive a um desligamento. Nenhuma ferramenta MCP consegu
 | **Somente leitura** | Revoga a escrita na hora; as ferramentas de leitura seguem funcionando. |
 | **Desligar ponte** | Derruba o pipe. O agente passa a receber a instrução de pedir a você para religar. |
 
-As onze ferramentas do catálogo: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
-`se_medir_selecao`, `se_analisar_z`, `se_coordenadas`, `se_planos` e `se_log` (leitura), mais
-`se_modelar`, `se_curvas_superficies` e `se_exportar_perfis_wedm` (escrita).
+As doze ferramentas do catálogo: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
+`se_medir_selecao`, `se_analisar_z`, `se_coordenadas`, `se_planos`, `se_reconhecer_malha` e
+`se_log` (leitura), mais `se_modelar`, `se_curvas_superficies` e `se_exportar_perfis_wedm`
+(escrita).
 
 `se_modelar` cria caixas e cilindros a partir de uma lista declarativa em mm, reusando
 `BlankModeler.CreateBox`/`CreateCylinder` — as duas já validadas no SE pelo "Criar Base".
 Protrusões sucessivas fundem, então primitivas que se tocam saem como um sólido único. É
 também a peça que faltava para a rota prismática da engenharia reversa: seccionar a malha
-produz exatamente essa lista. O índice do plano decide o EIXO da extrusão, e quem o
-descobre é `se_planos`, medindo a normal de cada `RefPlane` — não é suposto. A mais valiosa é
+produz exatamente essa lista. O índice do plano decide o EIXO da extrusão, e é `se_planos` que lista os
+planos disponíveis. **Corrigido em 2026-09-18, com a SE aberta:** `RefPlane.Normal` **não é
+legível** (os três planos base respondem `DISP_E_UNKNOWNNAME`), então `se_planos` entrega
+índice e nome, mas não o eixo — quem escolhe plano tem de medir ou usar um mapeamento já
+validado, nunca deduzir pela normal. A mais valiosa é
 `se_inspecionar_selecao`: ela fecha o laço da regra de ouro deste projeto — descobrir a API COM
 real por introspecção ao vivo, em vez de um round-trip humano copiando log a cada assinatura.
 
@@ -410,7 +430,7 @@ o da trava: **toda** ferramenta marcada como de escrita tem de ser recusada em s
 recusa tem de dizer o que fazer — sem isso, um `Writes` esquecido em `false` passaria a permitir
 escrita sem ninguém notar.
 
-> **Estado atual: 259 de 259 passando.** As 7 falhas antigas de `ORingGrooveTests` — testes escritos contra uma especificação anterior à implementação que ficou — foram resolvidas junto com a correção do canal de O'ring. A ferramenta de O'ring segue marcada como *aguardando validação* no roadmap por outro motivo: o teste cobre a **cota**, não a operação de corte no Solid Edge.
+> **Estado atual: 272 de 272 passando.** As 7 falhas antigas de `ORingGrooveTests` — testes escritos contra uma especificação anterior à implementação que ficou — foram resolvidas junto com a correção do canal de O'ring. A ferramenta de O'ring segue marcada como *aguardando validação* no roadmap por outro motivo: o teste cobre a **cota**, não a operação de corte no Solid Edge.
 
 ---
 
@@ -461,8 +481,8 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só funciona em edição em contexto (in-place) |
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
-| Ponte MCP (Claude Code dirige a Solid Edge) | 🚧 construída, protocolo validado ponta a ponta fora do CAD (233 testes); **aguardando o 1º run com a SE aberta** |
-| Eng. Reversa: malha → sólido | 🚧 sonda de diagnóstico pronta; rota (prismática × free-form) a decidir **com a medida da sonda** |
+| Ponte MCP (Claude Code dirige a Solid Edge) | ✅ **validada no SE em 2026-09-18** — 1º run com o CAD aberto: leitura, planos, árvore e modelagem por primitivas sobre COM real |
+| Eng. Reversa: malha → sólido | 🚧 sonda rodada na malha real; **reconhecedor de superfície próprio escrito** (planos e cilindros, com RMS), aguardando o 1º run no SE |
 | Orquestrador completo ("gerar todos os eletrodos") | 📋 planejado |
 
 Legenda: ✅ funcionando · 🚧 em andamento · 📋 planejado.

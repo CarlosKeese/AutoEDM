@@ -84,10 +84,11 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Curvas das superfícies (WEDM) | ✅ validado no SE (2026-09-16) |
 | Exportar perfis WEDM (IGES por Z) | ✅ validado no SE e **no Pitágoras** (2026-09-16) — a cadeia inteira, da peça ao programa da máquina |
 | Lista de corte na serra | 🚧 construído, coberto por teste, **aguardando validação no SE** |
-| Ponte MCP (Claude Code → Solid Edge) | 🚧 construída; protocolo validado ponta a ponta FORA do CAD, **aguardando o 1º run com a SE aberta** |
-| Sonda de malha (Eng. Reversa) | 🚧 construída, **aguardando rodar sobre uma malha real** |
-| Modelagem por primitivas (`se_modelar`) | 🚧 construída sobre receita já validada, **aguardando o 1º run no SE** |
-| Testes de unidade | ✅ 259 passando, 0 falhas |
+| Ponte MCP (Claude Code → Solid Edge) | ✅ **validada no SE (2026-09-18)** — 1º run com o CAD aberto: `se_status`, `se_planos`, `se_arvore`, `se_log` e `se_modelar` sobre COM real |
+| Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
+| Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | 🚧 escrito e coberto por 13 testes, **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
+| Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
+| Testes de unidade | ✅ 272 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -167,7 +168,70 @@ notificação, e sai com código 0 e `stderr` vazio. Os testes sobem servidor + 
 num **pipe real** e cobrem ida-e-volta, duas chamadas na mesma conexão, reconexão,
 segundo hospedeiro recusado e versão de contrato incompatível.
 
-**O que falta:** o 1º run com a Solid Edge ABERTA. Nada da ponte tocou COM ainda.
+**O que falta:** nada da ponte MCP — ver "1º run com a SE aberta (2026-09-18)" abaixo.
+Falta ainda rodar a **sonda de malha** sobre uma malha real, que é o que decide a rota da
+Eng. Reversa.
+
+### 1º run com a SE aberta (2026-09-18)
+
+A ponte dirigiu a Solid Edge 226.00.08.04 pela primeira vez. Documento ativo `Peça1`
+(.par, síncrono, vazio), escrita liberada pelo botão da ribbon.
+
+- `se_status`, `se_arvore`, `se_planos`, `se_log` responderam sobre COM real.
+- `se_modelar` com `exemplo:'carrinho'` (planoXY=1, planoXZ=2): **6 primitivas, 0
+  falhas** — chassi 90×40×18, cabine 40×34×16 e 4 rodas Ø26×8. A árvore ficou com
+  6 `ExtrudedProtrusion` e **um único corpo**: a fusão por contato entre primitivas que se
+  tocam é real, não só esperada.
+- **Achado:** `RefPlane.Normal` não é legível (`DISP_E_UNKNOWNNAME` nos três planos base),
+  então `se_planos` devolve índice e nome mas não o eixo. Quem escolhe plano tem de
+  **medir ou usar o mapeamento já validado** (XY=1, XZ=2 numa peça nova padrão), nunca
+  supor pela normal — ela simplesmente não vem.
+
+### Sonda de malha na malha real, e o reconhecedor que saiu dela (2026-09-18)
+
+Malha `unityabsoluteriser` (corpo de facetas) aberta no SE, sonda rodada pelo botão da ribbon
+com o teste de seccionamento autorizado. O que a medida deu:
+
+- **`Body.GetFacetData` a 0,01 mm: 4.168 facetas, 12.504 pontos** (37.512 doubles — 3 vértices
+  por triângulo, sopa sem índice). A malha lê inteira.
+- **`Body.Faces` é INACESSÍVEL** num corpo de facetas. Não há face `igMesh` para enumerar, logo
+  **não existe região pré-segmentada**: a segmentação tem de sair dos triângulos.
+- `AddBodyByMeshFacets`, `DoRemesh`, `HealAndOptimizeWithMeshOptions` e `DeleteRegions` existem
+  nesta versão — o caminho de volta (geometria reconhecida → sólido) está aberto.
+- **`CreateSectionSketches` falhou com `DISP_E_TYPEMISMATCH`, e isso NÃO é veredito sobre malha:**
+  é erro de marshaling de argumento. A typelib pede
+  `psaObjects: SAFEARRAY(IDispatch)*` e a sonda passou um `object[]`, que o CLR marshala como
+  `SAFEARRAY(VARIANT)`. Enquanto isso não for corrigido, **a rota prismática não pode ser dada
+  como fechada nem como aberta** — a chamada nem entrou no comando.
+
+Daí saíram três classes novas, todas em `src/AutoEDM.Core/Reverse`:
+
+| Classe | O que é |
+|---|---|
+| `MeshReader` | lê os triângulos por `GetFacetData`, em **duas rotas**: a completa (pede também `Normals` e `FaceIDs`, que a sonda nem tinha pedido) e a mínima já provada, se a completa falhar. Converte m → mm uma vez só |
+| `SurfaceRecognizer` | geometria **pura**, zero COM: solda vértices, quebra por QUINA, e pergunta de cada componente se é plano ou cilindro. Componente misto (o caso do raio, tangente à face e sem quina) é descascado |
+| `SurfaceReport` | o texto para o agente, com o RMS de cada ajuste |
+
+**A ordem quebrar-por-quina ANTES de ajustar custou um teste vermelho e vale como regra:** tentar
+planos primeiro, soltos na malha inteira, faz **cada faixa de um cilindro tesselado virar um
+"plano" perfeito de dois triângulos** — um Ø20 sai como 64 plaquinhas. A quina é que delimita
+superfície; dentro dela é que se pergunta qual superfície é.
+
+O mesmo defeito tem uma versão que nenhum ajuste evita: uma superfície curva **cabe** dentro da
+tolerância de planaridade em pedacinhos. Por isso o relatório detecta **MOSAICO** (muitas
+plaquinhas pequenas respondendo pela maior parte da área "plana") e **suspende o veredito** em vez
+de o imprimir ao lado do aviso — dizer "atenção, pode ser curvo" e em seguida "a peça é
+prismática" seria o relatório se contradizendo no mesmo parágrafo.
+
+13 testes novos, todos contra malha **gerada com geometria conhecida** (caixa 20×30×40, cilindro
+Ø20×30, meio cilindro, esfera R25): área, normais dos seis sentidos, Ø/eixo/altura, volta de 180°
+contra 360° medida pelo maior vão (e não por `max − min`, que erraria atravessando o corte do
+`atan2`), triângulo degenerado, malha vazia e estabilidade do sinal do eixo entre rodadas.
+
+**O que falta:** trocar o add-in E o servidor MCP (são dois processos, com cópias diferentes do
+`Core`) e rodar `se_reconhecer_malha` sobre a malha real — até aqui o reconhecedor só viu malha
+sintética. E corrigir o `psaObjects` do seccionamento, que é a alavanca que pouparia escrever
+reconhecimento de primitiva 2D.
 
 ### Eng. Reversa — por que começou por uma sonda
 
@@ -204,6 +268,16 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-09-18** — **a ponte dirigiu a Solid Edge pela primeira vez** (226.00.08.04):
+  leitura, planos, árvore e o carrinho de exemplo do `se_modelar` (6 primitivas, 0
+  falhas, corpo único) sobre COM real. A sonda de malha rodou na malha real — 4.168
+  facetas leem, `Body.Faces` é inacessível em corpo de facetas, e o seccionamento
+  falhou por **marshaling** (`object[]` onde a typelib pede `SAFEARRAY(IDispatch)*`),
+  o que não é resposta sobre malha. Corrigido com array tipado. Daí saíram
+  `MeshReader`, `SurfaceRecognizer` e `SurfaceReport` + a ferramenta MCP
+  `se_reconhecer_malha`. **272 testes, 0 falhas.** Dois achados que a documentação
+  antiga contradizia: `RefPlane.Normal` **não é legível**, e quebrar por quina tem de
+  vir ANTES de ajustar (senão um Ø20 tesselado sai como 64 planos).
 - **2026-09-17** — **grupos "Eng. Reversa" e "MCP" na ribbon** (`GuiVersion` 15). A
   ponte MCP inteira construída e o protocolo validado ponta a ponta fora do CAD; a
   sonda de malha escrita depois de o dump da typelib provar que a SE **não** expõe

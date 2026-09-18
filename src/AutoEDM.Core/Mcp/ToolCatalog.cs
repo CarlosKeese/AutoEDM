@@ -142,6 +142,27 @@ namespace AutoEDM.Mcp
                     "ali — é onde está a resposta quando uma operação 'funcionou' mas o resultado não foi o esperado."
             },
 
+            new ToolSpec
+            {
+                Name = "se_reconhecer_malha",
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"corpo\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Índice do corpo na peça (padrão 1).\"}," +
+                    "\"toleranciaMm\":{\"type\":\"number\",\"description\":\"Tolerância de tesselação. Só muda algo em corpo B-rep; em corpo de facetas os triângulos já existem. Padrão 0,01.\"}," +
+                    "\"anguloPlanoGraus\":{\"type\":\"number\",\"description\":\"Divergência máxima de normal dentro de um mesmo plano. Padrão 2.\"}," +
+                    "\"distanciaPlanoMm\":{\"type\":\"number\",\"description\":\"Distância máxima de um vértice ao plano da região. Padrão 0,05.\"}," +
+                    "\"anguloQuinaGraus\":{\"type\":\"number\",\"description\":\"Ângulo diedral que conta como QUINA e separa duas superfícies curvas. Padrão 35.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "PEÇA ativa, SÓ LEITURA: lê os triângulos do corpo (Body.GetFacetData) e RECONHECE superfícies sobre a " +
+                    "malha — planos (com normal, ponto e extensão) e cilindros (com eixo, Ø, comprimento e quanto da volta " +
+                    "cobrem, então furo sai como furo). Cada superfície vem com o RMS do próprio ajuste, em mm: é o número " +
+                    "que separa medida de palpite. O que não cabe em primitiva é reportado como região LIVRE, e a ÁREA dessa " +
+                    "sobra é o que decide se a peça se reconstrói por primitivas ou se exige superfície free-form. Funciona " +
+                    "em corpo de facetas (malha importada) e em sólido B-rep (que é tesselado na hora). Não cria feature, não " +
+                    "altera a peça, não salva."
+            },
+
             // ---------------------------------------------------- escrita (modo ESCRITA)
             new ToolSpec
             {
