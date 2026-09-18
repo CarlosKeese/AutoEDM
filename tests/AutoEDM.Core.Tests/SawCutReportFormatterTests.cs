@@ -36,6 +36,28 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
+        public void PendingRow_CarriesThePartSizes_ForMaterialOutsideTheCatalog()
+        {
+            // Grande demais p/ qualquer barra do estoque: é comprar material, e quem compra precisa das medidas.
+            var odd = new SawCutListItem { FileName = "EE05.par", Positions = 1, SizeKnown = true, SizeXmm = 60, SizeYmm = 55, SizeZmm = 60 };
+            odd.Cut = SawCutPlanner.Identify(60, 55, 60, null, new StandardBlankLibrary().Catalog);
+
+            string[] cells = SawCutReportFormatter.ToCells(odd);
+            Assert.StartsWith("NÃO IDENTIFICADO", cells[2]);
+            Assert.Contains(SawCutReportFormatter.SizeText(odd), cells[2]);
+            Assert.Contains("60", cells[2]);
+            Assert.Contains("55", cells[2]);
+            Assert.Equal("—", cells[5]);   // sem corte: quem separa o material vai pelas medidas
+        }
+
+        [Fact]
+        public void IdentifiedRow_KeepsTheProfileAlone()
+        {
+            string[] cells = SawCutReportFormatter.ToCells(Items()[0]);
+            Assert.Equal("RET. 50 x 19", cells[2]);
+        }
+
+        [Fact]
         public void Footer_WarnsWithPrintableTextNotSymbol()
         {
             string[] footer = SawCutReportFormatter.FooterLines(Items());

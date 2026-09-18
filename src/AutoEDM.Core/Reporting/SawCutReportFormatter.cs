@@ -36,12 +36,38 @@ namespace AutoEDM.Reporting
             {
                 it.FileName ?? "—",
                 it.Positions.ToString(Inv),
-                cut.Blank == null ? "NÃO IDENTIFICADO" : cut.Blank.Name + (cut.Blank.Material != null ? " " + cut.Blank.Material : ""),
+                ProfileCell(it, cut),
                 cut.Orientation ?? "—",
                 cut.Blank?.Code ?? "—",
                 cut.CutMm.HasValue ? cut.CutMm.Value.ToString("0", Inv) : "—",
             };
         }
+
+        /// <summary>
+        /// Coluna do perfil. SEM medida de corte (não identificado, ou perfil que não comporta a
+        /// peça) ela leva as MEDIDAS da peça: quem vai à serra/almoxarifado precisa delas para
+        /// separar material fora do padrão, e a impressão não tem a coluna de medidas da janela
+        /// (Carlos, 2026-09-17).
+        /// </summary>
+        private static string ProfileCell(SawCutListItem it, SawCut cut)
+        {
+            string profile = cut.Blank == null
+                ? "NÃO IDENTIFICADO"
+                : cut.Blank.Name + (cut.Blank.Material != null ? " " + cut.Blank.Material : "");
+            // Sem a palavra "medidas": a célula já fica larga e a impressão encolhe a fonte da tabela
+            // inteira até essa coluna caber (ver SawCutPrintJob.FitColumns).
+            if (cut.CutMm.HasValue) return profile;
+            return profile + " — " + (it.SizeKnown ? SizeText(it) : "medidas não lidas");
+        }
+
+        /// <summary>
+        /// Caixa envolvente da peça como a janela mostra: X × Y × Z mm. Decimal na cultura da
+        /// máquina (vírgula aqui), igual à coluna "Medidas" da grade — os outros números da tabela
+        /// são inteiros, por isso o resto do formatador usa <see cref="Inv"/>.
+        /// </summary>
+        public static string SizeText(SawCutListItem it) => it == null || !it.SizeKnown
+            ? "—"
+            : string.Format(CultureInfo.CurrentCulture, "{0:0.0} × {1:0.0} × {2:0.0} mm", it.SizeXmm, it.SizeYmm, it.SizeZmm);
 
         /// <summary>Linhas abaixo do título: montagem, data e a regra do corte.</summary>
         public static string[] InfoLines(string assemblyName, DateTime when, double allowanceMm = SawCutPlanner.DefaultAllowanceMm) =>
@@ -60,7 +86,8 @@ namespace AutoEDM.Reporting
             int pending = PendingCount(list);
             // "ATENÇÃO:" e não "⚠": o símbolo não existe em toda fonte de impressora.
             if (pending > 0)
-                lines.Add($"ATENÇÃO: {pending} eletrodo(s) sem medida de corte — escolha o perfil na janela antes de imprimir");
+                lines.Add($"ATENÇÃO: {pending} eletrodo(s) sem medida de corte — escolha o perfil na janela, " +
+                          "ou separe material pelas medidas X × Y × Z da coluna \"Perfil\"");
             return lines.ToArray();
         }
 
@@ -126,44 +153,16 @@ namespace AutoEDM.Reporting
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Envelopa o fragmento no formato "HTML Format" da área de transferência do Windows: um
-        /// cabeçalho com os OFFSETS EM BYTES UTF-8 do documento e do fragmento. Sem esse cabeçalho o
-        /// Word/Excel colam o HTML como texto cru. Quem põe na área de transferência tem de gravar
-        /// os bytes de <see cref="ToClipboardHtmlBytes"/>, não a string — ver lá.
-        /// </summary>
-        public static string ToClipboardHtml(string htmlFragment)
-        {
-            const string header =
-                "Version:0.9\r\nStartHTML:{0:D10}\r\nEndHTML:{1:D10}\r\nStartFragment:{2:D10}\r\nEndFragment:{3:D10}\r\n";
-            const string pre = "<html><head><meta charset=\"utf-8\"></head><body><!--StartFragment-->";
-            const string post = "<!--EndFragment--></body></html>";
-            string fragment = htmlFragment ?? "";
+        /// <summary>Envelopa o fragmento no formato "HTML Format" da área de transferência — ver <see cref="ClipboardHtml"/>.</summary>
+        public static string ToClipboardHtml(string htmlFragment) => ClipboardHtml.Wrap(htmlFragment);
 
-            var utf8 = Encoding.UTF8;
-            int startHtml = utf8.GetByteCount(string.Format(Inv, header, 0, 0, 0, 0)); // D10: tamanho fixo
-            int startFragment = startHtml + utf8.GetByteCount(pre);
-            int endFragment = startFragment + utf8.GetByteCount(fragment);
-            int endHtml = endFragment + utf8.GetByteCount(post);
-            return string.Format(Inv, header, startHtml, endHtml, startFragment, endFragment) + pre + fragment + post;
-        }
-
-        /// <summary>
-        /// <see cref="ToClipboardHtml"/> já em bytes UTF-8 (sem BOM), para gravar como STREAM na área
-        /// de transferência. Dentro do Solid Edge, <c>DataObject.SetData(DataFormats.Html, string)</c>
-        /// NÃO grava UTF-8: o WinForms só faz isso quando o processo foi compilado para .NET ≥ 4.5, e
-        /// o Edge.exe é nativo — cai no modo antigo, que converte para ANSI. Os offsets do cabeçalho
-        /// (em bytes UTF-8) deixam de bater e o Excel mostra "Posi綷s", "NÏ IDENTIFICADO"
-        /// (Carlos, 2026-09-14).
-        /// </summary>
-        public static byte[] ToClipboardHtmlBytes(string htmlFragment) =>
-            new UTF8Encoding(false).GetBytes(ToClipboardHtml(htmlFragment));
+        /// <summary><see cref="ToClipboardHtml"/> em bytes UTF-8 sem BOM, para gravar como STREAM
+        /// na área de transferência (dentro do Edge.exe a string vira ANSI — ver <see cref="ClipboardHtml"/>).</summary>
+        public static byte[] ToClipboardHtmlBytes(string htmlFragment) => ClipboardHtml.Bytes(htmlFragment);
 
         private static string Line(string[] cells, int[] width) =>
             string.Join("  ", cells.Select((s, c) => RightAligned[c] ? s.PadLeft(width[c]) : s.PadRight(width[c]))).TrimEnd();
 
-        // Não WebUtility.HtmlEncode: ele troca "ç"/"é" por &#231; — válido, mas ilegível no HTML colado.
-        private static string Html(string s) =>
-            (s ?? "").Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+        private static string Html(string s) => ClipboardHtml.Escape(s);
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using AutoEDM.Electrode;
 using Xunit;
@@ -44,25 +45,51 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
-        public void LaidDown_CutIsTheLongFootprintSide()
+        public void LaidDown_CutIsTheLongFootprintSide_AndBeatsAStandingBarThatWastesMore()
         {
-            // QUAD 19 deitado cortado a 24: pegada 24 × 19, altura 19 (+ a queima).
-            SawCut cut = SawCutPlanner.Identify(24, 19, 25, null, _catalog);
+            // QUAD 19 deitado cortado a 24: pegada 24 × 19 e altura 19 p/ a peça de 18 (1 mm p/ facear).
+            // Em pé só o RET 50×19 comportaria a pegada — e gastaria o dobro de material.
+            SawCut cut = SawCutPlanner.Identify(24, 19, 18, null, _catalog);
             Assert.Equal("11715", cut.Blank.Code);
             Assert.True(cut.LaidDown);
             Assert.Equal(29, cut.CutMm);
-            // RET 50×19 deitado daria 50 de altura — não cabe em 25 mm de peça.
-            Assert.DoesNotContain(cut.Alternatives, b => b.Code == "8844");
+            Assert.Contains(cut.Alternatives, b => b.Code == "8844");
         }
 
         [Fact]
-        public void Standing_WinsOverLaidDown_ButAmbiguityIsReported()
+        public void LaidDown_NeedsOneMillimeterOverTheHeightToFace()
         {
-            SawCut cut = SawCutPlanner.Identify(50, 19, 60, null, _catalog);
+            // Mesma peça 1 mm mais alta: o QUAD 19 deitado dá 19 de altura p/ 19 de peça, sem material
+            // p/ facear no centro de usinagem (Carlos, 2026-09-17) — sai de cena e o corte vira em pé.
+            SawCut cut = SawCutPlanner.Identify(24, 19, 19, null, _catalog);
             Assert.Equal("8844", cut.Blank.Code);
             Assert.False(cut.LaidDown);
-            Assert.Contains(cut.Alternatives, b => b.Code == "11715"); // QUAD 19 deitado cortado a 50
-            Assert.NotNull(cut.Note);
+            Assert.Equal(24, cut.CutMm);
+            Assert.DoesNotContain(cut.Alternatives, b => b.Code == "11715");
+        }
+
+        [Fact]
+        public void LaidDown_DoesNotMatchAProfileShorterThanThePart()
+        {
+            // Caso real (Carlos, 2026-09-17): 29,0 × 25,4 × 31,0 saía "RET 25,4×12,7 deitado, corte 34"
+            // só porque o 25,4 batia — deitado esse perfil dá 12,7 mm de altura e a peça tem 31.
+            SawCut cut = SawCutPlanner.Identify(29.0, 25.4, 31.0, null, _catalog);
+            Assert.Equal("8840", cut.Blank.Code);   // QUAD 32 em pé, a menor barra que comporta 29 × 25,4
+            Assert.False(cut.LaidDown);
+            Assert.Equal(36, cut.CutMm);            // 31 → 31 + 5
+            Assert.DoesNotContain(cut.Alternatives, b => b.Code == "8842");
+            Assert.NotNull(cut.Fit);                // "sobra 3,0 × 6,6 mm na seção"
+        }
+
+        [Fact]
+        public void MaterialIsNeverSmallerThanThePart_AndTheLeftoverIsReported()
+        {
+            SawCut cut = SawCutPlanner.Identify(29.0, 25.4, 31.0, null, _catalog);
+            double hi = Math.Max(cut.Blank.DimA, cut.Blank.DimB ?? cut.Blank.DimA);
+            double lo = Math.Min(cut.Blank.DimA, cut.Blank.DimB ?? cut.Blank.DimA);
+            Assert.True(hi >= 29.0 && lo >= 25.4);
+            Assert.True(cut.CutMm >= 31.0 + SawCutPlanner.FacingAllowanceMm);
+            Assert.Contains("sobra", cut.Fit);
         }
 
         [Fact]
@@ -76,12 +103,24 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
-        public void NoMatchingProfile_HasNoCut()
+        public void BiggerThanEveryBar_HasNoCut()
         {
-            SawCut cut = SawCutPlanner.Identify(40, 30, 20, null, _catalog);
+            // 60 × 55 × 60: nenhuma seção comporta a pegada e nenhuma barra deitada dá 61 mm de altura.
+            SawCut cut = SawCutPlanner.Identify(60, 55, 60, null, _catalog);
             Assert.Null(cut.Blank);
             Assert.Null(cut.CutMm);
-            Assert.NotNull(cut.Note);
+            Assert.Contains("comprar material", cut.Note);
+        }
+
+        [Fact]
+        public void SmallerThanTheBar_StillCutsFromStock()
+        {
+            // 40 × 30 × 20 não é medida de barra nenhuma, mas sai do QUAD 32 deitado (corte 45).
+            SawCut cut = SawCutPlanner.Identify(40, 30, 20, null, _catalog);
+            Assert.Equal("8840", cut.Blank.Code);
+            Assert.True(cut.LaidDown);
+            Assert.Equal(45, cut.CutMm);
+            Assert.Contains("facear", cut.Fit);
         }
 
         [Fact]
@@ -99,7 +138,15 @@ namespace AutoEDM.Core.Tests
             SawCut cut = SawCutPlanner.ForBlank(Code("11715"), 60, 15, 18);
             Assert.True(cut.LaidDown);
             Assert.Equal(65, cut.CutMm);
-            Assert.Null(cut.Note);
+            Assert.Null(cut.Note);   // 19 de seção p/ 18 de peça: dá o 1 mm de faceamento
+        }
+
+        [Fact]
+        public void ForBlank_LaidDownWithoutRoomToFace_IsFlagged()
+        {
+            SawCut cut = SawCutPlanner.ForBlank(Code("11715"), 60, 15, 18.5);
+            Assert.True(cut.LaidDown);
+            Assert.Contains("facear", cut.Note);
         }
 
         [Fact]

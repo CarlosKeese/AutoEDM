@@ -178,9 +178,11 @@ namespace AutoEDM.AddIn.UI
 
             var notes = new List<string>(it.Notes);
             if (!string.IsNullOrEmpty(cut.Note)) notes.Add(cut.Note);
+            if (!string.IsNullOrEmpty(cut.Fit)) notes.Add(cut.Fit);
             if (cut.Blank != null && !cut.AutoIdentified) notes.Add("perfil escolhido à mão");
             row.Cells["Notes"].Value = string.Join(" | ", notes);
 
+            // Fit NÃO entra aqui: sobra de material é informação, não pendência (Carlos, 2026-09-17).
             bool attention = !cut.CutMm.HasValue || !string.IsNullOrEmpty(cut.Note) || it.Notes.Count > 0;
             row.DefaultCellStyle.ForeColor = attention ? Color.FromArgb(160, 90, 0) : SystemColors.ControlText;
         }
