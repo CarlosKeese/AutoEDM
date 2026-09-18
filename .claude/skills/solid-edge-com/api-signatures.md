@@ -479,3 +479,42 @@ enough, constrain the occurrence: `Ref = AssemblyDocument.CreateReference(Occurr
 for each side, then `Relations3d.AddPlanar(Ref1, Ref2, NormalsAligned, cp1[3], cp2[3])`
 (**`NormalsAligned` True=Align / False=Mate**) and `AddAxial(cylRef1, cylRef2, NormalsAligned)`
 for holes/pins. `PutOrigin` stays the simplest path when the placement is a pure translation.
+
+## Ordered-tree GROUPS, feature faces, and the revision property (measured 2026-09-18)
+
+**A "Grupo" in the ordered PathFinder is a first-class COM object, and it is itself a
+collection.** It shows up as an item of `PartDocument.DesignEdgebarFeatures`:
+
+| member | value (live, SE 223.00.13.05) |
+|---|---|
+| `Name` / `DisplayName` / `EdgebarName` | what the user typed — `"Rev.2"` |
+| `SystemName` | `"Group_1"` — **this** is how you know an item IS a group, without depending on the name |
+| `Count` + `Item(i)` | the features inside it |
+| `Faces(FeatureTopologyQueryTypeConstants)`, `ExactRange` | the group's own faces/box |
+| `Ungroup()` | **destructive** — never call it from a read-only tool |
+
+Creating a group also creates a variable named `<GroupName>_Suppress` (SystemName
+`Group_1_Suppress`) in the variable table.
+
+Do **not** infer group membership from position in `DesignEdgebarFeatures`: the children do
+follow the group in the flat list, but a feature created *after* the group is indistinguishable
+from one inside it. Ask the group.
+
+**Painting "what changed" on a rendered mesh:** a feature's faces come from
+`feature.Faces[1]` (`igQueryAll`, indexed like `Body.Faces[1]`), and **`Face.ID` matches
+between the feature's face and the body's face** — build an `ID → feature` map, then tag each
+body face while you mesh it. Measured on a real mold plate: 4 of 432 faces for one feature.
+Feature types that replace/delete faces may return none — log it instead of failing.
+
+**⚠ The standard revision property is a SAVE COUNTER, not a revision.** Matching a document
+property by *part* of its name ("contains rev") picks up **"Número da Revisão"** (Windows
+`PIDSI_REVNUMBER`, group Arquivo/Geral), which Solid Edge increments on save — real values in
+one assembly were 153, 24, 9, 12. That turned 43 untouched parts into "new parts" and made the
+report's revision 153. The field a user actually fills is **"Revisão"** (`"Revision"` in an
+en-US install), in the **Resumo** group, next to Título/Categoria. Match the **whole** property
+name, case- and accent-insensitively, and keep the accepted names in config — the label is
+localized and the COM name may differ from what the properties dialog shows.
+
+**Ribbon layout is cached per add-in: bump `AddInEx.GuiVersion` when the XML changes.** A new
+`<button>` added without bumping it appears in the *wrong group* (SE reuses the cached layout
+and appends the unknown id) — it is not an XML error, and re-registering alone does not fix it.

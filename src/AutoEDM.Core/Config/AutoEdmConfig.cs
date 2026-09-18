@@ -45,6 +45,24 @@ namespace AutoEDM.Config
         public double HolderHeightMm { get; set; } = 15.0;
         public double HolderBaseClearanceMm { get; set; } = 1.0;
 
+        /// <summary>
+        /// Nome EXATO da propriedade do arquivo onde está a revisão de uma PEÇA NOVA (Carlos,
+        /// 2026-09-18: projeto novo nasce com revisão 0/vazia; peça nova recebe o número, peça
+        /// alterada só ganha o grupo na árvore). Null/vazio = não lê propriedade nenhuma.
+        ///
+        /// É uma LISTA porque o mesmo campo aparece com nomes diferentes: na tela de propriedades
+        /// ele é o "Revisão" do grupo RESUMO (confirmado na 14309.219.par, 2026-09-18), mas o COM
+        /// pode devolver o nome interno em inglês — e numa Solid Edge de outro idioma muda de novo.
+        /// Basta UM da lista casar. Lista vazia = não lê propriedade e o log passa a listar todas as
+        /// propriedades de revisão que existem (modo diagnóstico).
+        ///
+        /// ⚠ NUNCA casar por pedaço do nome: "Número da Revisão" (grupo Arquivo/Geral) é da Solid
+        /// Edge e serve de CONTADOR DE SALVAMENTOS — valores 153, 24, 9 numa montagem real. Casar
+        /// por "rev" trouxe 43 peças como novas e a revisão do relatório virou 153. Por isso a
+        /// comparação é do nome INTEIRO (acento e maiúscula não importam).
+        /// </summary>
+        public List<string> RevisionPropertyNames { get; set; } = new List<string> { "Revisão", "Revision" };
+
         /// <summary>Null/vazio = usa a tabela de fábrica de <see cref="Electrode.RaOffsetTablePolicy"/>.</summary>
         public List<RaOffsetBand> RaOffsetBands { get; set; }
 

@@ -148,7 +148,7 @@ Read only the file you need; each is self-contained.
 |---|---|
 | Setting up discovery, dumping the typelib, building the SPY or the action recorder, reading the install's data tables for a string argument, early binding | `references/discovery.md` |
 | A specific HRESULT, binder error, or "it succeeded but nothing happened" | `references/errors.md` |
-| A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts | `references/api-signatures.md` |
+| A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts, **ordered-tree groups, feature↔body face IDs, document properties (the revision trap), ribbon GuiVersion cache** | `references/api-signatures.md` |
 | Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered, placing a part in an assembly | `references/modeling-recipes.md` |
 | Putting a button inside SE: add-in registration, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, modeless dialogs, in-process hosting limits, picking a face or edge from the model | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |

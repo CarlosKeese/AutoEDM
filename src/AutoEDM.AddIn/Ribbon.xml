@@ -38,6 +38,10 @@
               screentip="Lista de corte dos eletrodos SELECIONADOS: perfil do estoque + medida na serra"
               supertip="Na montagem, selecione a(s) ocorrência(s) do(s) eletrodo(s) e clique. Abre uma janela com uma linha por arquivo: quantas posições ele ocupa na montagem, o perfil de cobre do estoque (identificado pelas medidas da peça — dá para trocar na própria lista) e a medida de corte na serra já com 5 mm de sobremetal. O botão 'Copiar para impressão' põe a tabela na área de transferência, pronta para colar no Word, Excel ou e-mail. Não altera nada."
               imageId="5" showLabel="true" />
+      <button id="25" size="large" label="Lista de modificações"
+              screentip="Folha de revisões do molde: as peças com grupo &quot;Rev.N&quot; na árvore"
+              supertip="Com a MONTAGEM do molde aberta, clique: o AutoEDM varre as peças do projeto, acha as que têm um grupo &quot;Rev.N&quot; na árvore ordenada e monta a folha de revisões. O modelo dá quais peças mudaram e quais operações estão no grupo; você escreve a descrição e as ações para a oficina, e marca as caixas de serviço. Gera a planilha .xlsx no layout da folha MD (para subir no Drive) e guarda o que você digitou num .json ao lado da montagem. Não altera nada no modelo."
+              imageId="2" showLabel="true" />
       <button id="4" size="large" label="Ficha (spec-sheet)"
               screentip="Folha de dados dos eletrodos"
               supertip="Gera a ficha por eletrodo (Ra, pegada, blank, offset por Ra, fixação) em .txt e .csv. Não altera a montagem."

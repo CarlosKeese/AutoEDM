@@ -1621,6 +1621,78 @@ namespace AutoEDM.Electrode
             return result;
         }
 
+        /// <summary>
+        /// Mapa ID-da-face → índice da feature dentro do grupo da revisão. Usa
+        /// <c>feature.Faces[igQueryAll]</c> (a mesma indexação de <c>Body.Faces[1]</c>) e o
+        /// <c>Face.ID</c>, que casa entre a face da feature e a do corpo. Feature que não expõe
+        /// faces (o grupo mistura tipos) simplesmente não entra — best-effort, a miniatura é
+        /// ilustração, não medição.
+        /// </summary>
+        private static Dictionary<int, int> RevisionFaceGroups(object revisionGroup, string partName,
+            List<ElectrodeThumbnail.HighlightGroup> highlights)
+        {
+            var map = new Dictionary<int, int>();
+            if (revisionGroup == null) return map;
+
+            dynamic group = revisionGroup;
+            int count = 0;
+            try { count = (int)group.Count; } catch { return map; }
+
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic feature = null;
+                try { feature = group.Item(i); } catch { continue; }
+
+                // SÓ a feature que o Carlos numerou ("1 - Ajustar a chaveta") entra: é ela que vira
+                // ação indicada na folha, e o balão repete esse número (2026-09-18). Feature com o
+                // nome automático da SE ("Recorte 6") faz parte do grupo mas não é o que a oficina
+                // precisa enxergar, então não ganha cor nem chamada.
+                string label = null;
+                try { label = (string)feature.EdgebarName; } catch { }
+                if (label == null) { try { label = (string)feature.Name; } catch { } }
+
+                int number;
+                string text;
+                if (!AutoEDM.Revisions.RevisionName.TryParseOperation(label, out number, out text)) continue;
+
+                int index = highlights.Count;
+                highlights.Add(new ElectrodeThumbnail.HighlightGroup
+                {
+                    Label = number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                });
+                int added = 0;
+                try
+                {
+                    dynamic faces = feature.Faces[1]; // 1 = igQueryAll
+                    int n = 0;
+                    try { n = (int)faces.Count; } catch { }
+                    for (int f = 1; f <= n; f++)
+                    {
+                        object face;
+                        try { face = faces.Item(f); } catch { continue; }
+                        int id;
+                        if (!TryFaceId(face, out id)) continue;
+                        map[id] = index;   // face que duas features tocam fica com a última
+                        added++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Info($"Miniatura: '{partName}' — operação '{label}' sem faces legíveis ({ex.GetBaseException().Message}).");
+                }
+                if (added == 0) Log.Info($"Miniatura: '{partName}' — operação '{label}' não devolveu face.");
+            }
+            return map;
+        }
+
+        /// <summary>ID da face, o handle que casa entre corpo e feature. false = não expõe.</summary>
+        private static bool TryFaceId(object face, out int id)
+        {
+            id = 0;
+            try { id = (int)((dynamic)face).ID; return true; }
+            catch { return false; }
+        }
+
         private static string TryFullName(object doc)
         {
             if (doc == null) return null;
@@ -1707,10 +1779,16 @@ namespace AutoEDM.Electrode
         /// <c>Face.GetFacetData</c>, a leitura já validada da secção de queima) e desenha com
         /// <see cref="ElectrodeThumbnail"/>. SOMENTE-LEITURA. Null (com log) se não houver malha.
         /// </summary>
-        public System.Drawing.Bitmap RenderElectrodeThumbnail(object partDoc, int sizePx = ElectrodeThumbnail.DefaultSizePx)
+        public System.Drawing.Bitmap RenderElectrodeThumbnail(object partDoc, int sizePx = ElectrodeThumbnail.DefaultSizePx,
+            ElectrodeThumbnail.View view = ElectrodeThumbnail.View.FromBelow, object revisionGroup = null)
         {
             string name = System.IO.Path.GetFileName(TryFullName(partDoc) ?? "<peça>");
             if (partDoc == null) { Log.Warn($"Miniatura: '{name}' sem documento da peça."); return null; }
+
+            // Faces das features da revisão: ID da face → nº da feature no grupo. É o que pinta de
+            // roxo e numera a chamada na miniatura (Carlos, 2026-09-18). Vazio = miniatura lisa.
+            var highlights = new List<ElectrodeThumbnail.HighlightGroup>();
+            Dictionary<int, int> faceGroup = RevisionFaceGroups(revisionGroup, name, highlights);
 
             var meshesMm = new List<double[]>();
             int faceCount = 0, noMesh = 0;
@@ -1736,6 +1814,13 @@ namespace AutoEDM.Electrode
                             continue;
                         }
                         meshesMm.Add(ptsM.Select(v => Units.MToMm(v)).ToArray());
+
+                        if (faceGroup.Count == 0) continue;
+                        int id;
+                        if (!TryFaceId(face, out id)) continue;
+                        int group;
+                        if (faceGroup.TryGetValue(id, out group) && group < highlights.Count)
+                            highlights[group].MeshIndices.Add(meshesMm.Count - 1);
                     }
                 }
             }
@@ -1748,7 +1833,10 @@ namespace AutoEDM.Electrode
             int facets = meshesMm.Sum(mm => mm.Length / 9);
             Log.Info($"Miniatura: '{name}' {faceCount} face(s), {facets} faceta(s){(noMesh > 0 ? $", {noMesh} face(s) sem malha" : "")}.");
             if (meshesMm.Count == 0) return null;
-            return ElectrodeThumbnail.Render(meshesMm, sizePx);
+            int marked = highlights.Sum(h => h.MeshIndices.Count);
+            if (highlights.Count > 0)
+                Log.Info($"Miniatura: '{name}' {marked} face(s) destacada(s) em {highlights.Count} operação(ões) numerada(s).");
+            return ElectrodeThumbnail.Render(meshesMm, sizePx, view, highlights.Count > 0 ? highlights : null);
         }
 
         // ------------------------------------------------------------------

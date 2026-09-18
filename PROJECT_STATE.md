@@ -84,6 +84,7 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Curvas das superfícies (WEDM) | ✅ validado no SE (2026-09-16) |
 | Exportar perfis WEDM (IGES por Z) | ✅ validado no SE e **no Pitágoras** (2026-09-16) — a cadeia inteira, da peça ao programa da máquina |
 | Lista de corte na serra | 🚧 construído, coberto por teste, **aguardando validação no SE** |
+| Lista de modificações (folha de revisões) | 🚧 rodando no SE; escritor .xlsx próprio, miniaturas Z+/Z− com features numeradas |
 | Ponte MCP (Claude Code → Solid Edge) | ✅ **validada no SE (2026-09-18)** — 1º run com o CAD aberto: `se_status`, `se_planos`, `se_arvore`, `se_log` e `se_modelar` sobre COM real |
 | Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
 | Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | 🚧 escrito e coberto por 13 testes, **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |

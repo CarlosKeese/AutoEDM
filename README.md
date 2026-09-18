@@ -101,6 +101,7 @@ A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cad
 |---|---|---|
 | **Coordenadas** | qualquer | Lista os eletrodos selecionados com posição (mesma leitura de *Propriedades de Ocorrência*) e o GAP/Ra gravados na peça. Não altera nada. |
 | **Lista de corte** | qualquer | Uma linha por arquivo de eletrodo selecionado: quantas posições ele ocupa na montagem, o perfil de cobre do estoque (identificado pelas medidas da peça, trocável na própria lista) e a medida de corte na serra já com os 5 mm de sobremetal. *Copiar para impressão* põe a tabela na área de transferência. Não altera nada. |
+| **Lista de modificações** | qualquer | A folha de revisões do molde, que hoje é montada à mão no Google Sheets. Varre as peças **do projeto** (as de catálogo ficam de fora pelo caminho do arquivo), acha em cada uma o grupo **"Rev.N"** da árvore ordenada — e, nas peças NOVAS, a revisão na propriedade **Revisão** do arquivo. Abre uma janela para você escrever a descrição e as ações e marcar as caixas de serviço; gera o **.xlsx** no layout da folha MD (para subir no Drive) com duas miniaturas por peça (Z+ e Z−), as features numeradas em roxo e chamadas numeradas. O que você digita fica num `.json` ao lado da montagem, por revisão. Não altera nada no modelo. |
 | **Ficha (spec-sheet)** | qualquer | Gera a ficha por eletrodo — Ra, pegada, blank, offset por Ra, fixação — em `.txt` e `.csv`. |
 
 ### Peça — documento de peça
@@ -430,7 +431,7 @@ o da trava: **toda** ferramenta marcada como de escrita tem de ser recusada em s
 recusa tem de dizer o que fazer — sem isso, um `Writes` esquecido em `false` passaria a permitir
 escrita sem ninguém notar.
 
-> **Estado atual: 272 de 272 passando.** As 7 falhas antigas de `ORingGrooveTests` — testes escritos contra uma especificação anterior à implementação que ficou — foram resolvidas junto com a correção do canal de O'ring. A ferramenta de O'ring segue marcada como *aguardando validação* no roadmap por outro motivo: o teste cobre a **cota**, não a operação de corte no Solid Edge.
+> **Estado atual: 369 de 369 passando.** As 7 falhas antigas de `ORingGrooveTests` — testes escritos contra uma especificação anterior à implementação que ficou — foram resolvidas junto com a correção do canal de O'ring. A ferramenta de O'ring segue marcada como *aguardando validação* no roadmap por outro motivo: o teste cobre a **cota**, não a operação de corte no Solid Edge.
 
 ---
 
@@ -474,6 +475,7 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Análise de usinabilidade: raio mínimo, alcance e canto vivo | ✅ construído, coberto por teste — validado no SE (raio); canto vivo a confirmar |
 | Análise de usinabilidade: rasgo estreito e acesso (varredura do vazio) | 📋 planejado |
 | Lista de corte (perfil do estoque + medida na serra) | 🚧 construído, coberto por teste, aguardando validação no SE |
+| Lista de modificações (folha de revisões + .xlsx) | 🚧 construído e rodado no SE; layout e miniaturas em ajuste com o Carlos |
 | WEDM: exportar perfis (um `.igs` por altura Z) | ✅ validado no SE e no Pitágoras |
 | WEDM: curvas nas extremidades paralelas a XY das superfícies | ✅ validado no SE (2026-09-16) |
 | Alojamento de O'ring pela ISO 3601 | 🚧 construído, aguardando validação no SE |

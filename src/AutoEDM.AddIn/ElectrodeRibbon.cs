@@ -9,6 +9,7 @@ using AutoEDM.Electrode;
 using AutoEDM.Mcp;
 using AutoEDM.Model;
 using AutoEDM.Reporting;
+using AutoEDM.Revisions;
 using AutoEDM.Reverse;
 using AutoEDM.Sealing;
 using AutoEDM.Wedm;
@@ -46,6 +47,7 @@ namespace AutoEDM.AddIn
         private const int CmdMcpLiberarEscrita = 22; // MCP: permite as ferramentas que ESCREVEM (só o usuário liga)
         private const int CmdMcpSomenteLeitura = 23; // MCP: volta a ponte para somente-leitura
         private const int CmdSondaMalha = 24;       // ENG. REVERSA: sonda de diagnóstico sobre a malha (SÓ LEITURA)
+        private const int CmdListaModificacoes = 25; // Folha de revisões: peças com grupo "Rev.N" na árvore ordenada
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -69,6 +71,7 @@ namespace AutoEDM.AddIn
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
                 case CmdCoordenadas: AbrirCoordenadas(); break;
                 case CmdListaCorte: AbrirListaCorte(); break;
+                case CmdListaModificacoes: AbrirListaModificacoes(); break;
                 case CmdExportarPerfisWedm: ExportarPerfisWedm(); break;
                 case CmdCurvasDasSuperficies: CurvasDasSuperficies(); break;
                 case CmdAnalisarZ: AnalisarZ(); break;
@@ -250,6 +253,99 @@ namespace AutoEDM.AddIn
                     form.ShowDialog();
                 }
             });
+        }
+
+        /// <summary>
+        /// Botão "Lista de modificações" (ambiente de MONTAGEM, Carlos, 2026-09-17/18): a folha de
+        /// revisões do molde, que hoje ele monta à mão no Google Sheets. Varre as peças DO PROJETO
+        /// (as de catálogo ficam de fora pelo caminho do arquivo), acha em cada uma o grupo "Rev.N"
+        /// mais recente da árvore ordenada e abre a janela para ele escrever descrição e ações.
+        /// Somente leitura no modelo: o que sai daqui é .xlsx e um .json ao lado da montagem.
+        /// </summary>
+        private void AbrirListaModificacoes()
+        {
+            const string title = "AutoEDM — Lista de modificações";
+            Run(CmdListaModificacoes, (connector, doc, p) =>
+            {
+                string asmPath = null, asmName = null;
+                try { asmPath = (string)doc.FullName; } catch { }
+                try { asmName = (string)doc.Name; } catch { }
+
+                ProjectFolder folder = ProjectFolder.Parse(asmPath);
+                int revision;
+                System.Collections.Generic.List<PartChange> parts =
+                    RevisionScanner.Scan(doc, folder.Directory, out revision,
+                        AutoEdmConfig.LoadOrCreateDefault().RevisionPropertyNames);
+
+                if (parts.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Nenhuma peça desta montagem tem um grupo \"Rev.N\" na árvore ordenada." +
+                        Environment.NewLine + Environment.NewLine +
+                        "É assim que o AutoEDM sabe o que mudou: agrupe os recursos da alteração na árvore da peça " +
+                        "e nomeie o grupo \"Rev.1\", \"Rev.2\"... Depois clique aqui de novo.",
+                        title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                var report = new ChangeReport
+                {
+                    Revision = revision,
+                    AssemblyName = asmName,
+                    ProductCode = folder.ProductCode,
+                    PartNumbers = folder.PartNumbers,
+                    MoldCode = folder.MoldCode,
+                    MoldBaseCode = folder.MoldCode,   // na folha do Carlos o PM costuma ser o próprio MD
+                    ProjectDirectory = folder.Directory,
+                };
+                report.Parts.AddRange(parts);
+
+                string storePath = ChangeReportStore.PathFor(asmPath);
+                ChangeReportStore.Apply(ChangeReportStore.Load(storePath), report);
+
+                ElectrodeBuilder builder = NewBuilder(connector);
+                using (var form = new ChangeReportForm(report, storePath,
+                           part => RenderPartPngs(builder, part)))
+                {
+                    form.ShowDialog();
+                }
+            });
+        }
+
+        /// <summary>
+        /// As miniaturas de uma peça da Lista de modificações, em PNG: isométrica DE CIMA (Z+) e DE
+        /// BAIXO (Z−) — a alteração pode estar de qualquer lado, e é justamente o lado escondido
+        /// que costuma faltar no desenho de bancada (Carlos, 2026-09-18). As faces das features da
+        /// revisão saem em roxo, com a chamada numerada de cada uma. Peça de molde, não eletrodo:
+        /// por isso a vista de cima vem primeiro. Lista vazia = a folha sai sem imagem.
+        /// </summary>
+        private static System.Collections.Generic.List<byte[]> RenderPartPngs(ElectrodeBuilder builder, PartChange part)
+        {
+            var images = new System.Collections.Generic.List<byte[]>();
+            if (part?.PartDocument == null) return images;
+
+            foreach (var view in new[] { ElectrodeThumbnail.View.FromAbove, ElectrodeThumbnail.View.FromBelow })
+            {
+                try
+                {
+                    // 300 px: as duas vistas cabem lado a lado na planilha sem cobrir o bloco de texto.
+                    using (System.Drawing.Bitmap bmp = builder.RenderElectrodeThumbnail(
+                               part.PartDocument, 300, view, part.RevisionFeature))
+                    {
+                        if (bmp == null) continue;
+                        using (var buffer = new System.IO.MemoryStream())
+                        {
+                            bmp.Save(buffer, System.Drawing.Imaging.ImageFormat.Png);
+                            images.Add(buffer.ToArray());
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn($"Miniatura ({view}) de '{part.FileName}' falhou — {ex.GetBaseException().Message}");
+                }
+            }
+            return images;
         }
 
         /// <summary>
@@ -893,6 +989,7 @@ namespace AutoEDM.AddIn
                 { CmdDuplicarEletrodo,    new CommandSpec("DUPLICAR ELETRODO",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCoordenadas,         new CommandSpec("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdListaCorte,          new CommandSpec("LISTA DE CORTE (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
+                { CmdListaModificacoes,   new CommandSpec("LISTA DE MODIFICAÇÕES (folha de revisões)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdSpecSheet,           new CommandSpec("FICHA DE ELETRODOS (spec-sheet)",      DocKind.Assembly, ModelingEnv.Any) },
 
                 // --- peça: cada botão tem UM ambiente, o do recurso que ele cria ---

@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 15; // incrementar ao mudar a ribbon (v15 = grupos "Eng. Reversa" e "MCP")
+            AddInEx.GuiVersion = 16; // incrementar ao mudar a ribbon (v16 = "Lista de modificações" em Relatórios)
 
             Current = this;
             App = application;
