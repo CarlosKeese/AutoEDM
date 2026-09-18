@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
@@ -23,10 +23,14 @@ namespace AutoEDM.Mcp
     public sealed class BridgeServer : IDisposable
     {
         private readonly Func<BridgeRequest, BridgeResponse> _marshal;
+        private readonly string _pipeName;
         private readonly object _gate = new object();
 
         private Thread _thread;
         private NamedPipeServerStream _current;
+        /// <summary>O pipe já criado pelo <see cref="Start"/>, que a thread usa na 1ª volta em vez
+        /// de criar um novo — é o que fecha a janela de corrida na reserva do nome.</summary>
+        private NamedPipeServerStream _pending;
         private volatile bool _stopping;
 
         /// <summary>true entre o <see cref="Start"/> bem-sucedido e o <see cref="Stop"/>.</summary>
@@ -39,10 +43,20 @@ namespace AutoEDM.Mcp
         /// <summary>Nome da última ferramenta pedida, para o mesmo Status.</summary>
         public string LastTool { get; private set; }
 
-        public BridgeServer(Func<BridgeRequest, BridgeResponse> marshal)
+        /// <param name="pipeName">
+        /// Nome do pipe. O padrão é o de produção (<see cref="BridgeProtocol.PipeName"/>); existe
+        /// como parâmetro para os TESTES poderem subir uma ponte própria com nome único. Sem isso
+        /// a suíte falha sempre que a Solid Edge estiver aberta com a ponte ligada — ela já é a
+        /// dona desse nome —, e um teste que só passa com o CAD fechado não serve.
+        /// </param>
+        public BridgeServer(Func<BridgeRequest, BridgeResponse> marshal, string pipeName = null)
         {
             _marshal = marshal ?? throw new ArgumentNullException(nameof(marshal));
+            _pipeName = string.IsNullOrEmpty(pipeName) ? BridgeProtocol.PipeName : pipeName;
         }
+
+        /// <summary>O nome que esta ponte está (ou estaria) escutando.</summary>
+        public string PipeName { get { return _pipeName; } }
 
         /// <summary>
         /// Sobe o laço de aceitação. Devolve false (com o motivo em <paramref name="error"/>)
@@ -57,15 +71,20 @@ namespace AutoEDM.Mcp
             {
                 if (Running) { error = "A ponte já está no ar."; return false; }
 
-                // Testa o nome ANTES de subir a thread: assim o erro "já existe" chega ao
-                // usuário no clique, e não escondido num log de thread de fundo.
+                // Cria o pipe REAL aqui, de forma síncrona, e entrega-o à thread. Antes isto era
+                // um pipe de teste criado-e-descartado, com a thread criando o de verdade depois:
+                // entre o descarte e a criação havia uma JANELA em que um segundo hospedeiro
+                // passava a reservar o mesmo nome e os dois se davam por no ar. Criar o definitivo
+                // agora fecha a janela e mantém a vantagem de o erro "já existe" chegar ao usuário
+                // no próprio clique, em vez de escondido num log de thread de fundo.
+                NamedPipeServerStream first;
                 try
                 {
-                    using (NamedPipeServerStream probe = CreatePipe()) { }
+                    first = CreatePipe();
                 }
                 catch (IOException)
                 {
-                    error = $"O pipe '{BridgeProtocol.PipeName}' já está em uso — provavelmente outra instância da " +
+                    error = $"O pipe '{_pipeName}' já está em uso — provavelmente outra instância da " +
                             "Solid Edge (ou outra sessão) já está hospedando a ponte. Só uma pode hospedar.";
                     return false;
                 }
@@ -76,10 +95,12 @@ namespace AutoEDM.Mcp
                 }
 
                 _stopping = false;
+                _current = first;
+                _pending = first;
                 _thread = new Thread(AcceptLoop) { IsBackground = true, Name = "AutoEDM.Bridge" };
                 _thread.Start();
                 Running = true;
-                Log.Info($"MCP: ponte no ar em '{BridgeProtocol.PipeName}' (contrato v{BridgeProtocol.Version}).");
+                Log.Info($"MCP: ponte no ar em '{_pipeName}' (contrato v{BridgeProtocol.Version}).");
                 return true;
             }
         }
@@ -97,13 +118,16 @@ namespace AutoEDM.Mcp
                 // Desbloqueia um WaitForConnection pendente.
                 try { if (_current != null) _current.Dispose(); } catch { }
                 _current = null;
+                // Se o Start reservou um pipe e a thread ainda não o consumiu, ele vaza sem isto.
+                try { if (_pending != null) _pending.Dispose(); } catch { }
+                _pending = null;
             }
 
             // Cinto e suspensório: se o Dispose acima não desbloqueou (varia entre versões do
             // Windows), uma conexão-fantasma tira a thread do WaitForConnection.
             try
             {
-                using (var poke = new NamedPipeClientStream(".", BridgeProtocol.PipeName, PipeDirection.InOut))
+                using (var poke = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut))
                     poke.Connect(200);
             }
             catch { }
@@ -125,12 +149,12 @@ namespace AutoEDM.Mcp
             security.AddAccessRule(new PipeAccessRule(me, PipeAccessRights.FullControl,
                 System.Security.AccessControl.AccessControlType.Allow));
 
-            return new NamedPipeServerStream(BridgeProtocol.PipeName, PipeDirection.InOut, 1,
+            return new NamedPipeServerStream(_pipeName, PipeDirection.InOut, 1,
                 PipeTransmissionMode.Byte, PipeOptions.None, 0, 0, security);
 #else
             // Este alvo (net8.0-windows) existe só para os TESTES do Core rodarem fora do CAD —
             // a ponte de verdade sempre sobe no add-in, que é net472.
-            return new NamedPipeServerStream(BridgeProtocol.PipeName, PipeDirection.InOut, 1,
+            return new NamedPipeServerStream(_pipeName, PipeDirection.InOut, 1,
                 PipeTransmissionMode.Byte, PipeOptions.None);
 #endif
         }
@@ -142,7 +166,13 @@ namespace AutoEDM.Mcp
                 NamedPipeServerStream pipe = null;
                 try
                 {
-                    pipe = CreatePipe();
+                    lock (_gate)
+                    {
+                        // 1ª volta: usa o pipe que o Start já reservou. Dali em diante, cria.
+                        pipe = _pending;
+                        _pending = null;
+                    }
+                    if (pipe == null) pipe = CreatePipe();
                     lock (_gate)
                     {
                         if (_stopping) { pipe.Dispose(); return; }

@@ -51,9 +51,15 @@ namespace AutoEDM.Electrode
         // "bloco sobre superfícies" (peça), a forma copiada pode estar longe da origem,
         // então o bloco é centrado na PEGADA das superfícies. Devolve a feature de
         // protrusão criada (p/ o Preview poder apagar).
+        // liftSide: PARA QUE LADO o plano-base se desloca — 2 = igRight (+normal), 1 = igLeft
+        // (−normal). Default 2, que é o único comportamento que existia antes desta opção, então
+        // nenhum chamador de eletrodo muda. Existe porque a DISTÂNCIA de
+        // AddParallelByDistance é positiva e quem escolhe a direção é este argumento: para
+        // deslocar para o lado negativo não se passa distância negativa, passa-se liftSide=1
+        // (por isso a distância vai em Math.Abs).
         public static dynamic CreateBox(dynamic partDoc, double sizeXmm, double sizeYmm, double heightMm,
             int planeIndex = 1, int extrudeSide = 2, double baseLiftMm = 0.0,
-            double centerXmm = 0.0, double centerYmm = 0.0)
+            double centerXmm = 0.0, double centerYmm = 0.0, int liftSide = 2)
         {
             double hx = Units.MmToM(sizeXmm) / 2.0, hy = Units.MmToM(sizeYmm) / 2.0; // metade da seção, em METROS
             double h = Units.MmToM(heightMm);                        // altura em METROS
@@ -66,7 +72,7 @@ namespace AutoEDM.Electrode
                 try
                 {
                     plane = partDoc.RefPlanes.AddParallelByDistance(
-                        partDoc.RefPlanes.Item(planeIndex), Units.MmToM(baseLiftMm), 2, // 2 = igRight (+normal, sobe)
+                        partDoc.RefPlanes.Item(planeIndex), Units.MmToM(Math.Abs(baseLiftMm)), liftSide,
                         Type.Missing, Type.Missing, Type.Missing);
                     liftedPlane = true;
                 }
@@ -121,7 +127,7 @@ namespace AutoEDM.Electrode
         /// </summary>
         public static dynamic CreateCylinder(dynamic partDoc, double diameterMm, double heightMm,
             int planeIndex = 1, int extrudeSide = 2, double baseLiftMm = 0.0,
-            double centerXmm = 0.0, double centerYmm = 0.0)
+            double centerXmm = 0.0, double centerYmm = 0.0, int liftSide = 2)
         {
             double r = Units.MmToM(diameterMm) / 2.0; // raio em METROS
             double h = Units.MmToM(heightMm);
@@ -134,7 +140,7 @@ namespace AutoEDM.Electrode
                 try
                 {
                     plane = partDoc.RefPlanes.AddParallelByDistance(
-                        partDoc.RefPlanes.Item(planeIndex), Units.MmToM(baseLiftMm), 2,
+                        partDoc.RefPlanes.Item(planeIndex), Units.MmToM(Math.Abs(baseLiftMm)), liftSide,
                         Type.Missing, Type.Missing, Type.Missing);
                     liftedPlane = true;
                 }

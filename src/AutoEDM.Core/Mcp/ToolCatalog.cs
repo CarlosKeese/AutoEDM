@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace AutoEDM.Mcp
@@ -120,6 +120,17 @@ namespace AutoEDM.Mcp
             },
             new ToolSpec
             {
+                Name = "se_planos",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "PEÇA ativa: lista os planos de referência (RefPlanes) por ÍNDICE, com nome e — onde a API deixa ler — o " +
+                    "vetor NORMAL de cada um. Serve para descobrir qual índice é o plano XY, XZ ou YZ nesta peça ANTES de " +
+                    "modelar, em vez de supor: é o índice que decide o EIXO da extrusão em 'se_modelar'. Chame isto antes de " +
+                    "posicionar qualquer coisa cujo eixo não seja o vertical. Não altera nada."
+            },
+            new ToolSpec
+            {
                 Name = "se_log",
                 Writes = false,
                 InputSchemaJson =
@@ -142,6 +153,43 @@ namespace AutoEDM.Mcp
                     "todas as de construção se nada estiver selecionado) e cria na peça uma curva derivada sobre cada " +
                     "extremidade paralela ao plano XY — o contorno do fundo e o do topo, que é por onde o fio do WEDM corta. " +
                     "As curvas nascem na árvore como 'WEDM Z = XX.XX'; rodar de novo substitui as da rodada anterior."
+            },
+            new ToolSpec
+            {
+                Name = "se_modelar",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"exemplo\":{\"type\":\"string\",\"enum\":[\"carrinho\"]," +
+                    "\"description\":\"Carga de teste pronta, em vez de uma lista à mão. 'carrinho' = carrinho de brinquedo (6 primitivas).\"}," +
+                    "\"planoXY\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Índice do RefPlane de normal Z (use se_planos). Só com 'exemplo'.\"}," +
+                    "\"planoXZ\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Índice do RefPlane de normal Y (use se_planos). Só com 'exemplo'.\"}," +
+                    "\"novaPeca\":{\"type\":\"boolean\",\"description\":\"true = cria uma PEÇA NOVA e modela nela (não salva). Padrão false = usa a peça ativa.\"}," +
+                    "\"primitivas\":{\"type\":\"array\",\"description\":\"Os sólidos a criar, em MILÍMETROS.\",\"items\":{" +
+                    "\"type\":\"object\",\"properties\":{" +
+                    "\"kind\":{\"type\":\"string\",\"enum\":[\"caixa\",\"cilindro\"]}," +
+                    "\"name\":{\"type\":\"string\",\"description\":\"Rótulo, aparece no log e no relatório.\"}," +
+                    "\"sizeXMm\":{\"type\":\"number\",\"description\":\"Caixa: lado no eixo U do plano.\"}," +
+                    "\"sizeYMm\":{\"type\":\"number\",\"description\":\"Caixa: lado no eixo V do plano.\"}," +
+                    "\"diameterMm\":{\"type\":\"number\",\"description\":\"Cilindro: diâmetro.\"}," +
+                    "\"heightMm\":{\"type\":\"number\",\"description\":\"Altura da extrusão, ao longo da normal do plano.\"}," +
+                    "\"planeIndex\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"RefPlane do esboço — define o EIXO. Ver se_planos.\"}," +
+                    "\"extrudeSide\":{\"type\":\"integer\",\"enum\":[1,2,3],\"description\":\"1 = contra a normal, 2 = a favor, 3 = simétrico.\"}," +
+                    "\"liftMm\":{\"type\":\"number\",\"minimum\":0,\"description\":\"DISTÂNCIA que a base se desloca na normal. Nunca negativa.\"}," +
+                    "\"liftSide\":{\"type\":\"integer\",\"enum\":[1,2],\"description\":\"Sentido do deslocamento: 2 = a favor da normal, 1 = contra.\"}," +
+                    "\"centerXMm\":{\"type\":\"number\",\"description\":\"Centro da seção no eixo U do plano.\"}," +
+                    "\"centerYMm\":{\"type\":\"number\",\"description\":\"Centro da seção no eixo V do plano.\"}}," +
+                    "\"required\":[\"kind\",\"heightMm\"],\"additionalProperties\":false}}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "ESCREVE NA PEÇA. Cria sólidos primitivos (caixas e cilindros) a partir de uma lista declarativa, em " +
+                    "MILÍMETROS. Exige PEÇA (.par) em modelagem SÍNCRONA — é o ambiente da receita de extrusão já validada no " +
+                    "SE. Protrusões sucessivas FUNDEM no mesmo corpo, então primitivas que se tocam saem como um sólido único. " +
+                    "Cada primitiva declara o plano do esboço (planeIndex, que define o EIXO — descubra com 'se_planos'), o " +
+                    "sentido da extrusão, o deslocamento da base e o centro da seção. Valida TUDO antes de tocar na peça: se " +
+                    "alguma primitiva estiver inválida, nada é criado. Uma primitiva que falhe no CAD não aborta as outras — o " +
+                    "relatório diz qual falhou e por quê. Passe 'exemplo':'carrinho' para a carga de teste pronta (um carrinho " +
+                    "de brinquedo), e 'novaPeca':true para modelar numa peça nova em vez da ativa. Não salva nada."
             },
             new ToolSpec
             {

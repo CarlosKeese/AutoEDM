@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -7,6 +7,7 @@ using AutoEDM.Com;
 using AutoEDM.Config;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
+using AutoEDM.Modeling;
 using AutoEDM.Selection;
 using AutoEDM.Wedm;
 
@@ -46,6 +47,10 @@ namespace AutoEDM.Mcp
                 { "se_coordenadas",          new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_curvas_superficies",   new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_exportar_perfis_wedm", new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
+                { "se_planos",               new Requirement(DocKind.Part,     ModelingEnv.Any) },
+                // 'se_modelar' NÃO entra aqui de propósito: com novaPeca=true não existe peça ativa
+                // para conferir, porque o documento é criado durante a chamada. Ele resolve o
+                // documento primeiro e só então aplica a MESMA regra (peça + síncrono), lá dentro.
             };
 
         private enum DocKind { None = 0, Any = -1, Part = 1, Assembly = 3 }
@@ -114,6 +119,8 @@ namespace AutoEDM.Mcp
 
             if (string.Equals(spec.Name, "se_status", StringComparison.OrdinalIgnoreCase)) return Status(app);
             if (string.Equals(spec.Name, "se_log", StringComparison.OrdinalIgnoreCase)) return TailLog(argsJson);
+            // Resolve o documento por conta própria (pode CRIAR um), então vem antes da guarda genérica.
+            if (string.Equals(spec.Name, "se_modelar", StringComparison.OrdinalIgnoreCase)) return Model(app, argsJson);
 
             // Daqui para baixo tudo exige documento: confere o pré-requisito declarado.
             dynamic doc = null;
@@ -125,6 +132,7 @@ namespace AutoEDM.Mcp
 
             switch (spec.Name.ToLowerInvariant())
             {
+                case "se_planos": return Planes(doc);
                 case "se_inspecionar_selecao": return Inspect(doc, argsJson, captured);
                 case "se_arvore": return Tree(doc);
                 case "se_medir_selecao": return Measure(doc);
@@ -402,6 +410,212 @@ namespace AutoEDM.Mcp
                 foreach (string note in it.Notes) sb.AppendLine($"    nota: {note}");
             }
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Planos de referência por índice, com a NORMAL medida onde a API deixa. Existe para que
+        /// o eixo de uma extrusão seja DESCOBERTO e não suposto: o mapeamento índice → plano não é
+        /// garantido, e o próprio BlankModeler descreve os índices como "calibráveis".
+        /// </summary>
+        private static string Planes(dynamic doc)
+        {
+            dynamic planes = null;
+            try { planes = doc.RefPlanes; } catch { }
+            if (planes == null) return "doc.RefPlanes inacessível nesta peça.";
+
+            int n = 0; try { n = (int)planes.Count; } catch { }
+            if (n == 0) return "A peça não tem planos de referência (RefPlanes.Count = 0).";
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"{n} plano(s) de referência. A NORMAL é o eixo da extrusão de quem desenhar nele.");
+            sb.AppendLine();
+
+            for (int i = 1; i <= n && i <= 50; i++)
+            {
+                dynamic plane = null;
+                try { plane = planes.Item(i); } catch { sb.AppendLine($"  [{i}] inacessível."); continue; }
+
+                string name = Str(() => (string)plane.Name, "(sem nome)");
+                bool visible = true; try { visible = (bool)plane.Visible; } catch { }
+
+                double[] v; string err;
+                string normal = "não lida";
+                // O RefPlane pode expor a normal direto ou pela geometria — tenta as duas, na
+                // ordem, e diz qual respondeu em vez de esconder a falha.
+                if (FaceGeometry.TryOneArrayOut((object)plane, "GetNormalVector", out v, out err))
+                    normal = Describe(v) + "  (via RefPlane.GetNormalVector)";
+                else
+                {
+                    object geom = null; try { geom = plane.Geometry; } catch { }
+                    if (geom != null && FaceGeometry.TryOneArrayOut(geom, "GetNormalVector", out v, out err))
+                        normal = Describe(v) + "  (via Geometry.GetNormalVector)";
+                    else if (!string.IsNullOrEmpty(err))
+                        normal = "não lida (" + err + ")";
+                }
+
+                sb.AppendLine($"  [{i}] {name}{(visible ? "" : "  (oculto)")}");
+                sb.AppendLine($"       normal: {normal}");
+            }
+
+            sb.AppendLine();
+            sb.Append("Para 'se_modelar': o plano de normal Z serve a quem sobe em Z (chassi, bloco); " +
+                      "o de normal Y serve a eixo horizontal (roda, pino atravessado).");
+            return sb.ToString();
+        }
+
+        /// <summary>Nomeia o eixo quando a normal é (quase) canônica — é isso que responde
+        /// "qual índice é o XY", que é a pergunta real de quem vai modelar.</summary>
+        private static string Describe(double[] v)
+        {
+            if (v == null || v.Length < 3) return "(vetor vazio)";
+            string raw = $"({F(v[0])}, {F(v[1])}, {F(v[2])})";
+            const double tol = 1e-6;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                int a = (axis + 1) % 3, b = (axis + 2) % 3;
+                if (Math.Abs(Math.Abs(v[axis]) - 1.0) < tol && Math.Abs(v[a]) < tol && Math.Abs(v[b]) < tol)
+                {
+                    string eixo = axis == 0 ? "X" : axis == 1 ? "Y" : "Z";
+                    string plano = axis == 0 ? "YZ" : axis == 1 ? "XZ" : "XY";
+                    return $"{raw} = {(v[axis] > 0 ? "+" : "−")}{eixo}  →  este é o plano {plano}";
+                }
+            }
+            return raw + " (não canônica)";
+        }
+
+        /// <summary>
+        /// Cria sólidos primitivos. Resolve o documento primeiro (pode criar uma peça NOVA) e só
+        /// então aplica a guarda de peça + síncrono — a mesma dos botões, porque a receita de
+        /// extrusão do BlankModeler é a que foi validada nesse ambiente.
+        /// </summary>
+        private string Model(dynamic app, string argsJson)
+        {
+            bool novaPeca = ReadBool(argsJson, "novaPeca", false);
+
+            dynamic doc;
+            if (novaPeca)
+            {
+                try { doc = app.Documents.Add("SolidEdge.PartDocument"); }
+                catch (Exception ex) { return "Não foi possível criar a peça nova: " + ex.GetBaseException().Message; }
+                Log.Info("MCP: peça NOVA criada para modelar (não será salva).");
+            }
+            else
+            {
+                doc = null;
+                try { doc = app.ActiveDocument; } catch { }
+                if (doc == null)
+                    return "Nenhum documento ativo. Abra uma peça, ou chame de novo com \"novaPeca\": true.";
+            }
+
+            int type = -1; try { type = (int)doc.Type; } catch { }
+            if (type != 1)
+                return "RECUSADO: 'se_modelar' exige uma PEÇA (.par). O documento é " +
+                       (type == 3 ? "uma montagem" : type == 2 ? "um desenho" : $"tipo {type}") +
+                       ". Chame com \"novaPeca\": true para modelar numa peça nova.";
+
+            ModelingEnv env = ModelingEnvironment.Read(doc);
+            if (!ModelingEnvironment.Matches(ModelingEnv.Synchronous, env))
+                return $"RECUSADO: 'se_modelar' exige modelagem SÍNCRONA e a peça está em {ModelingEnvironment.Name(env)}.\n\n" +
+                       "A receita de extrusão usada aqui é a mesma do botão \"Criar Base\", validada em síncrono. Em ordenado o " +
+                       "esboço criado por código fica preso na árvore sem o usuário conseguir apagá-lo.\n\n" +
+                       "O AutoEDM nunca troca o ambiente sozinho: quem troca é o usuário, na barra de status do Solid Edge." +
+                       (novaPeca ? "\n\nA peça nova ficou aberta e VAZIA — dá para trocar o ambiente nela e chamar de novo." : "");
+
+            List<Primitive> prims = ReadPrimitives(argsJson);
+            if (prims == null || prims.Count == 0)
+                return "Nada para modelar. Passe \"primitivas\" com a lista, ou \"exemplo\": \"carrinho\" para a carga de teste.";
+
+            PrimitiveBuildResult res = PrimitiveModeler.Build(doc, prims);
+
+            string head = novaPeca
+                ? $"Peça NOVA '{Str(() => (string)doc.Name, "?")}' (não salva).\n"
+                : $"Peça '{Str(() => (string)doc.Name, "?")}'.\n";
+            return head + res.Message;
+        }
+
+        /// <summary>Lê a lista de primitivas do JSON, ou monta o exemplo pedido.</summary>
+        private static List<Primitive> ReadPrimitives(string argsJson)
+        {
+            if (string.IsNullOrWhiteSpace(argsJson)) return null;
+            try
+            {
+                using (JsonDocument d = JsonDocument.Parse(argsJson))
+                {
+                    JsonElement root = d.RootElement;
+
+                    JsonElement ex;
+                    if (root.TryGetProperty("exemplo", out ex) && ex.ValueKind == JsonValueKind.String &&
+                        string.Equals(ex.GetString(), "carrinho", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int xy = ReadInt(argsJson, "planoXY", 1, 1, 50);
+                        int xz = ReadInt(argsJson, "planoXZ", 2, 1, 50);
+                        Log.Info($"MCP: exemplo 'carrinho' (planoXY={xy}, planoXZ={xz}).");
+                        return PrimitiveModeler.ToyCar(xy, xz);
+                    }
+
+                    JsonElement arr;
+                    if (!root.TryGetProperty("primitivas", out arr) || arr.ValueKind != JsonValueKind.Array) return null;
+
+                    var list = new List<Primitive>();
+                    foreach (JsonElement it in arr.EnumerateArray())
+                    {
+                        if (it.ValueKind != JsonValueKind.Object) continue;
+                        list.Add(new Primitive
+                        {
+                            Kind = Text(it, "kind"),
+                            Name = Text(it, "name") ?? "(sem nome)",
+                            SizeXMm = Num(it, "sizeXMm"),
+                            SizeYMm = Num(it, "sizeYMm"),
+                            DiameterMm = Num(it, "diameterMm"),
+                            HeightMm = Num(it, "heightMm"),
+                            PlaneIndex = (int)Num(it, "planeIndex", 1),
+                            ExtrudeSide = (int)Num(it, "extrudeSide", 2),
+                            LiftMm = Num(it, "liftMm"),
+                            LiftSide = (int)Num(it, "liftSide", 2),
+                            CenterXMm = Num(it, "centerXMm"),
+                            CenterYMm = Num(it, "centerYMm")
+                        });
+                    }
+                    return list;
+                }
+            }
+            catch (Exception ex) { Log.Warn("MCP: lista de primitivas ilegível — " + ex.GetBaseException().Message); return null; }
+        }
+
+        private static string Text(JsonElement o, string name)
+        {
+            JsonElement e;
+            return o.TryGetProperty(name, out e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null;
+        }
+
+        private static double Num(JsonElement o, string name, double fallback = 0.0)
+        {
+            JsonElement e;
+            if (!o.TryGetProperty(name, out e)) return fallback;
+            if (e.ValueKind == JsonValueKind.Number) return e.GetDouble();
+            double v;
+            if (e.ValueKind == JsonValueKind.String && double.TryParse(e.GetString(),
+                    System.Globalization.NumberStyles.Float, CultureInfo.InvariantCulture, out v)) return v;
+            return fallback;
+        }
+
+        private static bool ReadBool(string argsJson, string name, bool fallback)
+        {
+            if (string.IsNullOrWhiteSpace(argsJson)) return fallback;
+            try
+            {
+                using (JsonDocument d = JsonDocument.Parse(argsJson))
+                {
+                    JsonElement el;
+                    if (!d.RootElement.TryGetProperty(name, out el)) return fallback;
+                    if (el.ValueKind == JsonValueKind.True) return true;
+                    if (el.ValueKind == JsonValueKind.False) return false;
+                    bool b;
+                    if (el.ValueKind == JsonValueKind.String && bool.TryParse(el.GetString(), out b)) return b;
+                }
+            }
+            catch { }
+            return fallback;
         }
 
         private static string SurfaceRimCurves(dynamic doc, List<string> captured)

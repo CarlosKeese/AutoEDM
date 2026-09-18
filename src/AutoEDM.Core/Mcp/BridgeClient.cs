@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
@@ -13,14 +13,20 @@ namespace AutoEDM.Mcp
     public sealed class BridgeClient : IDisposable
     {
         private readonly int _connectTimeoutMs;
+        private readonly string _pipeName;
         private NamedPipeClientStream _pipe;
         private StreamReader _reader;
         private StreamWriter _writer;
         private int _nextId = 1;
 
-        public BridgeClient(int connectTimeoutMs = 3000)
+        /// <param name="pipeName">
+        /// Nome do pipe; o padrão é o de produção. Parametrizado pelo mesmo motivo do
+        /// <see cref="BridgeServer"/>: deixar a suíte rodar mesmo com a ponte de verdade ligada.
+        /// </param>
+        public BridgeClient(int connectTimeoutMs = 3000, string pipeName = null)
         {
             _connectTimeoutMs = connectTimeoutMs;
+            _pipeName = string.IsNullOrEmpty(pipeName) ? BridgeProtocol.PipeName : pipeName;
         }
 
         public bool Connected
@@ -85,7 +91,7 @@ namespace AutoEDM.Mcp
             if (Connected) return;
             Close();
 
-            var pipe = new NamedPipeClientStream(".", BridgeProtocol.PipeName, PipeDirection.InOut);
+            var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut);
             pipe.Connect(_connectTimeoutMs);   // TimeoutException quando ninguém hospeda
 
             var utf8 = new UTF8Encoding(false);

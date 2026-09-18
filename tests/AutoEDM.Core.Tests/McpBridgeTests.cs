@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -14,6 +14,13 @@ namespace AutoEDM.Core.Tests
     /// </summary>
     public class McpBridgeTests
     {
+        /// <summary>
+        /// Nome de pipe único por teste. A suíte NÃO pode usar o nome de produção: se a Solid Edge
+        /// estiver aberta com a ponte ligada, ela já é a dona dele e todo teste de pipe falharia —
+        /// um teste que só passa com o CAD fechado não serve de rede.
+        /// </summary>
+        private static string FreshPipe() => "AutoEDM.Test." + System.Guid.NewGuid().ToString("N");
+
         // ------------------------------------------------------------- contrato de fio
 
         [Fact]
@@ -90,16 +97,17 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
-        public void Catalog_OnlyTheWedmToolsWrite()
+        public void Catalog_WritingToolsAreExactlyTheExpectedSet()
         {
             // Trava a fronteira: qualquer ferramenta NOVA que altere o modelo tem de aparecer
             // aqui de propósito. Sem este teste, um Writes esquecido em false passaria a
             // permitir escrita com a ponte em somente-leitura — e ninguém notaria.
             var writers = new List<string>();
             foreach (ToolSpec t in ToolCatalog.All) if (t.Writes) writers.Add(t.Name);
+            writers.Sort(StringComparer.Ordinal);   // a ordem no catálogo é de apresentação, não contrato
 
             Assert.Equal(
-                new[] { "se_curvas_superficies", "se_exportar_perfis_wedm" },
+                new[] { "se_curvas_superficies", "se_exportar_perfis_wedm", "se_modelar" },
                 writers.ToArray());
         }
 
@@ -179,18 +187,19 @@ namespace AutoEDM.Core.Tests
         {
             // Servidor + cliente de verdade, no named pipe de verdade, com um marshaler falso no
             // lugar da Solid Edge. É o que prova o enquadramento por linha, a ida e a volta.
+            string pipe = FreshPipe();
             BridgeRequest seen = null;
             var server = new BridgeServer(req =>
             {
                 seen = req;
                 return BridgeResponse.Good(req.Id, $"ecoando {req.Tool} com {req.ArgsJson}");
-            });
+            }, pipe);
 
             string error;
             Assert.True(server.Start(out error), "a ponte não subiu: " + error);
             try
             {
-                using var client = new BridgeClient(connectTimeoutMs: 5000);
+                using var client = new BridgeClient(connectTimeoutMs: 5000, pipeName: pipe);
 
                 BridgeResponse first = client.Call("se_status", "{}");
                 Assert.True(first.Ok, first.Text);
@@ -217,14 +226,15 @@ namespace AutoEDM.Core.Tests
             // O caso real: pacote novo instalado com a Solid Edge AINDA ABERTA, que segue com o
             // add-in antigo em memória. Sem esta checagem o sintoma seria um campo faltando
             // muito mais tarde, longe da causa.
-            var server = new BridgeServer(req => BridgeResponse.Good(req.Id, "não deveria chegar aqui"));
+            string pipeName = FreshPipe();
+            var server = new BridgeServer(req => BridgeResponse.Good(req.Id, "não deveria chegar aqui"), pipeName);
 
             string error;
             Assert.True(server.Start(out error), "a ponte não subiu: " + error);
             try
             {
                 using var pipe = new System.IO.Pipes.NamedPipeClientStream(
-                    ".", BridgeProtocol.PipeName, System.IO.Pipes.PipeDirection.InOut);
+                    ".", pipeName, System.IO.Pipes.PipeDirection.InOut);
                 pipe.Connect(5000);
 
                 var utf8 = new System.Text.UTF8Encoding(false);
@@ -247,12 +257,13 @@ namespace AutoEDM.Core.Tests
         {
             // Duas instâncias da Solid Edge com o add-in carregado: a primeira hospeda, a segunda
             // tem de DIZER isso em vez de as duas brigarem pelo nome em silêncio.
-            var first = new BridgeServer(req => BridgeResponse.Good(req.Id, "primeiro"));
+            string pipe = FreshPipe();
+            var first = new BridgeServer(req => BridgeResponse.Good(req.Id, "primeiro"), pipe);
             string error;
             Assert.True(first.Start(out error), "a primeira ponte não subiu: " + error);
             try
             {
-                var second = new BridgeServer(req => BridgeResponse.Good(req.Id, "segundo"));
+                var second = new BridgeServer(req => BridgeResponse.Good(req.Id, "segundo"), pipe);
                 Assert.False(second.Start(out error));
                 Assert.Contains("já está em uso", error);
                 second.Dispose();
@@ -265,7 +276,8 @@ namespace AutoEDM.Core.Tests
         {
             // Sem ponte no ar, a resposta vai para o agente — então ela tem de trazer o passo a
             // passo, senão o agente só tenta de novo.
-            using var client = new BridgeClient(connectTimeoutMs: 300);
+            // Nome novo e nunca hospedado: garante "ninguém escutando" mesmo com a ponte real no ar.
+            using var client = new BridgeClient(connectTimeoutMs: 300, pipeName: FreshPipe());
 
             BridgeResponse res = client.Call("se_status", "{}");
 
@@ -279,20 +291,21 @@ namespace AutoEDM.Core.Tests
         {
             // O Claude Code é reiniciado muito mais vezes que o CAD: a ponte tem de aceitar um
             // cliente novo depois do primeiro ir embora, sem precisar ser religada na ribbon.
-            var server = new BridgeServer(req => BridgeResponse.Good(req.Id, "vivo"));
+            string pipe = FreshPipe();
+            var server = new BridgeServer(req => BridgeResponse.Good(req.Id, "vivo"), pipe);
 
             string error;
             Assert.True(server.Start(out error), "a ponte não subiu: " + error);
             try
             {
-                using (var a = new BridgeClient(5000))
+                using (var a = new BridgeClient(5000, pipe))
                     Assert.True(a.Call("se_status", "{}").Ok);
 
                 // O laço de aceitação precisa de um instante para recriar o pipe após a queda.
                 BridgeResponse second = null;
                 for (int attempt = 0; attempt < 20 && (second == null || !second.Ok); attempt++)
                 {
-                    using var b = new BridgeClient(1000);
+                    using var b = new BridgeClient(1000, pipe);
                     second = b.Call("se_status", "{}");
                     if (!second.Ok) Thread.Sleep(100);
                 }
