@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 14; // incrementar ao mudar a ribbon (v14 = WEDM ganha "Curvas das superfícies")
+            AddInEx.GuiVersion = 15; // incrementar ao mudar a ribbon (v15 = grupos "Eng. Reversa" e "MCP")
 
             Current = this;
             App = application;
@@ -107,6 +107,8 @@ namespace AutoEDM.AddIn
 
         public override void OnDisconnection(SolidEdgeFramework.SeDisconnectMode DisconnectMode)
         {
+            // Antes do log fechar: derrubar a ponte MCP ainda registra o encerramento no arquivo.
+            ElectrodeRibbon.ShutdownMcp();
             try { _logSink?.Dispose(); } catch { }
             App = null;
             Current = null;

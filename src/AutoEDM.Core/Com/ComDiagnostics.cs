@@ -33,6 +33,35 @@ namespace AutoEDM.Com
         /// COM. Retorna lista vazia se o objeto não for IDispatch ou não expuser
         /// type info.
         /// </summary>
+        /// <summary>
+        /// Nome da interface COM do objeto, como a type library o declara (ex.: "Face", "Edge",
+        /// "Occurrence", "ExtrudedProtrusion"). É o que o Solid Edge Spy mostra no topo, e o
+        /// único jeito honesto de dizer O QUE está selecionado — <c>GetType().Name</c> num objeto
+        /// late-bound devolve sempre "__ComObject", que não informa nada.
+        /// Devolve null quando o objeto não é COM ou não expõe type info.
+        /// </summary>
+        public static string TypeNameOf(object comObject)
+        {
+            if (comObject == null || !Marshal.IsComObject(comObject)) return null;
+
+            ITypeInfo ti = null;
+            try
+            {
+                var disp = comObject as IDispatchLite;
+                if (disp == null) return null;
+
+                uint count;
+                if (disp.GetTypeInfoCount(out count) != 0 || count == 0) return null;
+                if (disp.GetTypeInfo(0, 0, out ti) != 0 || ti == null) return null;
+
+                string name;
+                ti.GetDocumentation(-1, out name, out _, out _, out _);
+                return string.IsNullOrEmpty(name) ? null : name;
+            }
+            catch { return null; }
+            finally { if (ti != null) Marshal.ReleaseComObject(ti); }
+        }
+
         public static List<string> GetMemberNames(object comObject)
         {
             var names = new List<string>();

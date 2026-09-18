@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "autoedm": {
+      "command": "src/AutoEDM.Mcp/bin/x64/Release/net8.0-windows/AutoEDM.Mcp.exe",
+      "args": [],
+      "env": {}
+    }
+  }
+}

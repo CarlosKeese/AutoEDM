@@ -6,8 +6,10 @@ using AutoEDM.Com;
 using AutoEDM.Config;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
+using AutoEDM.Mcp;
 using AutoEDM.Model;
 using AutoEDM.Reporting;
+using AutoEDM.Reverse;
 using AutoEDM.Sealing;
 using AutoEDM.Wedm;
 
@@ -38,6 +40,12 @@ namespace AutoEDM.AddIn
         private const int CmdListaCorte = 16;       // Lista de corte: perfil do estoque + medida na serra dos eletrodos SELECIONADOS
         private const int CmdExportarPerfisWedm = 17; // WEDM: curvas de construção → um .igs por altura Z (PEÇA síncrona)
         private const int CmdCurvasDasSuperficies = 18; // WEDM: curvas nas extremidades paralelas a XY das superfícies (PEÇA síncrona)
+        private const int CmdMcpLigar = 19;         // MCP: sobe a ponte (named pipe) para o Claude Code alcançar a SE
+        private const int CmdMcpDesligar = 20;      // MCP: derruba a ponte
+        private const int CmdMcpStatus = 21;        // MCP: em que pé está a ponte (modo, pedidos atendidos)
+        private const int CmdMcpLiberarEscrita = 22; // MCP: permite as ferramentas que ESCREVEM (só o usuário liga)
+        private const int CmdMcpSomenteLeitura = 23; // MCP: volta a ponte para somente-leitura
+        private const int CmdSondaMalha = 24;       // ENG. REVERSA: sonda de diagnóstico sobre a malha (SÓ LEITURA)
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -75,6 +83,12 @@ namespace AutoEDM.AddIn
                 case CmdSondaInterPart: SondarInterPart(); break;
                 case CmdIniciarLeitura: IniciarLeitura(); break;
                 case CmdGravarLeitura: GravarLeitura(); break;
+                case CmdMcpLigar: McpLigar(); break;
+                case CmdMcpDesligar: McpDesligar(); break;
+                case CmdMcpStatus: McpStatus(); break;
+                case CmdMcpLiberarEscrita: McpDefinirModo(BridgeMode.Write); break;
+                case CmdMcpSomenteLeitura: McpDefinirModo(BridgeMode.ReadOnly); break;
+                case CmdSondaMalha: SondarMalha(); break;
             }
         }
 
@@ -668,6 +682,174 @@ namespace AutoEDM.AddIn
             catch (Exception ex) { Fail("abrir o alojamento de O'ring", ex); }
         }
 
+        // ------------------------------------------------------------------ MCP
+
+        /// <summary>
+        /// A ponte MCP. Um por sessão da Solid Edge, criada NA THREAD DA SE (este clique roda
+        /// nela) e nunca sozinha: enquanto o Carlos não clicar em "Ligar ponte", nenhum agente
+        /// alcança o CAD. Esse é o ponto — a decisão de expor uma montagem de molde viva a um
+        /// agente é do usuário, não do add-in.
+        /// </summary>
+        private static McpBridgeHost _mcp;
+
+        private static McpBridgeHost Mcp => _mcp ?? (_mcp = new McpBridgeHost());
+
+        /// <summary>
+        /// Derruba a ponte quando a Solid Edge descarrega o add-in. Sem isto, o pipe ficaria
+        /// escutando num processo que está fechando, e a próxima instância da SE veria o nome
+        /// tomado — o sintoma seria "a ponte não sobe mais" sem motivo aparente.
+        /// </summary>
+        internal static void ShutdownMcp()
+        {
+            try { if (_mcp != null) { _mcp.Dispose(); _mcp = null; } }
+            catch (Exception ex) { Log.Warn("MCP: falha ao derrubar a ponte no encerramento — " + ex.GetBaseException().Message); }
+        }
+
+        private void McpLigar()
+        {
+            try
+            {
+                string error;
+                if (Mcp.Start(out error))
+                {
+                    MessageBox.Show(
+                        "Ponte MCP NO AR.\n\n" +
+                        $"Pipe: {BridgeProtocol.PipeName}\n" +
+                        "Modo: SOMENTE-LEITURA (as ferramentas que alteram o modelo estão recusando).\n\n" +
+                        "No Claude Code, o servidor 'autoedm' já encontra a Solid Edge — peça a ele um 'se_status' " +
+                        "para confirmar a ligação ponta a ponta.\n\n" +
+                        "Para permitir que o agente ALTERE a peça, clique em \"Liberar escrita\".",
+                        "AutoEDM — MCP", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else
+                {
+                    MessageBox.Show("A ponte NÃO subiu.\n\n" + error, "AutoEDM — MCP",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+            catch (Exception ex) { Fail("ligar a ponte MCP", ex); }
+        }
+
+        private void McpDesligar()
+        {
+            try
+            {
+                if (_mcp == null || !_mcp.Running)
+                {
+                    MessageBox.Show("A ponte já está desligada.", "AutoEDM — MCP",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                _mcp.Stop();
+                MessageBox.Show(
+                    "Ponte MCP desligada. Nenhum agente alcança a Solid Edge agora.\n\n" +
+                    "Ao religar, a ponte volta em SOMENTE-LEITURA — a liberação de escrita não sobrevive a um " +
+                    "desligamento, de propósito.",
+                    "AutoEDM — MCP", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) { Fail("desligar a ponte MCP", ex); }
+        }
+
+        private void McpStatus()
+        {
+            try
+            {
+                bool up = _mcp != null && _mcp.Running;
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine(up ? "Ponte MCP: NO AR" : "Ponte MCP: DESLIGADA");
+                sb.AppendLine($"Pipe: {BridgeProtocol.PipeName}  (contrato v{BridgeProtocol.Version})");
+                if (up)
+                {
+                    sb.AppendLine($"Modo: {(_mcp.Mode == BridgeMode.Write ? "ESCRITA LIBERADA" : "SOMENTE-LEITURA")}");
+                    sb.AppendLine($"Pedidos atendidos nesta sessão: {_mcp.Served}");
+                    sb.AppendLine($"Última ferramenta pedida: {_mcp.LastTool ?? "(nenhuma ainda)"}");
+                }
+                sb.AppendLine();
+                sb.AppendLine($"Ferramentas no catálogo: {ToolCatalog.All.Count}");
+                foreach (ToolSpec t in ToolCatalog.All)
+                    sb.AppendLine($"   {(t.Writes ? "[escreve]" : "[leitura]")}  {t.Name}");
+
+                MessageBox.Show(sb.ToString(), "AutoEDM — MCP", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) { Fail("ler o status da ponte MCP", ex); }
+        }
+
+        private void McpDefinirModo(BridgeMode mode)
+        {
+            try
+            {
+                if (_mcp == null || !_mcp.Running)
+                {
+                    MessageBox.Show("A ponte está desligada — ligue-a antes de escolher o modo.",
+                        "AutoEDM — MCP", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (mode == BridgeMode.Write)
+                {
+                    // Confirmação explícita: daqui em diante um agente pode criar curva na peça e
+                    // gravar arquivo. Vale uma pergunta, não um clique acidental.
+                    var r = MessageBox.Show(
+                        "Liberar ESCRITA para o agente?\n\n" +
+                        "Com a escrita liberada, o Claude Code pode ALTERAR o documento aberto (criar as curvas de WEDM) " +
+                        "e GRAVAR arquivos na pasta da peça, sem pedir confirmação a cada operação.\n\n" +
+                        "Recomendado: salve o que estiver aberto antes. A liberação vale só até a ponte ser desligada " +
+                        "ou a Solid Edge fechar.\n\n" +
+                        "Liberar?",
+                        "AutoEDM — MCP", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    if (r != DialogResult.Yes) { Log.Info("MCP: liberação de escrita cancelada pelo usuário."); return; }
+                }
+
+                _mcp.SetMode(mode);
+                MessageBox.Show(
+                    mode == BridgeMode.Write
+                        ? "Escrita LIBERADA. O agente pode alterar o documento aberto e gravar arquivos."
+                        : "Ponte de volta para SOMENTE-LEITURA. As ferramentas que alteram o modelo voltam a recusar.",
+                    "AutoEDM — MCP", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) { Fail("trocar o modo da ponte MCP", ex); }
+        }
+
+        // ------------------------------------------------------------ Eng. Reversa
+
+        /// <summary>
+        /// SONDA DA MALHA (rodada 1). SÓ LEITURA: não cria feature, não altera a peça, não salva.
+        /// Existe porque a decisão de COMO reconstruir um sólido a partir de malha não deve ser
+        /// tomada por aposta. O dump da typelib já provou que a Solid Edge NÃO expõe por COM
+        /// nenhum ajuste de plano/cilindro/cone sobre região de malha — os comandos da aba nativa
+        /// de Eng. Reversa não estão no modelo de objetos. Então o ajuste terá de ser nosso, e
+        /// esta sonda mede, na malha REAL do Carlos, o que de fato responde:
+        /// leitura dos triângulos, remalhamento, cura/fechamento de furo e — o mais importante —
+        /// o seccionamento com reconhecimento de retas/arcos/círculos, que é a alavanca da rota
+        /// prismática. O resultado inteiro vai para o log.
+        /// </summary>
+        private void SondarMalha()
+        {
+            Run(CmdSondaMalha, (connector, doc, p) =>
+            {
+                const string title = "AutoEDM — Sonda de malha (Eng. Reversa)";
+
+                // O seccionamento é o teste que DECIDE a rota prismática, e é o único que precisa
+                // escrever (ele cria esboços). Perguntar aqui, e não no Core, mantém a sonda
+                // utilizável sem interface — e o padrão do projeto é conferir antes de criar.
+                var ask = MessageBox.Show(
+                    "A sonda lê a malha sem alterar nada: triângulos, corpos de facetas, e quais membros da API de " +
+                    "malha existem nesta versão da Solid Edge.\n\n" +
+                    "Há UM teste a mais, e é o que decide o rumo do botão de Eng. Reversa: o SECCIONAMENTO " +
+                    "(CreateSectionSketches), que corta o corpo em planos e devolve esboços com retas, arcos e " +
+                    "círculos já RECONHECIDOS. Se ele funcionar sobre malha, não precisamos escrever reconhecimento " +
+                    "de primitiva 2D — a reconstrução sai como feature editável.\n\n" +
+                    "Esse teste CRIA esboços na peça. A sonda tenta apagá-los depois e NUNCA salva o arquivo.\n\n" +
+                    "Incluir o teste de seccionamento?",
+                    title, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                if (ask == DialogResult.Cancel) { Log.Info("Sonda de malha: cancelada pelo usuário."); return; }
+
+                MeshProbeResult res = MeshProbe.Run((object)doc, allowSectionTest: ask == DialogResult.Yes);
+                MessageBox.Show(res.Summary, title, MessageBoxButtons.OK,
+                    res.FoundMesh ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            });
+        }
+
         // -------------------------------------------------------------- infra
 
         /// <summary>Tipo de documento exigido por um comando (= SolidEdgeFramework.DocumentTypeConstants).</summary>
@@ -740,6 +922,16 @@ namespace AutoEDM.AddIn
                 // tanto com a montagem normal quanto com o usuário em edição em contexto —
                 // é justamente a diferença entre os dois estados que ela mede.
                 { CmdSondaInterPart,      new CommandSpec("SONDA INTER-PART",      DocKind.Assembly, ModelingEnv.Any) },
+                // Sonda da malha: só LÊ (triângulos, secções, diagnóstico). A malha importada vive
+                // numa PEÇA; o ambiente não importa porque nada é criado.
+                { CmdSondaMalha,          new CommandSpec("SONDA DE MALHA (ENG. REVERSA)", DocKind.Part, ModelingEnv.Any) },
+
+                // --- os 5 comandos do grupo MCP ficam DE FORA desta tabela de propósito ---
+                // Ligar/desligar a ponte e ler o status não dependem de documento nenhum: o Carlos
+                // precisa poder subir a ponte com a Solid Edge recém-aberta e VAZIA, que é o caso
+                // normal (o agente é quem vai pedir para abrir o arquivo). Comando ausente daqui
+                // é permitido em qualquer contexto — ver AllowedHere. Quem confere documento e
+                // ambiente para as FERRAMENTAS do agente é o SeToolRunner, com a mesma regra.
             };
 
         /// <summary>

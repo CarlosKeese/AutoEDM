@@ -25,10 +25,14 @@ também como referência prática de integração COM com o SE.
 | `src/AutoEDM.AddIn` | `net472` | Add-in COM, ribbon "AutoEDM" |
 | `src/AutoEDM` | `net472` | GUI WinForms de debug (conecta via ROT) |
 | `src/AutoEDM.Register` | `net472` | **Registra o add-in em HKCU, sem admin** |
+| `src/AutoEDM.Mcp` | `net8.0-windows` | **Servidor MCP** (stdio) — o Claude Code dirige a SE |
 | `tests/AutoEDM.Core.Tests` | `net8.0-windows` | Testes da lógica pura |
 
 O duplo alvo do `Core` existe porque o add-in precisa rodar em `net472` dentro
-do Solid Edge, mas os testes precisam rodar fora do CAD.
+do Solid Edge, mas os testes precisam rodar fora do CAD. Desde 2026-09-17 esse
+duplo alvo ganhou um segundo uso: o **servidor MCP** também consome o `Core`, pelo
+alvo `net8.0-windows` — então o contrato de fio da ponte e o catálogo de
+ferramentas são escritos UMA vez e os dois lados usam o mesmo tipo.
 
 ## Comandos para trabalhar aqui
 
@@ -42,6 +46,12 @@ src\AutoEDM.Register\bin\x64\Release\net472\AutoEDM.Register.exe /u   # remove
 
 Feche o Solid Edge antes de rodar o registrador de novo — com o SE aberto os
 DLLs ficam travados.
+
+A ponte MCP está registrada em `.mcp.json` na raiz do repo, apontando para
+`src/AutoEDM.Mcp/bin/x64/Release/net8.0-windows/AutoEDM.Mcp.exe` — então `dotnet build`
+em Release já deixa o servidor pronto. Ele NÃO é ainda empacotado pelo `pack.ps1`:
+enquanto a ponte não tiver o 1º run validado no SE, não faz sentido enviar o binário no
+instalador do operador.
 
 ## Decisão travada: o add-in nunca troca o ambiente de modelagem
 
@@ -74,7 +84,9 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Curvas das superfícies (WEDM) | ✅ validado no SE (2026-09-16) |
 | Exportar perfis WEDM (IGES por Z) | ✅ validado no SE e **no Pitágoras** (2026-09-16) — a cadeia inteira, da peça ao programa da máquina |
 | Lista de corte na serra | 🚧 construído, coberto por teste, **aguardando validação no SE** |
-| Testes de unidade | ✅ 209 passando, 0 falhas |
+| Ponte MCP (Claude Code → Solid Edge) | 🚧 construída; protocolo validado ponta a ponta FORA do CAD, **aguardando o 1º run com a SE aberta** |
+| Sonda de malha (Eng. Reversa) | 🚧 construída, **aguardando rodar sobre uma malha real** |
+| Testes de unidade | ✅ 233 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -99,8 +111,102 @@ seleção** da ribbon é a ferramenta que alimenta esse dump.
   A entrada vive em `kenatec-web/src/lib/downloads/catalogo.ts`; ao publicar uma
   versão nova, atualize o campo `versao` lá.
 
+## Ponte MCP e Eng. Reversa (2026-09-17)
+
+Dois grupos novos na ribbon (**Eng. Reversa** e **MCP**), `GuiVersion` = 15.
+
+### MCP — como está montado
+
+Três peças, e a divisão é imposta pelos alvos: o add-in é obrigatoriamente `net472`
+(a SE hospeda .NET Framework in-process) e o mundo MCP é net8+.
+
+| Peça | Onde | Papel |
+|---|---|---|
+| `Mcp/BridgeProtocol` + `ToolCatalog` | `Core` (2 alvos) | Contrato de fio e catálogo — escritos uma vez, usados pelos dois lados |
+| `Mcp/BridgeServer` | `Core`, roda no add-in | Named pipe `AutoEDM.Bridge.v1`, um cliente por vez, reconecta |
+| `Mcp/SeToolRunner` | `Core`, roda na thread da SE | Executa as 9 ferramentas, aplica a guarda de documento/ambiente |
+| `AddIn/McpBridgeHost` | add-in | Trampolim para a thread STA da SE + a chave de escrita |
+| `src/AutoEDM.Mcp` | processo próprio | JSON-RPC 2.0 em stdio ↔ pipe |
+
+**Decisões que valem registrar, porque são as que não são óbvias:**
+
+1. **As ferramentas MCP pousam AO LADO da ribbon, sobre o mesmo `Core` — nunca em cima
+   dos handlers dos botões.** Todo handler termina em `MessageBox`, e diálogo modal
+   disparado por agente trava a thread da SE esperando um humano que não sabe que foi
+   perguntado. Além disso o `Core` é o que já está validado no SE: descer direto nele
+   não cria um segundo caminho de automação para manter em pé.
+2. **Marshaling obrigatório.** O laço do pipe roda em thread de fundo; COM tocado de lá
+   atravessa apartamento e rende `RPC_E_*` intermitente. O `McpBridgeHost` cria um
+   `Control` **na thread da SE** (forçando o `.Handle`) e usa `BeginInvoke`. Funciona
+   pela mesma razão que o `System.Windows.Forms.Timer` do relógio de estado funciona
+   in-process: a SE bomba mensagens. A espera tem teto de 120 s, para o agente receber
+   "a SE está ocupada" em vez de pendurar o Claude Code — o caso real é uma caixa de
+   diálogo aberta no CAD.
+3. **Duas travas.** A ponte não sobe sozinha, e nasce em somente-leitura a cada sessão;
+   a liberação de escrita pede confirmação e morre junto com a ponte. Nenhuma
+   ferramenta MCP alcança essa chave — só o botão.
+4. **Protocolo à mão, sem SDK.** ~4 métodos (`initialize`, `tools/list`, `tools/call`,
+   `ping`) de uma especificação publicada e estável valem mais que um pacote cuja API
+   eu teria de adivinhar — o que é exatamente o que a Regra de Ouro proíbe. Zero
+   dependência nova.
+5. **`stdout` É o transporte, e o `Log` do Core escreve com `Console.WriteLine`.** A
+   PRIMEIRA linha do `Main` desvia `Console.Out` para `stderr` e guarda o stdout real só
+   para o protocolo. Sem isso, a primeira mensagem de log do Core entraria no meio do
+   JSON-RPC e derrubaria a sessão com um erro de parsing que não aponta para nada.
+   Conferido: a saída é **ASCII puro** (o `System.Text.Json` escapa acento como
+   `é`), então a codepage do console não interfere — mas a codificação ficou
+   amarrada em UTF-8 explícito, porque isso é propriedade do encoder padrão e não do
+   protocolo.
+
+**Validado nesta sessão, fora do CAD:** o servidor responde `initialize` (ecoando a
+versão do cliente), lista as 9 ferramentas com `inputSchema` como objeto JSON, recusa
+ferramenta desconhecida, recusa `resources/list` com `-32601`, não responde a
+notificação, e sai com código 0 e `stderr` vazio. Os testes sobem servidor + cliente
+num **pipe real** e cobrem ida-e-volta, duas chamadas na mesma conexão, reconexão,
+segundo hospedeiro recusado e versão de contrato incompatível.
+
+**O que falta:** o 1º run com a Solid Edge ABERTA. Nada da ponte tocou COM ainda.
+
+### Eng. Reversa — por que começou por uma sonda
+
+O dump da typelib (`docs/api`) foi conferido antes de qualquer código, e o resultado é
+assimétrico:
+
+- **EXISTE:** `MeshSurface.GetTriangleData/GetTrianglePoints/GetTriangleNormals`,
+  `Body.GetFacetData`, `Model.IsFacetBody`/`IsMixedFacetBody`,
+  `HealAndOptimizeWithMeshOptions(..., bFillHoles, FillHoleType)`,
+  `Models.AddBodyByMeshFacets`, `DoRemesh`, `ConvertToMeshes`,
+  `Sketches.CreateSectionSketches(..., bRecognizeLines/Arcs/Circles/Ellipses)`,
+  `BSplineSurfaces.Add(poles, weights, knots...)`, `StitchSurfaces`, booleanas,
+  `RecognizeAndCreateHoleGroups`, `RecognizeAndCreateChamfers` (estes dois só em B-rep).
+- **NÃO EXISTE:** nenhum ajuste de plano/cilindro/cone/esfera sobre região de malha,
+  nenhuma segmentação de malha, nenhuma seleção de região. Os comandos da aba NATIVA de
+  Engenharia Reversa **não estão no modelo de objetos**, e `Application.StartCommand` só
+  ABRE o comando interativo (espera o mouse) — não serve para script.
+
+Logo o ajuste terá de ser nosso, e a pergunta real é qual rota:
+
+- **prismática** — seccionar por Z com reconhecimento de retas/arcos/círculos, agrupar
+  contornos iguais entre Z, círculo que persiste vira **furo com eixo e Ø reais**, e
+  reconstruir como **features editáveis**. Serve postiço/eletrodo/placa (o trabalho real)
+  e reaproveita a cadeia WEDM, que já faz `Z → contorno → geometria exata`. Não serve
+  forma orgânica.
+- **kernel geral free-form** — segmentação por curvatura, fit de primitivas e B-spline,
+  interseção/trim/costura estanque. Cobre cavidade orgânica, mas é semanas de trabalho e
+  o fechamento estanque no caso geral não é garantível.
+
+A `MeshProbe` existe para essa escolha sair de medida, não de aposta. Só leitura, exceto
+o teste de `CreateSectionSketches`, que **pede autorização** (cria esboços, tenta
+apagá-los, nunca salva). Confere presença de membro por introspecção **antes** de chamar
+e registra o erro exato do que falha — que é o dado que ela existe para trazer.
+
 ## Histórico
 
+- **2026-09-17** — **grupos "Eng. Reversa" e "MCP" na ribbon** (`GuiVersion` 15). A
+  ponte MCP inteira construída e o protocolo validado ponta a ponta fora do CAD; a
+  sonda de malha escrita depois de o dump da typelib provar que a SE **não** expõe
+  ajuste de superfície sobre região de malha por COM. Ver a seção acima. 233 testes,
+  0 falhas. Nada disso tocou COM ainda.
 - **2026-09-16** — **"Curvas das superfícies" validado no SE**, depois de não
   reconhecer extremidade nenhuma num loft entre duas splines horizontais. A
   causa não era a geometria nem a tolerância: **`Edge.GetRange` devolve caixa

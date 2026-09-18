@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Servidor MCP do AutoEDM: o processo que o Claude Code sobe para falar com a
+    Solid Edge. Ele NÃO toca COM — quem toca é o add-in, in-process na SE. Este
+    programa só traduz JSON-RPC (stdio) em pedidos no named pipe da ponte.
+
+    Por que é um projeto separado, e não parte do add-in: o add-in é
+    OBRIGATORIAMENTE net472 (a SE hospeda .NET Framework in-process), e o mundo MCP
+    é net8+. O contrato de fio e o catálogo de ferramentas vivem no AutoEDM.Core,
+    que compila para os dois alvos — então nada é duplicado entre os dois lados.
+
+    net8.0-WINDOWS (e não net8.0) porque é o TFM moderno do Core; e o alvo é
+    Windows de qualquer forma, já que do outro lado da ponte está a Solid Edge.
+
+    Registrado em .mcp.json na raiz do repo.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>AutoEDM.Mcp.Server</RootNamespace>
+    <AssemblyName>AutoEDM.Mcp</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+    <!--
+      stdout É O TRANSPORTE do MCP: uma única linha impressa fora do protocolo
+      corrompe a sessão. Desliga o banner do SDK por garantia; o Program.cs ainda
+      redireciona Console.Out para stderr na primeira linha do Main.
+    -->
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Contrato de fio (BridgeProtocol/BridgeClient) + catálogo de ferramentas. -->
+    <ProjectReference Include="..\AutoEDM.Core\AutoEDM.Core.csproj" />
+  </ItemGroup>
+
+</Project>

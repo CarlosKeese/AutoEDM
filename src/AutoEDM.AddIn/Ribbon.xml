@@ -71,6 +71,34 @@
               supertip="Na PEÇA (.par) já salva, em modelagem SÍNCRONA: lê as CURVAS DE CONSTRUÇÃO visíveis (interseção, projeção, derivada, por pontos-chave, 3D...) — o sólido é ignorado — e grava na pasta da peça um arquivo .igs por altura Z, com o nome da peça + 'Z = XX.XX'. Retas e arcos saem exatos e as B-splines com os polos e nós originais, em milímetros e nas coordenadas da própria peça (Z real), prontos para importar no Pitágoras. Curva oculta fica de fora; curva que não está num plano horizontal não é exportada e é avisada no fim. Não altera o modelo."
               imageId="7" showLabel="true" />
     </group>
+    <group name="Eng. Reversa">
+      <button id="24" size="large" label="Sonda de malha"
+              screentip="Diagnóstico: o que a API de malha responde na SUA malha (SÓ LEITURA)"
+              supertip="Na PEÇA (.par) com a malha importada (STL/OBJ): mede o que a API do Solid Edge de fato entrega sobre ela — corpos de facetas, faces de malha, quantos triângulos leem por GetTrianglePoints/GetTriangleData, a caixa envolvente em mm, e quais membros da API de malha (DoRemesh, AddBodyByMeshFacets, HealAndOptimizeWithMeshOptions) existem nesta versão. Confere presença de membro por introspecção ANTES de chamar, e registra o erro exato do que falhar. Pergunta antes de incluir o teste de SECCIONAMENTO, que é o único que escreve (cria esboços, tenta apagá-los, nunca salva) e é o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Existe porque o dump da typelib já provou que a SE NÃO expõe por COM nenhum ajuste de plano/cilindro/cone sobre região de malha — esse ajuste terá de ser nosso, e esta sonda diz sobre qual base construí-lo. Todo o resultado vai para o log."
+              imageId="6" showLabel="true" />
+    </group>
+    <group name="MCP">
+      <button id="19" size="large" label="Ligar ponte"
+              screentip="Deixa o Claude Code alcançar esta Solid Edge"
+              supertip="Sobe a ponte (named pipe) que o servidor MCP do AutoEDM usa para falar com ESTA instância da Solid Edge. A ponte NÃO sobe sozinha de propósito: quem decide se um agente alcança o CAD é você. Ela nasce sempre em SOMENTE-LEITURA — o agente pode inspecionar a seleção, ler a árvore, medir, analisar a cavidade e ler o log, mas qualquer ferramenta que altere o modelo é recusada até você clicar em 'Liberar escrita'. Só uma instância da SE pode hospedar a ponte."
+              imageId="3" showLabel="true" />
+      <button id="21" size="large" label="Status da ponte"
+              screentip="Em que pé está a ponte MCP"
+              supertip="Mostra se a ponte está no ar, o nome do pipe e a versão do contrato, o modo (somente-leitura ou escrita liberada), quantos pedidos o agente já fez nesta sessão e qual foi a última ferramenta pedida — é assim que você confirma num piscar que o Claude Code chegou de verdade até a Solid Edge. Lista também todas as ferramentas do catálogo, marcando quais escrevem."
+              imageId="3" showLabel="true" />
+      <button id="22" size="large" label="Liberar escrita"
+              screentip="Permite que o agente ALTERE o documento aberto"
+              supertip="Passa a ponte para o modo ESCRITA: as ferramentas que criam curvas na peça e gravam arquivos param de ser recusadas. Pede confirmação antes, porque a partir daí o agente altera o documento sem perguntar a cada operação — salve o que estiver aberto primeiro. A liberação vale só até a ponte ser desligada ou a Solid Edge fechar; religar volta para somente-leitura. Nenhuma ferramenta MCP consegue ligar esta chave: só este botão."
+              imageId="1" showLabel="true" />
+      <button id="23" size="large" label="Somente leitura"
+              screentip="Volta a ponte para somente-leitura"
+              supertip="Revoga a liberação de escrita na hora: as ferramentas que alteram o modelo voltam a recusar, e as de leitura (inspecionar, árvore, medir, analisar, log) continuam funcionando."
+              imageId="3" showLabel="true" />
+      <button id="20" size="large" label="Desligar ponte"
+              screentip="Nenhum agente alcança mais a Solid Edge"
+              supertip="Derruba a ponte. O servidor MCP passa a responder que ninguém está hospedando, e explica ao agente que é você quem religa. Ao religar, a ponte volta em somente-leitura."
+              imageId="3" showLabel="true" />
+    </group>
     <group name="Diagnóstico">
       <button id="6" size="large" label="Inspecionar seleção"
               screentip="SPY: dumpa o objeto COM selecionado"

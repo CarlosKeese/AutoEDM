@@ -84,7 +84,7 @@ AutoEDM automatiza esse pipeline como uma **coleção de ferramentas individuais
 
 ## Os comandos da faixa de opções
 
-A aba **AutoEDM** tem cinco grupos. A coluna **Ambiente** é levada a sério: cada botão **declara** o que exige e, no lugar errado, fica cinza — ver [Ambiente de modelagem](#ambiente-de-modelagem-síncrono-x-ordenado).
+A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cada botão **declara** o que exige e, no lugar errado, fica cinza — ver [Ambiente de modelagem](#ambiente-de-modelagem-síncrono-x-ordenado).
 
 ### Eletrodos — documento de montagem
 
@@ -120,6 +120,61 @@ Corte a fio: preparar os perfis na peça e entregá-los ao programa da máquina 
 |---|---|---|
 | **Curvas das superfícies** | **síncrono** | Reconhece as superfícies (as **selecionadas**; sem seleção, todas as de construção da peça) e cria uma **curva derivada sobre cada extremidade paralela ao plano XY** — o contorno do fundo (Z mínimo) e o do topo (Z máximo) de cada superfície, que é por onde o fio corta. Contorno horizontal em altura intermediária fica de fora. As curvas nascem na árvore com o nome `WEDM Z = XX.XX`; rodar de novo substitui as da rodada anterior. Não exporta nada. |
 | **Exportar perfis (IGES)** | **síncrono** | Lê as **curvas de construção visíveis** da peça — o sólido é ignorado — e grava na pasta do `.par` **um `.igs` por altura Z**, com o nome da peça + `Z = XX.XX`. Retas e arcos saem exatos e as B-splines com os polos e nós originais, em milímetros e nas coordenadas da peça (Z real). Curva oculta fica de fora; curva que não está num plano horizontal é avisada em vez de sair torta. Não altera o modelo. |
+
+### Eng. Reversa — documento de peça
+
+Reconstruir sólido a partir de malha. Hoje o grupo tem **uma sonda de diagnóstico**, e a razão é
+concreta: o dump da typelib mostra que a Solid Edge expõe por COM a leitura da malha
+(`MeshSurface.GetTriangleData`, `Body.GetFacetData`), o remalhamento (`DoRemesh`), a cura com
+fechamento de furo (`HealAndOptimizeWithMeshOptions`), a criação de corpo de facetas
+(`AddBodyByMeshFacets`), o seccionamento com reconhecimento de primitivas
+(`CreateSectionSketches`) e a criação de superfície ajustada (`BSplineSurfaces.Add`) — mas
+**nenhum ajuste de plano/cilindro/cone/esfera sobre região de malha, nenhuma segmentação e
+nenhuma seleção de região**. Os comandos da aba nativa de Engenharia Reversa não estão no modelo
+de objetos, e `Application.StartCommand` só abre o comando interativo (espera o mouse), o que não
+serve para script.
+
+Ou seja: o ajuste terá de ser nosso. A sonda existe para que a escolha entre a **rota prismática**
+(seccionar por Z, agrupar contornos e reconstruir como features editáveis — extrusão, corte, furo
+com eixo e Ø reais, raio) e um **kernel geral de free-form** seja feita com medida, e não por
+aposta.
+
+| Comando | Ambiente | O que faz |
+|---|---|---|
+| **Sonda de malha** | qualquer | Mede, na malha real: corpos de facetas, faces de malha, quantos triângulos leem e por qual método, a caixa envolvente em mm, e **quais membros da API de malha existem nesta versão** — presença conferida por introspecção **antes** de chamar, com o erro exato de tudo que falha. Pergunta antes de incluir o teste de **seccionamento**, o único que escreve (cria esboços, tenta apagá-los, nunca salva) e o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Resultado completo no log. |
+
+### MCP — qualquer documento (nem precisa de um)
+
+Deixa o **Claude Code** dirigir esta instância da Solid Edge. O add-in hospeda um *named pipe*, e o
+servidor MCP (`src/AutoEDM.Mcp`, um processo `net8.0` separado — o add-in é obrigatoriamente
+`net472`) traduz JSON-RPC nesse pipe. O contrato de fio e o catálogo de ferramentas vivem no
+`AutoEDM.Core`, que compila para os dois alvos, então nada é duplicado entre os lados.
+
+As ferramentas MCP pousam **ao lado** da faixa de opções, sobre o mesmo `Core` — nunca em cima dos
+handlers dos botões. Dois motivos: todo handler termina em `MessageBox`, e um diálogo modal
+disparado por agente travaria a thread da Solid Edge esperando um humano que não sabe que foi
+perguntado; e o `Core` é o que já está validado no SE, então descer direto nele não cria um segundo
+caminho de automação para manter em pé. A guarda de documento e ambiente continua valendo, com a
+mesma regra dos botões.
+
+**Duas travas, de propósito.** A ponte não sobe sozinha: enquanto ninguém clicar em *Ligar ponte*,
+nenhum agente alcança o CAD. E ela nasce sempre em **somente-leitura** — as ferramentas que alteram
+o modelo são recusadas com explicação até o usuário clicar em *Liberar escrita*, que pede
+confirmação e não sobrevive a um desligamento. Nenhuma ferramenta MCP consegue ligar essa chave.
+
+| Comando | O que faz |
+|---|---|
+| **Ligar ponte** | Sobe o pipe. Só uma instância da SE pode hospedar; a segunda diz isso em vez de brigar pelo nome em silêncio. |
+| **Status da ponte** | Se está no ar, o pipe e a versão do contrato, o modo, quantos pedidos o agente já fez e qual a última ferramenta — é como se confirma num piscar que o agente chegou até a SE. Lista o catálogo, marcando quais ferramentas escrevem. |
+| **Liberar escrita** | Passa para o modo escrita, com confirmação. Vale até a ponte cair ou a SE fechar. |
+| **Somente leitura** | Revoga a escrita na hora; as ferramentas de leitura seguem funcionando. |
+| **Desligar ponte** | Derruba o pipe. O agente passa a receber a instrução de pedir a você para religar. |
+
+As nove ferramentas do catálogo: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
+`se_medir_selecao`, `se_analisar_z`, `se_coordenadas` e `se_log` (leitura), mais
+`se_curvas_superficies` e `se_exportar_perfis_wedm` (escrita). A mais valiosa é
+`se_inspecionar_selecao`: ela fecha o laço da regra de ouro deste projeto — descobrir a API COM
+real por introspecção ao vivo, em vez de um round-trip humano copiando log a cada assinatura.
 
 ### Diagnóstico — qualquer documento
 
@@ -340,7 +395,15 @@ Para **rodar de verdade** é preciso o **Solid Edge 2023/2026** aberto com uma m
 
 `tests/AutoEDM.Core.Tests` cobre a lógica que não depende do CAD: leitura de `config.json` e o fallback para os defaults, mapa de cor → Ra, política da tabela de offset por Ra, biblioteca de blanks padrão, conversão de unidades, guarda de ambiente de modelagem, encadeamento de arestas em contornos, cota do canal de O'ring, plano de corte na serra e, do WEDM, os níveis de Z, o formato do IGES e a escolha das extremidades da superfície. Rodam em `net8.0-windows`, sem Solid Edge instalado.
 
-> **Estado atual: 209 de 209 passando.** As 7 falhas antigas de `ORingGrooveTests` — testes escritos contra uma especificação anterior à implementação que ficou — foram resolvidas junto com a correção do canal de O'ring. A ferramenta de O'ring segue marcada como *aguardando validação* no roadmap por outro motivo: o teste cobre a **cota**, não a operação de corte no Solid Edge.
+A ponte MCP também é testada sem CAD, e não só na parte pura: `McpBridgeTests` sobe o **servidor e o
+cliente num named pipe de verdade**, com um marshaler falso no lugar da Solid Edge, e verifica a ida
+e a volta, duas chamadas na mesma conexão, a reconexão de um cliente novo, a recusa de um segundo
+hospedeiro no mesmo pipe e a recusa por versão de contrato incompatível. O teste que mais importa é
+o da trava: **toda** ferramenta marcada como de escrita tem de ser recusada em somente-leitura, e a
+recusa tem de dizer o que fazer — sem isso, um `Writes` esquecido em `false` passaria a permitir
+escrita sem ninguém notar.
+
+> **Estado atual: 233 de 233 passando.** As 7 falhas antigas de `ORingGrooveTests` — testes escritos contra uma especificação anterior à implementação que ficou — foram resolvidas junto com a correção do canal de O'ring. A ferramenta de O'ring segue marcada como *aguardando validação* no roadmap por outro motivo: o teste cobre a **cota**, não a operação de corte no Solid Edge.
 
 ---
 
@@ -391,6 +454,8 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só funciona em edição em contexto (in-place) |
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
+| Ponte MCP (Claude Code dirige a Solid Edge) | 🚧 construída, protocolo validado ponta a ponta fora do CAD (233 testes); **aguardando o 1º run com a SE aberta** |
+| Eng. Reversa: malha → sólido | 🚧 sonda de diagnóstico pronta; rota (prismática × free-form) a decidir **com a medida da sonda** |
 | Orquestrador completo ("gerar todos os eletrodos") | 📋 planejado |
 
 Legenda: ✅ funcionando · 🚧 em andamento · 📋 planejado.
