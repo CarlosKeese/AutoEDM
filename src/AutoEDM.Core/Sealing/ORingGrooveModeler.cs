@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Reflection;
 using AutoEDM.Com;
 using AutoEDM.Diagnostics;
 using AutoEDM.Model;
+using AutoEDM.Selection;
 
 namespace AutoEDM.Sealing
 {
@@ -43,6 +45,24 @@ namespace AutoEDM.Sealing
         /// </summary>
         public static bool Cut(dynamic app, ORingTarget target, ORingGrooveSpec spec, double grooveOffsetMm)
         {
+            string ignored;
+            return Cut((object)app, target, spec, grooveOffsetMm, out ignored);
+        }
+
+        /// <summary>Estilos de face tentados para pintar o canal, em ordem: o laranja da
+        /// biblioteca padrão da SE (nome em inglês e em português). É a cor que o Carlos usa
+        /// para vedação.</summary>
+        private static readonly string[] SealStyles = { "Orange", "Laranja" };
+
+        /// <summary>Criado só se a peça não tiver nenhum de <see cref="SealStyles"/>.</summary>
+        private const string SealFallbackStyle = "AutoEDM_Vedacao";
+        private static readonly System.Drawing.Color SealFallbackColor = System.Drawing.Color.FromArgb(255, 128, 0);
+
+        /// <summary>Igual ao <see cref="Cut(object, ORingTarget, ORingGrooveSpec, double)"/>, e
+        /// devolve o nome que a feature recebeu na árvore (null se não deu para renomear).</summary>
+        public static bool Cut(dynamic app, ORingTarget target, ORingGrooveSpec spec, double grooveOffsetMm, out string featureName)
+        {
+            featureName = null;
             if (target == null || !target.Ok) { Log.Warn("Canal de O'ring: seleção inválida."); return false; }
             if (spec == null) { Log.Warn("Canal de O'ring: sem alojamento calculado."); return false; }
 
@@ -74,10 +94,35 @@ namespace AutoEDM.Sealing
                 Log.Info($"Canal de O'ring: modelagem ORDENADA, {facesBefore} face(s) no corpo antes.");
 
                 double[] axisDir = ProfilePlaneFrame.AxisVector(target.AxisIndex);
+
+                // CAMINHO PRINCIPAL: coroa circular CONCÊNTRICA à aresta, extrudada a partir de
+                // uma face plana da peça — é o que acompanha o furo quando ele MUDA DE Ø (ver
+                // ExtrudedGroove). O corte revolvido abaixo fica só como reserva.
+                AxisSketch exSketch;
+                bool exFeatureMade;
+                object cut = ExtrudedGroove(doc, scope, model, target, spec, grooveOffsetMm, axisDir,
+                                            out exSketch, out exFeatureMade);
+                if (cut != null) sketch = exSketch;
+                else if (exFeatureMade)
+                {
+                    Log.Warn("Canal de O'ring: o recorte extrudado nasceu com falha — não tento o revolvido em cima " +
+                             "(apagar a feature falhada costuma desconectar o documento).");
+                    return false;
+                }
+                else
+                {
+                Log.Warn("  [extrudado] indisponível para esta aresta — usando o corte REVOLVIDO (acompanha o furo " +
+                         "movido, mas NÃO a mudança de Ø).");
                 // TIPADO de propósito: o retorno de um método chamado com argumento `dynamic`
                 // sai dynamic, e aí o compilador perde a análise dos parâmetros [out] adiante.
-                sketch = OpenSketchThroughAxis(doc, scope, target.CenterMm, axisDir);
+                // PRIMEIRO o plano AMARRADO à aresta que o usuário clicou; o plano solto (base ou
+                // paralelo a ela por distância fixa) só como último recurso — ver OpenSketchOnEdge.
+                sketch = OpenSketchOnEdge(doc, scope, target.Edge, target.CenterMm, axisDir)
+                      ?? OpenSketchThroughAxis(doc, scope, target.CenterMm, axisDir);
                 if (sketch == null) { Log.Warn("Canal de O'ring: não achei um plano de esboço que contenha o eixo."); return false; }
+                if (!sketch.Associative)
+                    Log.Warn("  ATENÇÃO: esboço num plano SEM vínculo com a peça — o canal NÃO vai acompanhar " +
+                             "edições no síncrono (mover/redimensionar o furo deixa o canal para trás ou o quebra).");
 
                 dynamic profile = sketch.Profile;
                 ProfilePlaneFrame frame = sketch.Frame;
@@ -99,7 +144,16 @@ namespace AutoEDM.Sealing
                     Point(target, axisDir, radial, a1, rOuter),
                     Point(target, axisDir, radial, a0, rOuter)
                 };
-                if (!DrawClosedPolygon(profile, frame, corners)) return false;
+                var rectLines = DrawClosedPolygon(profile, frame, corners);
+                if (rectLines == null) return false;
+                // Cantos LIGADOS: desenhadas ponta com ponta por coordenada, as linhas NÃO ficam
+                // conectadas — na 1ª edição o perfil abre ("elementos desconectados", visto ao vivo).
+                object rel2d = Prop((object)profile, "Relations2d");
+                int corners2d = 0;
+                if (rel2d != null)
+                    for (int i = 0; i < 4; i++)
+                        if (Relate(rel2d, "AddKeypoint", rectLines[i], igLineEnd, rectLines[(i + 1) % 4], igLineStart)) corners2d++;
+                Log.Info($"  cantos do perfil ligados: {corners2d}/4.");
 
                 // Eixo de revolução: uma linha de CONSTRUÇÃO sobre o próprio eixo do anel,
                 // esticada para além do canal (não pode fazer parte do contorno fechado).
@@ -136,8 +190,9 @@ namespace AutoEDM.Sealing
                 Log.Info($"  perfil validado: End({criteria}) = {validation} " +
                          $"({(validation == 0 ? "válido" : validation == -1 ? "INVÁLIDO" : "status desconhecido")}).");
 
-                object cut = Revolve(model, (object)profile, refAxis, mode)
-                          ?? SubtractRevolvedBody(doc, model, (object)profile, refAxis, mode);
+                cut = Revolve(model, (object)profile, refAxis, mode)
+                   ?? SubtractRevolvedBody(doc, model, (object)profile, refAxis, mode);
+                }
 
                 int facesAfter = FaceCount(model);
                 facesAfterCut = facesAfter;
@@ -148,6 +203,12 @@ namespace AutoEDM.Sealing
                               "aceita. O AutoEDM NÃO tenta os métodos do outro modo de propósito: isso criaria um " +
                               "recurso no outro ambiente, que a SE não deixa apagar.");
                 cutOk = ok;
+                if (ok)
+                {
+                    featureName = NameFeature((object)doc, (object)model, cut, spec);
+                    PaintFeature((object)doc, cut);
+                    HideFeatureSketch(cut);
+                }
                 return ok;
             }
             catch (Exception e)
@@ -244,6 +305,78 @@ namespace AutoEDM.Sealing
         }
 
         /// <summary>
+        /// Dá à feature o nome do anel com número de instância (ver <see cref="ORingGrooveNaming"/>).
+        /// Os nomes em uso saem da árvore INTEIRA da peça, lidos na hora — é o que numera certo
+        /// mesmo quando o usuário renomeou ou apagou canais entre uma criação e outra.
+        /// Cosmético: falha só no log.
+        /// </summary>
+        private static string NameFeature(object doc, object model, object feature, ORingGrooveSpec spec)
+        {
+            string name = null;
+            try
+            {
+                name = ORingGrooveNaming.NextName(spec.Ring, ExistingFeatureNames(doc, model));
+                ((dynamic)feature).Name = name;
+                Log.Info($"  feature renomeada: '{name}'.");
+                return name;
+            }
+            catch (Exception e)
+            {
+                Log.Warn($"  não deu para renomear a feature{(name != null ? " para '" + name + "'" : "")} (cosmético, segue) — " +
+                         e.GetBaseException().Message);
+                return null;
+            }
+        }
+
+        /// <summary>Nomes de todas as features da peça — o da árvore (<c>EdgebarName</c>) e o
+        /// interno (<c>Name</c>), porque é o <c>Name</c> que a gente escreve.</summary>
+        private static List<string> ExistingFeatureNames(object doc, object model)
+        {
+            // As duas coleções: a da árvore e a do modelo. Um nome visto duas vezes não atrapalha
+            // (só o MAIOR número importa), e um que faltasse numa delas daria nome repetido.
+            var names = new List<string>();
+            int collections = 0;
+            foreach (object features in new[] { Prop(doc, "DesignEdgebarFeatures"), Prop(model, "Features") })
+            {
+                if (features == null) continue;
+                collections++;
+                int count = 0;
+                try { count = Convert.ToInt32(Prop(features, "Count")); } catch { }
+                for (int i = 1; i <= count; i++)
+                {
+                    object f;
+                    try { f = features.GetType().InvokeMember("Item", BindingFlags.InvokeMethod, null, features, new object[] { i }); }
+                    catch { continue; }
+                    foreach (string prop in new[] { "Name", "EdgebarName" })
+                        if (Prop(f, prop) is string s && s.Length > 0) names.Add(s);
+                }
+            }
+            if (collections == 0) Log.Warn("  sem coleção de features para numerar o nome — sai com o número 1.");
+            return names;
+        }
+
+        /// <summary>Propriedade COM por nome; null se o objeto não a expõe.</summary>
+        private static object Prop(object com, string name)
+        {
+            if (com == null) return null;
+            try { return com.GetType().InvokeMember(name, BindingFlags.GetProperty, null, com, null); }
+            catch { return null; }
+        }
+
+        /// <summary>Pinta as faces do canal com o laranja de vedação. Cosmético: falha só no log.</summary>
+        private static void PaintFeature(object doc, object feature)
+        {
+            try
+            {
+                object[] faces = AutoEDM.Electrode.ModelingHelpers.GetFeatureFaces(feature);
+                if (faces.Length == 0) { Log.Warn("  canal sem faces legíveis — não foi pintado."); return; }
+                AutoEDM.Electrode.FaceColorPainter.PaintWithNamedStyle(
+                    doc, faces, SealStyles, SealFallbackStyle, SealFallbackColor);
+            }
+            catch (Exception e) { Log.Warn("  pintura do canal falhou (cosmético, segue) — " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>
         /// Os quatro cantos do canal, em (coordenada ao longo do eixo, raio). É aqui — e só
         /// aqui — que os três tipos de canal se distinguem.
         /// </summary>
@@ -288,21 +421,543 @@ namespace AutoEDM.Sealing
             return ProfilePlaneFrame.Add(p, radial, radius);
         }
 
-        private static bool DrawClosedPolygon(dynamic profile, ProfilePlaneFrame frame, double[][] corners3d)
+        /// <summary>Desenha o contorno fechado e devolve as linhas (null se um canto não converteu).</summary>
+        private static List<object> DrawClosedPolygon(dynamic profile, ProfilePlaneFrame frame, double[][] corners3d)
         {
             var xs = new double[corners3d.Length];
             var ys = new double[corners3d.Length];
             for (int i = 0; i < corners3d.Length; i++)
                 if (!frame.TryTo2dMm((object)profile, corners3d[i], out xs[i], out ys[i]))
-                { Log.Warn($"Canal de O'ring: canto {i} não converteu para o esboço."); return false; }
+                { Log.Warn($"Canal de O'ring: canto {i} não converteu para o esboço."); return null; }
 
             dynamic lines = profile.Lines2d;
+            var made = new List<object>(corners3d.Length);
             for (int i = 0; i < corners3d.Length; i++)
             {
                 int j = (i + 1) % corners3d.Length;
-                lines.AddBy2Points(Units.MmToM(xs[i]), Units.MmToM(ys[i]), Units.MmToM(xs[j]), Units.MmToM(ys[j]));
+                made.Add((object)lines.AddBy2Points(Units.MmToM(xs[i]), Units.MmToM(ys[i]), Units.MmToM(xs[j]), Units.MmToM(ys[j])));
             }
-            return true;
+            return made;
+        }
+
+        // ================================================================== corte EXTRUDADO
+
+        private const int igPlaneGeom = -1909484335;   // GNTTypePropertyConstants.igPlane
+
+        /// <summary>
+        /// O CANAL COMO COROA CIRCULAR EXTRUDADA — o caminho que acompanha a peça quando o furo
+        /// MUDA DE DIÂMETRO (Carlos, 2026-09-21, 4 rodadas ao vivo com o corte revolvido).
+        ///
+        /// Por que não o revolvido: ele exige um esboço num plano que CONTENHA o eixo. O único
+        /// plano desses que se consegue amarrar à aresta é o normal à curva, com origem EM CIMA
+        /// da aresta — e quando o Ø muda, esse ponto (e o referencial do plano) sai do lugar.
+        /// Nem amarrando o esboço à mão o Carlos conseguiu manter o canal no eixo. Amarras por
+        /// API (colinear + AddSet) não seguraram; cotas de distância nasceram com o valor errado
+        /// e ENTORTARAM o canal.
+        ///
+        /// Aqui o esboço fica num plano PERPENDICULAR ao eixo, preso a uma face plana da peça
+        /// que toca a aresta (a própria face, no canal de face; um plano paralelo a ela, no de
+        /// eixo/furo). A aresta incluída nesse plano é um CÍRCULO, e os dois círculos do canal
+        /// ficam CONCÊNTRICOS a ele (Relations2d.AddConcentric) com cota de diâmetro
+        /// (Dimensions.AddCircularDiameter — mede o próprio círculo, não há ponto de escolha
+        /// para errar). É o jeito clássico de fazer isso à mão na SE.
+        ///
+        /// Devolve a feature criada e boa, ou null. <paramref name="featureCreated"/> = a SE
+        /// chegou a criar uma feature (mesmo falhada) — nesse caso não se tenta outro caminho.
+        /// </summary>
+        private static object ExtrudedGroove(dynamic doc, SketchScope scope, dynamic model, ORingTarget target,
+            ORingGrooveSpec spec, double grooveOffsetMm, double[] axisDir, out AxisSketch sketch, out bool featureCreated)
+        {
+            sketch = null;
+            featureCreated = false;
+            if (target.Edge == null) { Log.Warn("  [extrudado] sem a aresta COM."); return null; }
+
+            object face = PlanarFaceAtEdge(model, target, axisDir);
+            if (face == null) { Log.Warn("  [extrudado] a aresta não toca nenhuma face PLANA perpendicular ao eixo."); return null; }
+
+            // Onde o esboço fica (coordenada no eixo), quanto extruda, e os dois raios.
+            int dir = target.MaterialDirection;
+            double margin = Math.Max(1.0, spec.Ring.CrossSection);   // folga "no ar", fora do material
+            double start, depth, rIn, rOut;
+            switch (spec.Kind)
+            {
+                case GrooveKind.AxialFace:
+                    start = target.EdgeAxialMm; depth = spec.Depth;
+                    rIn = spec.GrooveInnerDiameter / 2.0; rOut = spec.GrooveOuterDiameter / 2.0;
+                    break;
+                case GrooveKind.RadialExternal:   // eixo: do fundo até passar do costado
+                    // Esboço no CENTRO do canal e extrusão SIMÉTRICA: a largura sai sem depender
+                    // de sentido (ver a escolha do lado, adiante).
+                    start = target.EdgeAxialMm + dir * grooveOffsetMm; depth = spec.Width;
+                    rIn = spec.GrooveBottomDiameter / 2.0; rOut = spec.SealingDiameter / 2.0 + margin;
+                    break;
+                default:                          // furo: de dentro do furo até o fundo
+                    start = target.EdgeAxialMm + dir * grooveOffsetMm; depth = spec.Width;
+                    rIn = Math.Max(0.1, spec.SealingDiameter / 2.0 - margin); rOut = spec.GrooveBottomDiameter / 2.0;
+                    break;
+            }
+            Log.Info($"  [extrudado] coroa Ø {2 * rIn:0.000} a {2 * rOut:0.000} mm, esboço em {target.AxisName}={start:0.000}, " +
+                     $"corte de {depth:0.000} mm para {(dir > 0 ? "+" : "−")}{target.AxisName}.");
+            if (rOut - rIn <= 1e-6 || depth <= 1e-6) { Log.Warn("  [extrudado] coroa degenerada."); return null; }
+
+            // O plano do esboço: a própria face, ou um paralelo a ela afastado até o início do canal.
+            double[] zero = new double[3];
+            double[] center = Point(target, axisDir, zero, start, 0.0);
+            Func<ProfilePlaneFrame, bool> right = f =>
+                Math.Abs(ProfilePlaneFrame.Dot(f.Normal, axisDir)) > 0.999 && Math.Abs(f.SignedDistance(center)) < 0.01;
+
+            double offset = Math.Abs(start - target.EdgeAxialMm);
+            if (offset < 1e-4)
+            {
+                sketch = TryOpenSketchWhere(doc, scope, face, false, right);
+                if (sketch != null) Log.Info("  [extrudado] esboço na PRÓPRIA face plana.");
+            }
+            if (sketch == null)
+            {
+                foreach (int side in new[] { igRight, igLeft })
+                {
+                    object plane = null;
+                    try
+                    {
+                        plane = (object)doc.RefPlanes.AddParallelByDistance(face, Units.MmToM(offset), side,
+                            Type.Missing, Type.Missing, Type.Missing, Type.Missing);
+                    }
+                    catch (Exception e) { Log.Warn($"  [extrudado] AddParallelByDistance(face, {offset:0.###}, {side}): " + e.GetBaseException().Message); }
+                    if (plane == null) continue;
+                    scope.TrackTempPlane(plane);
+                    sketch = TryOpenSketchWhere(doc, scope, plane, true, right);
+                    if (sketch != null) { Log.Info($"  [extrudado] esboço num plano paralelo à face, a {offset:0.###} mm (lado {side})."); break; }
+                    // Lado errado: apagar JÁ, com o documento são. Deixado para a limpeza final,
+                    // ele ficava VISÍVEL na peça (a exclusão tardia deu RPC_E_DISCONNECTED ao vivo).
+                    scope.Release(plane);
+                    try { ((dynamic)plane).Delete(); Log.Info($"  [extrudado] plano do lado {side} caiu no lugar errado — apagado."); }
+                    catch (Exception e)
+                    {
+                        Log.Warn($"  [extrudado] plano do lado {side} (lugar errado) não apagou: " + e.GetBaseException().Message + " — escondendo.");
+                        try { ((dynamic)plane).Visible = false; } catch { }
+                    }
+                }
+            }
+            if (sketch == null) { Log.Warn("  [extrudado] não consegui um plano de esboço preso à face."); return null; }
+            sketch.Associative = true;
+
+            object profile = (object)sketch.Profile;
+            ProfilePlaneFrame frame = sketch.Frame;
+
+            // A aresta dentro do esboço — achada pela DIFERENÇA (o [out] do IncludeEdge vem vazio).
+            var before = SketchElements(profile);
+            try
+            {
+                object[] args = { target.Edge, null };
+                var mod = new ParameterModifier(2);
+                mod[1] = true;
+                profile.GetType().InvokeMember("IncludeEdge", BindingFlags.InvokeMethod, null, profile, args, new[] { mod }, null, null);
+            }
+            catch (Exception e) { Log.Warn("  [extrudado] IncludeEdge falhou: " + e.GetBaseException().Message); }
+            var added = NewElements(before, SketchElements(profile));
+            Log.Info($"  [extrudado] aresta incluída: {added.Count} elemento(s) — " +
+                     string.Join(", ", added.ConvertAll(a => a.Key + ":" + (AutoEDM.Com.ComDiagnostics.TypeNameOf(a.Value) ?? "?"))) + ".");
+            object refCircle = added.Count == 1 && (added[0].Key == "Circles2d" || added[0].Key == "Arcs2d") ? added[0].Value : null;
+            if (refCircle != null)
+            {
+                try { ((dynamic)profile).ToggleConstruction(refCircle); }
+                catch (Exception e) { Log.Warn("  [extrudado] a aresta incluída não virou construção: " + e.GetBaseException().Message); }
+            }
+            else
+            {
+                if (added.Count > 0) DeleteAll(added.ConvertAll(a => a.Value));
+                Log.Warn("  [extrudado] a aresta não entrou como UM círculo — o canal fica preso à face, mas NÃO ao Ø.");
+            }
+
+            // Os dois círculos do canal.
+            double cx, cy;
+            if (!frame.TryTo2dMm(profile, center, out cx, out cy)) { Log.Warn("  [extrudado] centro não converteu para o esboço."); return null; }
+            object inner, outer;
+            try
+            {
+                dynamic circles = ((dynamic)profile).Circles2d;
+                inner = (object)circles.AddByCenterRadius(Units.MmToM(cx), Units.MmToM(cy), Units.MmToM(rIn));
+                outer = (object)circles.AddByCenterRadius(Units.MmToM(cx), Units.MmToM(cy), Units.MmToM(rOut));
+            }
+            catch (Exception e) { Log.Warn("  [extrudado] círculos não criados: " + e.GetBaseException().Message); return null; }
+
+            if (refCircle != null)
+            {
+                object relations = Prop(profile, "Relations2d");
+                int conc = 0;
+                if (relations != null)
+                {
+                    if (Relate(relations, "AddConcentric", inner, refCircle)) conc++;
+                    if (Relate(relations, "AddConcentric", outer, refCircle)) conc++;
+                }
+                Log.Info($"  [extrudado] concêntricos à aresta: {conc}/2.");
+            }
+
+            object dims = Prop(profile, "Dimensions");
+            if (dims != null)
+            {
+                try { dims.GetType().InvokeMember("Constraint", BindingFlags.SetProperty, null, dims, new object[] { true }); }
+                catch (Exception e) { Log.Warn("  [extrudado] Dimensions.Constraint = true falhou: " + e.GetBaseException().Message); }
+                DiameterDim(dims, inner, 2 * rIn);
+                DiameterDim(dims, outer, 2 * rOut);
+            }
+
+            // TRAVA: o contorno tem de ser os 2 círculos e mais nada.
+            var strays = new List<string>();
+            foreach (var el in SketchElements(profile))
+            {
+                if (el.Key == "Points2d" || SameCom(el.Value, inner) || SameCom(el.Value, outer)) continue;
+                bool construction = false;
+                try { construction = Convert.ToBoolean(profile.GetType().InvokeMember("IsConstructionElement", BindingFlags.InvokeMethod, null, profile, new[] { el.Value })); }
+                catch { }
+                if (!construction) strays.Add(el.Key);
+            }
+            if (strays.Count > 0)
+            {
+                Log.Warn($"  [extrudado] {strays.Count} elemento(s) estranho(s) no contorno ({string.Join(", ", strays)}) — desisto do extrudado.");
+                return null;
+            }
+
+            object under = Prop((object)sketch.ProfileSet, "IsUnderDefined");
+            // A coroa é um laço DENTRO do outro: sem igProfileAllowNested (8192) a SE recusa o
+            // perfil (End(9) = −113, ao vivo em 2026-09-21) e o recorte nasce igFeatureFailed —
+            // qualquer que seja o lado. Fechado (1) + sem auto-interseção (8) + aninhado (8192).
+            const int criteria = 1 | 8 | 8192;
+            int validation = -99;
+            try { validation = Convert.ToInt32(((dynamic)profile).End(criteria)); }
+            catch (Exception e) { Log.Warn("  [extrudado] Profile.End falhou: " + e.GetBaseException().Message); }
+            Log.Info($"  [extrudado] perfil End({criteria}) = {validation}{(validation == 0 ? " (válido)" : " (NÃO válido)")}; sub-definido: {under ?? "ilegível"}.");
+
+            // SENTIDO: a 1ª rodada ao vivo (2026-09-21) escolheu o lado pela normal do referencial
+            // do esboço e o recorte nasceu igFeatureFailed nos dois casos — o lado 1/2 da SE não
+            // é, comprovadamente, o que eu deduzia. Em vez de adivinhar, extrusão SIMÉTRICA
+            // (lado 3): no canal de eixo/furo o esboço está no centro do canal; no de face, a
+            // metade de fora corta ar. Fica logada a normal do plano segundo a própria SE.
+            const int igSymmetric = 3;
+            LogPlaneNormal(sketch.Plane, frame);
+            bool faceGroove = spec.Kind == GrooveKind.AxialFace;
+            double distance = faceGroove ? 2.0 * depth : depth;   // hipótese: distância simétrica = TOTAL
+
+            object cut = null;
+            try
+            {
+                var arr = new[] { (SolidEdgePart.Profile)profile };
+                object cutouts = (object)model.ExtrudedCutouts;
+                cut = cutouts.GetType().InvokeMember("AddFiniteMulti", BindingFlags.InvokeMethod, null, cutouts,
+                    new object[] { 1, arr, igSymmetric, Units.MmToM(distance) });
+            }
+            catch (Exception e) { Log.Warn("  [extrudado] ExtrudedCutouts.AddFiniteMulti falhou: " + e.GetBaseException().Message); return null; }
+            if (cut == null) { Log.Warn("  [extrudado] AddFiniteMulti devolveu nulo."); return null; }
+
+            featureCreated = true;
+            if (FeatureFailed(cut))
+            {
+                // Apagar a FEATURE leva o esboço junto (é filho dela). Antes, o esboço era
+                // apagado pela limpeza do escopo e a feature ficava na árvore dizendo "o perfil
+                // não existe mais" — lixo que o usuário tinha de tirar à mão.
+                Log.Warn($"  [extrudado] feature com Status de falha ({StatusOf(cut)}) — apagando a feature (com o esboço).");
+                scope.Release((object)sketch.ProfileSet);
+                try { ((dynamic)cut).Delete(); }
+                catch (Exception e) { Log.Warn("  [extrudado] não deu para apagar a feature falhada: " + e.GetBaseException().Message); }
+                return null;
+            }
+
+            // Conferência: extensão AXIAL real das faces novas contra o esperado — é o que diz se a
+            // distância simétrica é o total (hipótese) ou por lado.
+            double expected = depth;
+            double got = AxialExtentMm(cut, target.AxisIndex);
+            string verdict = double.IsNaN(got) ? "ilegível"
+                : Math.Abs(got - expected) < 0.02 ? "✓ distância simétrica = TOTAL"
+                : Math.Abs(got - 2 * expected) < 0.02 ? "✗ saiu o DOBRO — a distância simétrica é POR LADO"
+                : "✗ não bate";
+            Log.Info($"  [extrudado] recorte extrudado criado (simétrico, {distance:0.000} mm); extensão axial medida " +
+                     $"{got:0.000} mm, esperado {expected:0.000} mm — {verdict}.");
+            return cut;
+        }
+
+        /// <summary>Extensão ao longo do eixo das faces da feature (mm); NaN se ilegível.</summary>
+        private static double AxialExtentMm(object feature, int axis)
+        {
+            double lo = double.MaxValue, hi = double.MinValue;
+            foreach (object f in AutoEDM.Electrode.ModelingHelpers.GetFeatureFaces(feature))
+            {
+                double[] mn, mx;
+                if (!FaceGeometry.TryGetRangeMm(f, out mn, out mx)) continue;
+                lo = Math.Min(lo, mn[axis]);
+                hi = Math.Max(hi, mx[axis]);
+            }
+            return hi >= lo ? hi - lo : double.NaN;
+        }
+
+        /// <summary>Normal do plano segundo a SE (<c>RefPlane.GetNormal</c>) ao lado da do
+        /// referencial do esboço — só diagnóstico, para a regra do lado 1/2.</summary>
+        private static void LogPlaneNormal(object plane, ProfilePlaneFrame frame)
+        {
+            double[] n;
+            string why;
+            string se = FaceGeometry.TryOneArrayOut(plane, "GetNormal", out n, out why) && n != null && n.Length >= 3
+                ? $"({n[0]:0.###}, {n[1]:0.###}, {n[2]:0.###})" : "ilegível (" + why + ")";
+            Log.Info($"  [extrudado] normal do plano: SE {se}; referencial do esboço " +
+                     $"({frame.Normal[0]:0.###}, {frame.Normal[1]:0.###}, {frame.Normal[2]:0.###}).");
+        }
+
+        /// <summary>
+        /// Esconde o esboço PELA FEATURE. No recorte extrudado, <c>Profile.Visible = false</c> no
+        /// proxy que desenhou o esboço foi aceito e o esboço continuou na tela (círculo Ø17,434
+        /// selecionado ao vivo, 2026-09-21). O que resolveu, ao vivo no mesmo dia, foi
+        /// <c>ShowDimensions = false</c> na feature; <c>feature.Profile</c> veio nulo e
+        /// <c>GetProfiles</c> deu DISP_E_TYPEMISMATCH — ficam como tentativa, sem custo.
+        /// Cosmético: falha só no log.
+        /// </summary>
+        private static void HideFeatureSketch(object feature)
+        {
+            var profiles = new List<object>();
+            object single = Prop(feature, "Profile");
+            if (single != null) profiles.Add(single);
+            try
+            {
+                // Marcador TIPADO: object[] vira SAFEARRAY(VARIANT) e dá DISP_E_TYPEMISMATCH (errors.md).
+                object[] args = { 0, new SolidEdgePart.Profile[0] };
+                var mod = new ParameterModifier(2);
+                mod[0] = true;
+                mod[1] = true;
+                feature.GetType().InvokeMember("GetProfiles", BindingFlags.InvokeMethod, null, feature, args,
+                    new[] { mod }, System.Globalization.CultureInfo.InvariantCulture, null);
+                if (args[1] is Array arr)
+                    foreach (object p in arr)
+                        if (p != null && !profiles.Exists(q => SameCom(q, p))) profiles.Add(p);
+            }
+            catch (Exception e) { Log.Info("  esboço da feature: GetProfiles indisponível — " + e.GetBaseException().Message); }
+
+            int hidden = 0;
+            foreach (object p in profiles)
+            {
+                try
+                {
+                    p.GetType().InvokeMember("Visible", BindingFlags.SetProperty, null, p, new object[] { false });
+                    if (Prop(p, "Visible") is bool v && !v) hidden++;
+                }
+                catch (Exception e) { Log.Warn("  esboço da feature: Visible = false falhou — " + e.GetBaseException().Message); }
+            }
+            try { feature.GetType().InvokeMember("ShowDimensions", BindingFlags.SetProperty, null, feature, new object[] { false }); }
+            catch (Exception e) { Log.Info("  esboço da feature: ShowDimensions indisponível — " + e.GetBaseException().Message); }
+            Log.Info($"  esboço da feature: {hidden}/{profiles.Count} perfil(is) escondido(s) pela feature (conferido); cotas ocultas.");
+        }
+
+        /// <summary>Cota de diâmetro do círculo, conferida contra o esperado (mm).</summary>
+        private static void DiameterDim(object dims, object circle, double expectedMm)
+        {
+            try
+            {
+                object d = dims.GetType().InvokeMember("AddCircularDiameter", BindingFlags.InvokeMethod, null, dims, new[] { circle });
+                object v = Prop(d, "Value");
+                double got = v == null ? double.NaN : Convert.ToDouble(v) * 1000.0;
+                if (double.IsNaN(got) || Math.Abs(got - expectedMm) > 0.005)
+                    Log.Warn($"  [extrudado] cota de Ø nasceu com {got:0.###} mm, esperado {expectedMm:0.###} mm.");
+                else
+                    Log.Info($"  [extrudado] cota Ø {got:0.###} mm ✓");
+            }
+            catch (Exception e) { Log.Warn("  [extrudado] Dimensions.AddCircularDiameter falhou: " + e.GetBaseException().Message); }
+        }
+
+        /// <summary>
+        /// A face PLANA perpendicular ao eixo, no plano da aresta. Em ordem: a face que o usuário
+        /// clicou (canal de face); a face do corpo que está no plano da aresta e cobre o círculo
+        /// (pela caixa envolvente — canal de eixo/furo); e por último <c>Edge.GetFaces</c>, que
+        /// ao vivo (2026-09-21) deu DISP_E_TYPEMISMATCH e fez o extrudado nunca rodar.
+        /// </summary>
+        private static object PlanarFaceAtEdge(dynamic model, ORingTarget target, double[] axisDir)
+        {
+            if (target.Face != null && IsPlanarNormalTo(target.Face, axisDir))
+            {
+                Log.Info("  [extrudado] face plana: a que você clicou.");
+                return target.Face;
+            }
+
+            object faces = null;
+            try { faces = (object)model.Body.Faces[1]; }   // igQueryAll
+            catch (Exception e) { Log.Warn("  [extrudado] Body.Faces ilegível: " + e.GetBaseException().Message); }
+            int n = 0;
+            try { n = Convert.ToInt32(Prop(faces, "Count")); } catch { }
+            double r = target.EdgeDiameterMm / 2.0;
+            int a = target.AxisIndex, u = (a + 1) % 3, v = (a + 2) % 3;
+            for (int i = 1; i <= n; i++)
+            {
+                object f;
+                try { f = faces.GetType().InvokeMember("Item", BindingFlags.InvokeMethod, null, faces, new object[] { i }); }
+                catch { continue; }
+                if (!IsPlanarNormalTo(f, axisDir)) continue;
+                double[] mn, mx;
+                if (!FaceGeometry.TryGetRangeMm(f, out mn, out mx)) continue;
+                const double tol = 0.02;
+                bool onEdgePlane = Math.Abs(mn[a] - target.EdgeAxialMm) < tol && Math.Abs(mx[a] - target.EdgeAxialMm) < tol;
+                bool coversCircle = mn[u] <= target.CenterMm[u] - r + tol && mx[u] >= target.CenterMm[u] + r - tol &&
+                                    mn[v] <= target.CenterMm[v] - r + tol && mx[v] >= target.CenterMm[v] + r - tol;
+                if (onEdgePlane && coversCircle)
+                {
+                    Log.Info($"  [extrudado] face plana: Body.Faces item {i} (no plano da aresta, cobre o círculo).");
+                    return f;
+                }
+            }
+
+            return PlanarFaceOfEdge(target.Edge, axisDir);
+        }
+
+        private static bool IsPlanarNormalTo(object face, double[] axisDir)
+        {
+            try
+            {
+                object geom = Prop(face, "Geometry");
+                if (geom == null || Convert.ToInt32(Prop(geom, "Type")) != igPlaneGeom) return false;
+                double[] nv;
+                string why;
+                if (!FaceGeometry.TryOneArrayOut(geom, "GetNormalVector", out nv, out why) || nv == null || nv.Length < 3) return false;
+                double len = Math.Sqrt(nv[0] * nv[0] + nv[1] * nv[1] + nv[2] * nv[2]);
+                return len > 1e-12 && Math.Abs(ProfilePlaneFrame.Dot(nv, axisDir)) / len > 0.999;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>A face PLANA, perpendicular ao eixo, entre as faces que a aresta toca
+        /// (<c>Edge.GetFaces</c>, mesmo marshal do SharpCornerProbe).</summary>
+        private static object PlanarFaceOfEdge(object edge, double[] axisDir)
+        {
+            Array faces;
+            try
+            {
+                // Marcador TIPADO (errors.md): com object[0] deu DISP_E_TYPEMISMATCH ao vivo.
+                object[] args = { 0, new SolidEdgeGeometry.Face[0] };
+                var mod = new ParameterModifier(2);
+                mod[0] = true;
+                mod[1] = true;
+                edge.GetType().InvokeMember("GetFaces", BindingFlags.InvokeMethod, null, edge, args,
+                    new[] { mod }, System.Globalization.CultureInfo.InvariantCulture, null);
+                faces = args[1] as Array;
+            }
+            catch (Exception e) { Log.Warn("  [extrudado] Edge.GetFaces falhou: " + e.GetBaseException().Message); return null; }
+            if (faces == null) return null;
+
+            foreach (object f in faces)
+            {
+                try
+                {
+                    object geom = Prop(f, "Geometry");
+                    if (geom == null || Convert.ToInt32(Prop(geom, "Type")) != igPlaneGeom) continue;
+                    double[] n;
+                    string why;
+                    if (!FaceGeometry.TryOneArrayOut(geom, "GetNormalVector", out n, out why) || n == null || n.Length < 3) continue;
+                    double len = Math.Sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                    if (len > 1e-12 && Math.Abs(ProfilePlaneFrame.Dot(n, axisDir)) / len > 0.999) return f;
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        /// <summary>Abre um esboço no plano (ou face) e só o devolve se o referencial passar no
+        /// teste; senão desfaz o esboço.</summary>
+        private static AxisSketch TryOpenSketchWhere(dynamic doc, SketchScope scope, object plane, bool planeIsTemporary,
+            Func<ProfilePlaneFrame, bool> accept)
+        {
+            dynamic ps = null;
+            try
+            {
+                ps = scope.AddProfileSet();
+                dynamic profile = ps.Profiles.Add(plane);
+                var frame = ProfilePlaneFrame.Discover((object)profile);
+                if (frame != null && accept(frame))
+                    return new AxisSketch { ProfileSet = ps, Profile = profile, Plane = plane, Frame = frame, PlaneIsTemporary = planeIsTemporary };
+            }
+            catch (Exception e) { Log.Warn("  [extrudado] não deu para abrir o esboço: " + e.GetBaseException().Message); }
+            if (ps != null) scope.DropProfileSet((object)ps);
+            return null;
+        }
+
+        private const int igLineStart = 0, igLineEnd = 1;   // KeypointIndexConstants (reflexão)
+
+        private static readonly string[] SketchCollections =
+            { "Lines2d", "Arcs2d", "Circles2d", "Ellipses2d", "EllipticalArcs2d", "BSplineCurves2d", "Points2d" };
+
+        /// <summary>Todos os elementos 2D do esboço, por coleção.</summary>
+        private static List<KeyValuePair<string, object>> SketchElements(object profile)
+        {
+            var all = new List<KeyValuePair<string, object>>();
+            foreach (string name in SketchCollections)
+            {
+                object col = Prop(profile, name);
+                if (col == null) continue;
+                int n = 0;
+                try { n = Convert.ToInt32(Prop(col, "Count")); } catch { }
+                for (int i = 1; i <= n; i++)
+                {
+                    try { all.Add(new KeyValuePair<string, object>(name, col.GetType().InvokeMember("Item", BindingFlags.InvokeMethod, null, col, new object[] { i }))); }
+                    catch { }
+                }
+            }
+            return all;
+        }
+
+        /// <summary>O que está em <paramref name="after"/> e não estava em <paramref name="before"/> (identidade COM).</summary>
+        private static List<KeyValuePair<string, object>> NewElements(List<KeyValuePair<string, object>> before,
+            List<KeyValuePair<string, object>> after)
+        {
+            var added = new List<KeyValuePair<string, object>>();
+            foreach (var a in after)
+                if (!before.Exists(b => SameCom(a.Value, b.Value))) added.Add(a);
+            return added;
+        }
+
+        private static bool SameCom(object a, object b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null) return false;
+            IntPtr pa = IntPtr.Zero, pb = IntPtr.Zero;
+            try
+            {
+                pa = System.Runtime.InteropServices.Marshal.GetIUnknownForObject(a);
+                pb = System.Runtime.InteropServices.Marshal.GetIUnknownForObject(b);
+                return pa == pb;
+            }
+            catch { return false; }
+            finally
+            {
+                if (pa != IntPtr.Zero) System.Runtime.InteropServices.Marshal.Release(pa);
+                if (pb != IntPtr.Zero) System.Runtime.InteropServices.Marshal.Release(pb);
+            }
+        }
+
+        private static void DeleteAll(List<object> items)
+        {
+            for (int i = items.Count - 1; i >= 0; i--)
+            {
+                try { items[i].GetType().InvokeMember("Delete", BindingFlags.InvokeMethod, null, items[i], null); }
+                catch (Exception e) { Log.Warn("  [vínculo] não deu para apagar um elemento da amarra: " + e.GetBaseException().Message); }
+            }
+            items.Clear();
+        }
+
+        private static string Describe(object o)
+        {
+            if (o == null) return "vazio";
+            if (o is Array a) return $"array[{a.Length}]";
+            return AutoEDM.Com.ComDiagnostics.TypeNameOf(o) ?? o.GetType().Name;
+        }
+
+        private static bool Relate(object relations, string method, params object[] args)
+        {
+            var full = new object[args.Length + 1];
+            Array.Copy(args, full, args.Length);
+            full[args.Length] = Type.Missing;   // guaranteed_ok
+            try
+            {
+                relations.GetType().InvokeMember(method, BindingFlags.InvokeMethod, null, relations, full);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.Warn($"  [vínculo] Relations2d.{method} falhou: " + e.GetBaseException().Message);
+                return false;
+            }
         }
 
         /// <summary>
@@ -484,6 +1139,81 @@ namespace AutoEDM.Sealing
             public dynamic Plane;
             public ProfilePlaneFrame Frame;
             public bool PlaneIsTemporary;
+
+            /// <summary>O plano nasce DA ARESTA da peça (e não de um plano base a uma distância
+            /// fixa) — é o que faz o canal andar junto quando a peça é editada.</summary>
+            public bool Associative;
+        }
+
+        private const int igCurveStart = 14, igPivotStart = 3;   // ReferenceElementConstants (dump)
+
+        /// <summary>
+        /// ESBOÇO ASSOCIATIVO (Carlos, 2026-09-21: "apesar do recurso ser ordenado, não existe
+        /// vínculo do esboço com o modelo, e os alojamentos são destruídos se o modelo for
+        /// alterado no síncrono").
+        ///
+        /// Ser ORDENADO não basta. Um recurso ordenado só se refaz a partir das REFERÊNCIAS que
+        /// o esboço dele guarda — e o esboço antigo não guardava nenhuma: plano base (ou paralelo
+        /// a ele por uma distância FIXA) e linhas soltas em coordenada absoluta. Quando o furo
+        /// anda no síncrono, nada no canal sabe disso: ele fica onde estava, cortando o vazio ou
+        /// falhando.
+        ///
+        /// Aqui o plano nasce da ARESTA circular clicada: <c>RefPlanes.AddNormalToCurve</c> no
+        /// início da curva. Um plano normal a um círculo, num ponto dele, CONTÉM o eixo do
+        /// círculo — é exatamente o plano de que o corte revolvido precisa. E como o plano
+        /// pertence à aresta, o esboço (cujas coordenadas são locais ao plano) vai junto quando
+        /// o furo é movido. LIMITE conhecido: o esboço anda RÍGIDO com o ponto da aresta; se o
+        /// DIÂMETRO do furo mudar, o eixo desenhado fica fora do eixo real — prender o
+        /// retângulo à aresta projetada (<c>Profile.IncludeEdge</c> + <c>Relations2d</c>) é o
+        /// passo seguinte, e depende de sondar ao vivo os índices de keypoint.
+        ///
+        /// ASSINATURA do dump/reflexão (SE 2023), VALIDADA AO VIVO em 2026-09-21 (canal de face
+        /// num cilindro Ø20, 1ª tentativa com orientação RefPlanes.Item(1): origem do plano em
+        /// cima da aresta, eixo contido, corte igFeatureOK):
+        ///   AddNormalToCurve(Curve, PlanePoint, OrientationPlaneOrPivot, PivotOrigin, [Local], [ParentCurve])
+        /// Por isso cada tentativa é CONFERIDA pelo referencial do próprio esboço (o plano tem de
+        /// conter o eixo), e qualquer falha devolve null para o caminho antigo, com aviso no log.
+        /// </summary>
+        private static AxisSketch OpenSketchOnEdge(dynamic doc, SketchScope scope, object edge,
+            double[] axisPointMm, double[] axisDir)
+        {
+            if (edge == null) { Log.Warn("  [plano] sem a aresta COM — não dá para ancorar o esboço nela."); return null; }
+
+            object refPlanes;
+            try { refPlanes = (object)doc.RefPlanes; }
+            catch (Exception e) { Log.Warn("  [plano] RefPlanes inacessível: " + e.GetBaseException().Message); return null; }
+
+            // O plano de orientação só decide para onde aponta o X do esboço; qualquer plano base
+            // que o SE aceite serve. Tenta os três até um dar um plano que contenha o eixo.
+            for (int i = 1; i <= 3; i++)
+            {
+                object orient;
+                try { orient = (object)doc.RefPlanes.Item(i); } catch { continue; }
+
+                object plane = null;
+                try
+                {
+                    plane = refPlanes.GetType().InvokeMember("AddNormalToCurve", BindingFlags.InvokeMethod, null, refPlanes,
+                        new object[] { edge, igCurveStart, orient, igPivotStart, Type.Missing, Type.Missing });
+                }
+                catch (Exception e)
+                {
+                    Log.Warn($"  [plano] AddNormalToCurve(aresta, início, RefPlanes.Item({i})): " + e.GetBaseException().Message);
+                    if (IsDisconnected(e)) return null;
+                }
+                if (plane == null) continue;
+                scope.TrackTempPlane(plane);   // some no fim se o corte não usar
+
+                AxisSketch s = TryOpenSketch(doc, scope, plane, true, axisPointMm, axisDir);
+                if (s != null)
+                {
+                    s.Associative = true;
+                    Log.Info($"  [plano] ASSOCIATIVO: normal à aresta clicada, no início da curva (orientação RefPlanes.Item({i})).");
+                    return s;
+                }
+                Log.Warn($"  [plano] o plano normal à aresta (orientação Item({i})) não contém o eixo — descartado.");
+            }
+            return null;
         }
 
         /// <summary>

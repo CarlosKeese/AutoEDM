@@ -54,6 +54,78 @@ namespace AutoEDM.Electrode
 
             object faceStyle = GetOrCreateRaFaceStyle(partDoc, color, ra);
             if (faceStyle == null) { Log.Warn("Cor: sem FaceStyle utilizável — pintura pulada (GAP/posicionamento não são afetados)."); return; }
+            ApplyStyle(faces, faceStyle, color);
+        }
+
+        /// <summary>
+        /// Pinta as faces com um estilo que JÁ EXISTE na peça, pelo nome — o primeiro da lista
+        /// que existir (ex.: "Orange", o laranja da biblioteca padrão da SE, e "Laranja", o nome
+        /// numa instalação em português). O estilo achado é usado COMO ESTÁ: é a cor do usuário,
+        /// e mexer no Diffuse dele repintaria tudo que já usa esse estilo. Só se nenhum existir é
+        /// que se cria <paramref name="fallbackName"/> com <paramref name="fallbackColor"/>.
+        /// Devolve o nome do estilo aplicado (null se nada foi pintado). NUNCA lança.
+        /// </summary>
+        public static string PaintWithNamedStyle(object partDoc, IReadOnlyList<object> faces,
+            IEnumerable<string> preferredStyles, string fallbackName, Color fallbackColor)
+        {
+            try
+            {
+                if (faces == null || faces.Count == 0) { Log.Warn("Cor: sem faces p/ pintar."); return null; }
+
+                object styles;
+                try { styles = Get(partDoc, "FaceStyles"); }
+                catch (Exception e) { Log.Warn("Cor: Document.FaceStyles inacessível — " + e.GetBaseException().Message); return null; }
+
+                object style = null;
+                foreach (string name in preferredStyles ?? new string[0])
+                {
+                    try { style = Call(styles, "Item", name); } catch { style = null; } // inexistente: HRESULT 0x80040B50
+                    if (style != null) { Log.Info($"Cor: usando o estilo de face '{name}' da peça."); break; }
+                }
+
+                Color logged = fallbackColor;
+                if (style == null)
+                {
+                    try { style = Call(styles, "Item", fallbackName); } catch { style = null; }
+                    if (style == null)
+                    {
+                        try { style = Call(styles, "Add", fallbackName, ""); Log.Info($"Cor: FaceStyle '{fallbackName}' criado."); }
+                        catch (Exception e) { Log.Warn($"Cor: criar FaceStyle '{fallbackName}' falhou — " + e.GetBaseException().Message); return null; }
+                    }
+                    try
+                    {
+                        Put(style, "DiffuseRed", fallbackColor.R / 255f);
+                        Put(style, "DiffuseGreen", fallbackColor.G / 255f);
+                        Put(style, "DiffuseBlue", fallbackColor.B / 255f);
+                    }
+                    catch (Exception e) { Log.Warn($"Cor: ajustar Diffuse* de '{fallbackName}' falhou — " + e.GetBaseException().Message); }
+                }
+                else logged = ReadDiffuse(style, fallbackColor);
+
+                ApplyStyle(faces, style, logged);
+                return ReadStyleName(style);
+            }
+            catch (Exception e)
+            {
+                Log.Warn("Cor: pintura falhou (cosmético, segue) — " + e.GetBaseException().Message);
+                return null;
+            }
+        }
+
+        /// <summary>O Diffuse de um estilo, só para o log dizer que cor foi aplicada.</summary>
+        private static Color ReadDiffuse(object style, Color fallback)
+        {
+            try
+            {
+                int C(string p) => (int)Math.Round(Convert.ToDouble(Get(style, p)) * 255.0);
+                return Color.FromArgb(C("DiffuseRed"), C("DiffuseGreen"), C("DiffuseBlue"));
+            }
+            catch { return fallback; }
+        }
+
+        /// <summary><c>Body.SetFacesStyle</c> por corpo, conferindo de volta face a face.</summary>
+        private static void ApplyStyle(IReadOnlyList<object> faces, object faceStyle, Color color)
+        {
             string styleName = ReadStyleName(faceStyle);
 
             List<SolidEdgeGeometry.Face> typed = OnlyFaces(faces, "Cor");

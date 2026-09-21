@@ -31,7 +31,7 @@ namespace AutoEDM.Sealing
         /// avisar em vez de recusar).
         /// </summary>
         public static ORingGrooveSpec Compute(ORingSize ring, GrooveKind kind, double sealingDiameterMm,
-            SealMotion motion, Elastomer elastomer)
+            SealMotion motion, Elastomer elastomer, FacePressure pressure = FacePressure.Internal)
         {
             if (ring == null) throw new ArgumentNullException(nameof(ring));
 
@@ -68,6 +68,7 @@ namespace AutoEDM.Sealing
                 Kind = kind,
                 Motion = motion,
                 Elastomer = elastomer,
+                Pressure = pressure,
                 SealingDiameter = sealingDiameterMm,
                 Depth = depth,
                 Width = width,
@@ -103,16 +104,30 @@ namespace AutoEDM.Sealing
                         ? (ring.OuterDiameter - spec.GrooveBottomDiameter) / ring.OuterDiameter : 0.0;
                     break;
 
-                default: // AxialFace — o anel só DEITA no canal: quem manda no Ø é o anel
-                    spec.GrooveInnerDiameter = ring.MeanDiameter - width;
-                    spec.GrooveOuterDiameter = ring.MeanDiameter + width;
-                    spec.Stretch = 0.0;
+                default: // AxialFace — o anel deita no canal ENCOSTADO na parede que segura a pressão
+                    double fit = ORingGrooveRules.FaceSeatFit;
+                    if (pressure == FacePressure.External)
+                    {
+                        // Empurrado para dentro: o d1 abraça a parede INTERNA, um pouco esticado.
+                        spec.GrooveInnerDiameter = ring.InnerDiameter * (1.0 + fit);
+                        spec.GrooveOuterDiameter = spec.GrooveInnerDiameter + 2.0 * width;
+                        spec.Stretch = ring.InnerDiameter > 0
+                            ? (spec.GrooveInnerDiameter - ring.InnerDiameter) / ring.InnerDiameter : 0.0;
+                    }
+                    else
+                    {
+                        // Empurrado para fora: o Ø externo encosta na parede EXTERNA, um pouco comprimido.
+                        spec.GrooveOuterDiameter = ring.OuterDiameter * (1.0 - fit);
+                        spec.GrooveInnerDiameter = spec.GrooveOuterDiameter - 2.0 * width;
+                        spec.Stretch = ring.OuterDiameter > 0
+                            ? (ring.OuterDiameter - spec.GrooveOuterDiameter) / ring.OuterDiameter : 0.0;
+                    }
                     break;
             }
 
             // Esticar AFINA o cordão, e cordão mais fino é menos esmagamento — o número que
             // interessa é o depois, não o de catálogo.
-            double effectiveD2 = kind == GrooveKind.RadialExternal
+            double effectiveD2 = !spec.StretchIsOuterCompression
                 ? ORingGrooveRules.EffectiveCrossSection(d2, spec.Stretch)
                 : d2;
             spec.Squeeze = effectiveD2 > 0 ? (effectiveD2 - depth) / effectiveD2 : 0.0;
@@ -160,12 +175,22 @@ namespace AutoEDM.Sealing
             }
             else
             {
-                double deviation = spec.Ring.MeanDiameter - sealingDiameterMm;
+                double center = FaceGrooveCenter(spec);
+                double deviation = center - sealingDiameterMm;
                 if (Math.Abs(deviation) > 0.01)
                     Add(GrooveIssueLevel.Note,
-                        $"o canal foi centrado no Ø médio do anel ({spec.Ring.MeanDiameter:0.00}), " +
-                        $"que fica {Math.Abs(deviation):0.00} mm {(deviation > 0 ? "fora" : "dentro")} do Ø de referência " +
-                        $"que você marcou ({sealingDiameterMm:0.00}). Num canal de face é o anel que manda no diâmetro.");
+                        $"o canal ficou com o centro no Ø {center:0.00}, " +
+                        $"{Math.Abs(deviation):0.00} mm {(deviation > 0 ? "fora" : "dentro")} do Ø de referência " +
+                        $"({sealingDiameterMm:0.00}): num canal de face é o anel que manda no diâmetro — o canal " +
+                        $"encosta no Ø {(spec.Pressure == FacePressure.Internal ? "EXTERNO" : "INTERNO")} dele.");
+                if (spec.Pressure == FacePressure.External && spec.Stretch > ORingGrooveRules.MaxStretch(motion, elastomer))
+                    Add(GrooveIssueLevel.Error,
+                        $"o anel fica esticado {Pct(spec.Stretch)} na parede interna, acima do limite de " +
+                        $"{Pct(ORingGrooveRules.MaxStretch(motion, elastomer))} para esta vedação.");
+                if (spec.Pressure == FacePressure.Internal && spec.Stretch > ORingGrooveRules.MaxOuterCompression(elastomer))
+                    Add(GrooveIssueLevel.Error,
+                        $"o anel entra comprimido {Pct(spec.Stretch)} na parede externa, acima do limite de " +
+                        $"{Pct(ORingGrooveRules.MaxOuterCompression(elastomer))}: ele enruga dentro do canal.");
                 if (spec.GrooveInnerDiameter <= 0)
                     Add(GrooveIssueLevel.Error, "o canal fecha no centro — anel pequeno demais para um canal de face.");
             }
@@ -194,7 +219,8 @@ namespace AutoEDM.Sealing
         /// mostra as alternativas, e quem escolhe é o operador.
         /// </summary>
         public static IReadOnlyList<ORingCandidate> Rank(ORingCatalog catalog, GrooveKind kind,
-            double sealingDiameterMm, SealMotion motion, Elastomer elastomer, double? crossSectionMm = null)
+            double sealingDiameterMm, SealMotion motion, Elastomer elastomer, double? crossSectionMm = null,
+            FacePressure pressure = FacePressure.Internal)
         {
             if (catalog == null || catalog.Count == 0) return new List<ORingCandidate>();
 
@@ -207,12 +233,12 @@ namespace AutoEDM.Sealing
             foreach (var ring in pool)
             {
                 ORingGrooveSpec spec;
-                try { spec = Compute(ring, kind, sealingDiameterMm, motion, elastomer); }
+                try { spec = Compute(ring, kind, sealingDiameterMm, motion, elastomer, pressure); }
                 catch { continue; }
 
                 double score;
                 if (kind == GrooveKind.AxialFace)
-                    score = Math.Abs(ring.MeanDiameter - sealingDiameterMm);
+                    score = Math.Abs(FaceGrooveCenter(spec) - sealingDiameterMm);
                 else if (kind == GrooveKind.RadialInternal)
                     score = Math.Abs(spec.Stretch - ORingGrooveRules.TargetOuterCompression) * 1000.0;
                 else
@@ -232,7 +258,8 @@ namespace AutoEDM.Sealing
         /// nada que sirva ("compre um anel de d1 ≈ X"). Nenhuma tabela envolvida.
         /// </summary>
         public static double IdealInnerDiameter(GrooveKind kind, double sealingDiameterMm,
-            double crossSectionMm, SealMotion motion)
+            double crossSectionMm, SealMotion motion, Elastomer elastomer = Elastomer.Nbr,
+            FacePressure pressure = FacePressure.Internal)
         {
             double depth = GrooveDepth(crossSectionMm, motion);
 
@@ -244,9 +271,21 @@ namespace AutoEDM.Sealing
                     return (sealingDiameterMm + 2.0 * depth) / (1.0 - ORingGrooveRules.TargetOuterCompression)
                            - 2.0 * crossSectionMm;
                 default:
-                    return sealingDiameterMm - crossSectionMm; // canal de face: d1 = Ø médio − d2
+                {
+                    // Canal de face: o Ø pedido é o CENTRO do canal; o anel encosta numa das paredes.
+                    double width = GrooveWidth(crossSectionMm, motion, elastomer);
+                    double fit = ORingGrooveRules.FaceSeatFit;
+                    return pressure == FacePressure.External
+                        ? (sealingDiameterMm - width) / (1.0 + fit)
+                        : (sealingDiameterMm + width) / (1.0 - fit) - 2.0 * crossSectionMm;
+                }
             }
         }
+
+        /// <summary>Ø do CENTRO do canal de face — é por ele que o canal é posicionado em
+        /// relação à aresta de referência (<see cref="FaceSealingDiameter"/>).</summary>
+        public static double FaceGrooveCenter(ORingGrooveSpec spec) =>
+            spec == null ? 0.0 : (spec.GrooveInnerDiameter + spec.GrooveOuterDiameter) / 2.0;
 
         /// <summary>
         /// Profundidade do canal para uma seção e um movimento — tabela quando existe, cálculo
@@ -283,7 +322,7 @@ namespace AutoEDM.Sealing
         }
 
         /// <summary>
-        /// Num canal de FACE, o Ø em que o CORDÃO deve correr, a partir da aresta de referência
+        /// Num canal de FACE, o Ø do CENTRO do canal, a partir da aresta de referência
         /// e da PAREDE que se quer entre ela e o canal.
         ///
         /// A parede é medida até a borda do canal MAIS PRÓXIMA da aresta, não até o centro dele

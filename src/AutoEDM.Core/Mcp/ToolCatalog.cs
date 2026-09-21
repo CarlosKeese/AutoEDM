@@ -222,6 +222,216 @@ namespace AutoEDM.Mcp
                     "curvas de construção visíveis e grava na pasta da peça um .igs por altura Z, em milímetros e nas " +
                     "coordenadas da própria peça — retas e arcos exatos, B-splines com polos e nós originais, prontos para o " +
                     "Pitágoras. Rode 'se_curvas_superficies' antes se as curvas ainda não existirem."
+            },
+
+            // ------------------------------------------ ambiente de modelagem (modo ESCRITA)
+            new ToolSpec
+            {
+                Name = "se_trocar_ambiente",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"ambiente\":{\"type\":\"string\",\"enum\":[\"sincrono\",\"ordenado\"],\"description\":\"O ambiente de destino.\"}}," +
+                    "\"required\":[\"ambiente\"],\"additionalProperties\":false}",
+                Description =
+                    "ALTERA A PEÇA. Troca a PEÇA ativa entre modelagem SÍNCRONA e ORDENADA — o mesmo que o botão de ambiente " +
+                    "da barra de status do Solid Edge. É um passo À PARTE, de propósito: nenhuma outra ferramenta troca o " +
+                    "ambiente sozinha, porque a troca reconstrói o corpo e toda face/aresta lida antes vira proxy morto. Por " +
+                    "isso esta ferramenta DESCARTA a seleção: troque PRIMEIRO e só então peça ao usuário para selecionar. " +
+                    "Síncrono serve a 'se_criar_base', 'se_unir_superficies', 'se_modelar' e ao WEDM; ordenado serve a " +
+                    "'se_aplicar_gap' e 'se_alojamento_oring'."
+            },
+
+            // ------------------------------------------------- botões: montagem
+            new ToolSpec
+            {
+                Name = "se_criar_eletrodos",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"confirmar\":{\"type\":\"boolean\",\"description\":\"false (padrão) = só a CONFERÊNCIA da queima detectada, nada é criado. true = cria.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "Botão 'Criar eletrodos'. MONTAGEM ativa. Sem 'confirmar' devolve só a CONFERÊNCIA — a queima detectada " +
+                    "por cor e quantos eletrodos sairiam — sem criar nada: MOSTRE ao usuário e só chame com 'confirmar':true " +
+                    "depois do sim dele (é a pergunta que o botão faz). Com 'confirmar' cria uma peça VAZIA por eletrodo na " +
+                    "subpasta 'Eletrodos' e insere posicionada. Não salva a montagem."
+            },
+            new ToolSpec
+            {
+                Name = "se_criar_eletrodo_manual",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Criar eletrodo (manual)'. MONTAGEM ativa com a(s) FACE(s) do fundo do bolsão SELECIONADA(s) (o " +
+                    "usuário clica na peça e clica de novo no mesmo ponto, ou segura Alt). Cria e posiciona UMA peça no " +
+                    "centro XY e no Z mais fundo das faces, e grava o Ra lido pela cor. Não salva a montagem."
+            },
+            new ToolSpec
+            {
+                Name = "se_duplicar_eletrodo",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Duplicar eletrodo'. MONTAGEM ativa com a OCORRÊNCIA de UM eletrodo já com GAP aplicado " +
+                    "selecionada. Cria a cópia com o GAP no PRÓXIMO Ra da escada (desbaste) e a posiciona em TODAS as " +
+                    "posições onde o original aparece. Não salva a montagem."
+            },
+            new ToolSpec
+            {
+                Name = "se_lista_corte",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Lista de corte', em texto. MONTAGEM ativa com as ocorrências de eletrodo selecionadas: uma linha " +
+                    "por arquivo com as posições, o perfil de cobre do estoque identificado pelas medidas e a medida na " +
+                    "serra já com o sobremetal. Não altera nada (a impressão continua na janela do botão)."
+            },
+            new ToolSpec
+            {
+                Name = "se_lista_modificacoes",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Lista de modificações', só a varredura. MONTAGEM do molde ativa: lista as peças do projeto com " +
+                    "grupo \"Rev.N\" na árvore ordenada, as operações do grupo e o que o usuário já escreveu na folha. " +
+                    "Não altera nada e não gera a planilha (isso continua na janela)."
+            },
+            new ToolSpec
+            {
+                Name = "se_ficha",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Ficha (spec-sheet)'. GRAVA ARQUIVOS (.txt e .csv) na pasta do projeto, não altera o modelo. " +
+                    "MONTAGEM ativa: uma ficha por eletrodo com Ra, pegada, blank, offset por Ra e fixação; o texto volta junto."
+            },
+
+            // ---------------------------------------------------- botões: peça
+            new ToolSpec
+            {
+                Name = "se_criar_base",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"apenasPlanejar\":{\"type\":\"boolean\",\"description\":\"true = só dimensiona e lista os blanks que servem, sem modelar.\"}," +
+                    "\"material\":{\"type\":\"string\",\"enum\":[\"Cobre\",\"CuW80\"],\"description\":\"Padrão Cobre.\"}," +
+                    "\"blank\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"Número do blank na lista do plano. 0 (padrão) = automático, o mais compacto.\"}," +
+                    "\"afastamentoMm\":{\"type\":\"number\",\"minimum\":0,\"description\":\"Espaço entre o topo das superfícies e a base. Padrão 0.\"}," +
+                    "\"alturaMm\":{\"type\":\"number\",\"minimum\":3,\"description\":\"Altura do bloco. Padrão 15.\"}," +
+                    "\"fixacao\":{\"type\":\"boolean\",\"description\":\"Furos/eixo de fixação. Padrão true.\"}," +
+                    "\"faixa\":{\"type\":\"boolean\",\"description\":\"Faixa de medição de 5 mm com a orientação. Padrão true.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "Botão 'Criar Base', sem a janela. PEÇA ativa em SÍNCRONO, com a superfície de queima copiada. Cria o " +
+                    "bloco no blank do catálogo, a faixa de medição e a fixação. Chame primeiro com 'apenasPlanejar':true " +
+                    "para ver a pegada, o bloco e os blanks numerados, e depois sem ele (com 'blank':N para fixar uma " +
+                    "barra). Não salva."
+            },
+            new ToolSpec
+            {
+                Name = "se_unir_superficies",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Unir superfícies'. PEÇA ativa em SÍNCRONO, já com o bloco. Une a superfície de queima ao bloco " +
+                    "num sólido único (fecha os vãos laterais com 'Limite' quando precisa). SÓ une: o GAP vem depois, em " +
+                    "ordenado, com 'se_aplicar_gap'. Não salva."
+            },
+            new ToolSpec
+            {
+                Name = "se_aplicar_gap",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"ra\":{\"type\":\"number\",\"description\":\"Ra em µm, da tabela. Omitido = o Ra gravado na peça.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "Botão 'Aplicar GAP', sem a janela. PEÇA ativa em ORDENADO, com o corpo já unido. Aplica o offset de " +
+                    "faísca do Ra (Model.FaceOffsets, editável na árvore), pinta a cor do Ra e nomeia a feature. Sem 'ra' " +
+                    "usa o Ra gravado na peça; se não houver, devolve a tabela de Ra/GAP para escolher. Selecione as faces " +
+                    "de queima antes, ou chame logo depois de um 'se_unir_superficies' bem-sucedido. Não salva."
+            },
+            new ToolSpec
+            {
+                Name = "se_alojamento_oring",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"apenasPlanejar\":{\"type\":\"boolean\",\"description\":\"true (PADRÃO) = só calcula e lista. false = corta.\"}," +
+                    "\"arestas\":{\"type\":\"array\",\"items\":{\"type\":\"integer\",\"minimum\":1},\"description\":\"Números das arestas circulares (da lista devolvida) que viram alojamento.\"}," +
+                    "\"tipo\":{\"type\":\"string\",\"enum\":[\"eixo\",\"furo\",\"face\"],\"description\":\"Omitido = o que a geometria da face sugere.\"}," +
+                    "\"vedacao\":{\"type\":\"string\",\"enum\":[\"estatica\",\"reciproca\",\"rotativa\"],\"description\":\"Padrão estática.\"}," +
+                    "\"elastomero\":{\"type\":\"string\",\"enum\":[\"nbr\",\"fkm\"],\"description\":\"Padrão NBR.\"}," +
+                    "\"pressao\":{\"type\":\"string\",\"enum\":[\"interna\",\"externa\"],\"description\":\"Só canal de face: lado da pressão. interna (PADRÃO) = anel apoia no Ø externo do canal; externa/vácuo = no Ø interno.\"}," +
+                    "\"secaoMm\":{\"type\":\"number\",\"description\":\"Seção do cordão (d2). Omitido = cada aresta usa a que o diâmetro dela pede.\"}," +
+                    "\"afastamentoMm\":{\"type\":\"number\",\"minimum\":0,\"description\":\"Eixo/furo: aresta → centro do canal, no eixo (padrão 5). Face: parede entre a aresta e o canal (padrão e mínimo 1).\"}," +
+                    "\"anel\":{\"type\":\"string\",\"description\":\"Designação do anel, só com UMA aresta. Omitido = o melhor da lista.\"}," +
+                    "\"aceitarForaDaNorma\":{\"type\":\"boolean\",\"description\":\"Corta mesmo com alojamento fora da norma. Só com o de acordo do usuário.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "Botão 'Alojamento de O'ring', sem a janela. PEÇA ativa em ORDENADO, com a FACE de vedação selecionada " +
+                    "(cilíndrica = eixo/furo, plana = de face). Lista as arestas circulares da face, numeradas, e calcula por " +
+                    "ISO 3601 o anel do catálogo e o canal de cada uma (esmagamento, estiramento, preenchimento). O canal criado " +
+                    "recebe o nome do anel com número de instância e é pintado de laranja (vedação). Por padrão " +
+                    "só PLANEJA: mostre ao usuário e corte com 'apenasPlanejar':false. Alojamento fora da norma só é cortado " +
+                    "com 'aceitarForaDaNorma':true. Não salva."
+            },
+
+            // ------------------------------------------------ botões: diagnóstico
+            new ToolSpec
+            {
+                Name = "se_sonda_malha",
+                Writes = false,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"seccionamento\":{\"type\":\"boolean\",\"description\":\"Inclui o teste de seccionamento, que CRIA esboços (tenta apagar, nunca salva). Exige escrita liberada.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "Botão 'Sonda de malha' (Eng. Reversa). PEÇA ativa com a malha importada: mede o que a API de malha da " +
+                    "Solid Edge entrega sobre ela (corpos de facetas, triângulos, caixa, membros da API existentes). Só lê — " +
+                    "a não ser com 'seccionamento':true, que cria esboços e por isso exige a escrita liberada."
+            },
+            new ToolSpec
+            {
+                Name = "se_sonda_interpart",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Sonda inter-part'. MONTAGEM ativa com a ocorrência da cavidade selecionada. Testa as rotas de " +
+                    "cópia de faces entre peças em peças DESCARTÁVEIS (cria documentos novos, não altera a cavidade, não " +
+                    "salva a montagem) e devolve o que registrou."
+            },
+            new ToolSpec
+            {
+                Name = "se_sonda_rosca",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"ligarExibicaoRosca\":{\"type\":\"boolean\",\"description\":\"Liga a opção GLOBAL do Solid Edge 'exibir roscas' se estiver desligada. Muda a SE inteira — só com o pedido do usuário.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "Botão 'Sonda de rosca (M6)'. Cria uma PEÇA NOVA descartável (não salva) com um bloco e quatro furos M6, " +
+                    "um por receita da API de rosca, e mede o Ø real de cada um. Não precisa de documento aberto."
+            },
+            new ToolSpec
+            {
+                Name = "se_gravador_iniciar",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Iniciar leitura de ação manual'. Tira a foto das features e superfícies do documento ativo ANTES " +
+                    "de o usuário fazer uma ação à mão no Solid Edge. Depois da ação, chame 'se_gravador_gravar'. Não altera nada."
+            },
+            new ToolSpec
+            {
+                Name = "se_gravador_gravar",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Gravar log da leitura'. Compara com a foto do 'se_gravador_iniciar' e devolve o tipo e as " +
+                    "propriedades das features que o usuário criou à mão — é assim que uma ação manual vira receita COM. " +
+                    "Não altera nada."
             }
         };
 

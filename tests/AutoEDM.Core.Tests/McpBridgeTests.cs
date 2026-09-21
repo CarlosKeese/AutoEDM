@@ -107,7 +107,13 @@ namespace AutoEDM.Core.Tests
             writers.Sort(StringComparer.Ordinal);   // a ordem no catálogo é de apresentação, não contrato
 
             Assert.Equal(
-                new[] { "se_curvas_superficies", "se_exportar_perfis_wedm", "se_modelar" },
+                new[]
+                {
+                    "se_alojamento_oring", "se_aplicar_gap", "se_criar_base", "se_criar_eletrodo_manual",
+                    "se_criar_eletrodos", "se_curvas_superficies", "se_duplicar_eletrodo", "se_exportar_perfis_wedm",
+                    "se_ficha", "se_modelar", "se_sonda_interpart", "se_sonda_rosca", "se_trocar_ambiente",
+                    "se_unir_superficies"
+                },
                 writers.ToArray());
         }
 

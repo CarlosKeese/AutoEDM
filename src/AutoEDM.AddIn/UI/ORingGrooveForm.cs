@@ -80,7 +80,7 @@ namespace AutoEDM.AddIn.UI
 
         private Label _lblFace, _lblEdge;
         private Button _btnFace, _btnEdge, _btnCreate, _btnClose, _btnCatalog;
-        private ComboBox _cboKind, _cboMotion, _cboElastomer, _cboSection, _cboRing;
+        private ComboBox _cboKind, _cboMotion, _cboElastomer, _cboPressure, _cboSection, _cboRing;
         private NumericUpDown _numOffset;
         private Label _lblOffset;
         private TextBox _txtReport;
@@ -109,7 +109,7 @@ namespace AutoEDM.AddIn.UI
             MaximizeBox = false; MinimizeBox = false;
             ShowInTaskbar = false;
             TopMost = true;              // fica visível por cima da SE enquanto se seleciona
-            StartPosition = FormStartPosition.CenterScreen;
+            StartPosition = FormStartPosition.Manual;   // encostada à direita — ver OnLoad
             ClientSize = new Size(560, 560);
             Font = new Font("Segoe UI", 9F);
 
@@ -148,6 +148,17 @@ namespace AutoEDM.AddIn.UI
             _cboElastomer = Combo("Elastômero", 12, ref y, new[] { "NBR (nitrílica)", "FKM (Viton)" });
             _tips.SetToolTip(_cboElastomer, "Não muda a cota do canal: muda o quanto o anel pode ser esticado e " +
                                             "quanta folga o canal precisa para a dilatação. O FKM é mais exigente nos dois.");
+
+            _cboPressure = Combo("Pressão (canal de face)", 12, ref y, new[]
+            {
+                "Interna — anel apoia no Ø EXTERNO do canal",
+                "Externa / vácuo — anel apoia no Ø INTERNO do canal"
+            });
+            _cboPressure.Width = 328;
+            _tips.SetToolTip(_cboPressure, "Só no canal de FACE: de que lado vem a pressão. Ela empurra o anel contra a " +
+                                           "parede oposta, então o canal é posicionado com o anel JÁ ENCOSTADO nela — " +
+                                           "pressão por dentro apoia o Ø externo do anel; por fora (ou vácuo), o Ø interno.\r\n" +
+                                           "No canal de eixo/furo o anel já se apoia no próprio diâmetro, e isto não se aplica.");
 
             _cboSection = Combo("Seção do cordão (d2)", 12, ref y, new string[0]);
             _tips.SetToolTip(_cboSection, "Grossura do cordão. Em AUTOMÁTICA, cada aresta usa a seção que o " +
@@ -191,6 +202,7 @@ namespace AutoEDM.AddIn.UI
             _cboKind.SelectedIndexChanged += (s, e) => { UpdateOffsetUi(); Recompute(); };
             _cboMotion.SelectedIndexChanged += (s, e) => Recompute();
             _cboElastomer.SelectedIndexChanged += (s, e) => Recompute();
+            _cboPressure.SelectedIndexChanged += (s, e) => RefillRings();
             _cboSection.SelectedIndexChanged += (s, e) => RefillRings();
             _cboRing.SelectedIndexChanged += (s, e) => ShowSelectedSpec();
 
@@ -198,6 +210,7 @@ namespace AutoEDM.AddIn.UI
             _cboKind.SelectedIndex = 1;
             _cboMotion.SelectedIndex = 0;
             _cboElastomer.SelectedIndex = 0;
+            _cboPressure.SelectedIndex = 0;
             _cboSection.Items.Add(AutoSectionItem);   // índice 0 = cada aresta escolhe a sua
             foreach (double d2 in _catalog.CrossSections) _cboSection.Items.Add(d2.ToString("0.00"));
             _cboSection.SelectedIndex = 0;
@@ -209,6 +222,21 @@ namespace AutoEDM.AddIn.UI
             // A altura sai do CONTEÚDO: com ClientSize fixo, qualquer linha a mais some por
             // baixo da borda — foi o que cortou os botões pela metade (relato de 2026-09-04).
             ClientSize = new Size(560, y + 26 + 12);
+        }
+
+        /// <summary>
+        /// Encosta a janela no lado DIREITO da tela, centrada na altura — longe do PathFinder (à
+        /// esquerda) e abaixo da ribbon, deixando o modelo livre para os cliques. A tela é a do
+        /// mouse: quem acabou de clicar no botão da ribbon está na tela da SE.
+        /// </summary>
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            Rectangle area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            const int margin = 8;
+            Location = new Point(
+                area.Right - Width - margin,
+                Math.Max(area.Top + margin, area.Top + (area.Height - Height) / 2));
         }
 
         /// <summary>Abre já na etapa 1, como um recurso da SE que entra pedindo a primeira seleção.</summary>
@@ -267,6 +295,7 @@ namespace AutoEDM.AddIn.UI
                 _lblOffset.Text = OffsetCaption(Kind());
                 _numOffset.Minimum = face ? (decimal)MinFaceOffsetMm : 0M;
                 _numOffset.Value = face ? (decimal)MinFaceOffsetMm : (decimal)DefaultRadialOffsetMm;
+                _cboPressure.Enabled = face;
             }
             finally { _loading = wasLoading; }
 
@@ -545,6 +574,8 @@ namespace AutoEDM.AddIn.UI
 
         private Elastomer Rubber() => _cboElastomer.SelectedIndex == 1 ? Elastomer.Fkm : Elastomer.Nbr;
 
+        private FacePressure Pressure() => _cboPressure.SelectedIndex == 1 ? FacePressure.External : FacePressure.Internal;
+
         /// <summary>Seção fixada na janela, ou null em "automática" (cada aresta escolhe a sua).</summary>
         private double? Section()
         {
@@ -681,7 +712,7 @@ namespace AutoEDM.AddIn.UI
         {
             plan.SealingDiameterMm = SealingDiameterOf(plan);
             return ORingGrooveCalculator.Rank(_catalog, Kind(), plan.SealingDiameterMm,
-                Motion(), Rubber(), SectionFor(plan));
+                Motion(), Rubber(), SectionFor(plan), Pressure());
         }
 
         /// <summary>Dá a um plano o melhor anel disponível para ELE.</summary>
@@ -712,16 +743,17 @@ namespace AutoEDM.AddIn.UI
         private string Describe(ORingCandidate c)
         {
             string flag = !c.Spec.IsWithinStandard ? "✗ " : c.Spec.HasWarnings ? "! " : "✓ ";
-            string metric = c.Spec.Kind == GrooveKind.AxialFace
-                ? $"Ø médio {c.Ring.MeanDiameter:0.00}"
-                : (c.Spec.Kind == GrooveKind.RadialInternal ? "compr. " : "estir. ") + (c.Spec.Stretch * 100).ToString("+0.0;-0.0;0.0") + "%";
+            string metric = (c.Spec.StretchIsOuterCompression ? "compr. " : "estir. ") +
+                            (c.Spec.Stretch * 100).ToString("+0.0;-0.0;0.0") + "%";
+            if (c.Spec.Kind == GrooveKind.AxialFace)
+                metric = $"canal Ø{c.Spec.GrooveInnerDiameter:0.00}–{c.Spec.GrooveOuterDiameter:0.00}   " + metric;
             return $"{flag}{c.Ring.Designation}   {metric}" + (c.Ring.Verified ? "" : "   ⚠");
         }
 
         private void ReportNoRing(GroovePlan plan)
         {
             double d2 = SectionFor(plan);
-            double ideal = ORingGrooveCalculator.IdealInnerDiameter(Kind(), plan.SealingDiameterMm, d2, Motion());
+            double ideal = ORingGrooveCalculator.IdealInnerDiameter(Kind(), plan.SealingDiameterMm, d2, Motion(), Rubber(), Pressure());
             _btnCreate.Enabled = false;
             Report(
                 plan.Target.Description + "\r\n\r\n" +
@@ -802,7 +834,7 @@ namespace AutoEDM.AddIn.UI
             double land = ORingGrooveCalculator.FaceGrooveWall(spec, t.EdgeDiameterMm, outward);
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"Posição: canal afundando na face, para {(outward ? "FORA" : "DENTRO")} da aresta " +
-                          $"Ø {t.EdgeDiameterMm:0.000} (cordão no Ø {plan.SealingDiameterMm:0.000} pedido).");
+                          $"Ø {t.EdgeDiameterMm:0.000} (centro do canal pedido no Ø {plan.SealingDiameterMm:0.000}).");
             sb.AppendLine($"Parede entre a aresta e o canal: {land:0.00} mm (pedida {_numOffset.Value:0.00} mm).");
             if (land < 0)
                 sb.AppendLine($"ATENÇÃO: o canal passa POR CIMA da aresta em {-land:0.00} mm de raio — " +
@@ -871,8 +903,10 @@ namespace AutoEDM.AddIn.UI
                     {
                         Log.Info($"--- aresta {plan.EdgeLabel} ---");
                         Log.Info(plan.Spec.Describe());
-                        bool ok = ORingGrooveModeler.Cut(_app, plan.Target, plan.Spec, (double)_numOffset.Value);
-                        (ok ? done : failed).Add($"{plan.EdgeLabel} → {plan.Spec.Ring.Designation}");
+                        string featureName;
+                        bool ok = ORingGrooveModeler.Cut((object)_app, plan.Target, plan.Spec, (double)_numOffset.Value, out featureName);
+                        (ok ? done : failed).Add($"{plan.EdgeLabel} → {plan.Spec.Ring.Designation}" +
+                                                 (ok && featureName != null ? $"   (feature \"{featureName}\")" : ""));
                     }
                     catch (Exception ex)
                     {

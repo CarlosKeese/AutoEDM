@@ -90,6 +90,15 @@ namespace AutoEDM.Sealing
         /// <summary>Compressão ALVO do diâmetro externo no canal de furo.</summary>
         public const double TargetOuterCompression = 0.01;
 
+        /// <summary>
+        /// Canal de FACE: quanto o anel entra APERTADO contra a parede que o apoia (ver
+        /// <see cref="FacePressure"/>). Pressão interna: o Ø externo do canal fica 1 % menor que
+        /// o Ø externo do anel. Pressão externa: o Ø interno do canal fica 1 % maior que o d1 (o
+        /// anel estica 1 %). Com o anel já encostado, a pressão não tem folga para arrastá-lo.
+        /// Fica dentro dos limites de <see cref="MaxStretch"/>/<see cref="MaxOuterCompression"/>.
+        /// </summary>
+        public const double FaceSeatFit = 0.01;
+
         /// <summary>Limites de largura do canal, em múltiplos de d2 — trava de sanidade para o
         /// cálculo por preenchimento não gerar um canal absurdo em caso extremo.</summary>
         public const double MinWidthFactor = 1.10;

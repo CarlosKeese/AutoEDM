@@ -63,6 +63,11 @@ trocar. Quem troca é o usuário. Isso veio de dois estragos concretos: esboços
 ordenado mesmo em peça síncrona) e o "Aplicar GAP" falhando em peça síncrona,
 porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 
+**Exceção explícita (2026-09-21):** a ferramenta MCP `se_trocar_ambiente` troca a peça
+a pedido do agente, com a escrita liberada. É um passo à parte, nunca dentro de outra
+operação, e limpa o `SelectSet` antes, porque a troca mata os proxies. A decisão continua:
+nenhum botão e nenhuma outra ferramenta trocam o ambiente.
+
 | Comando | Exige |
 |---|---|
 | Criar Base, Unir superfícies | síncrono |
@@ -90,8 +95,9 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
 | Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | 🚧 escrito e coberto por 13 testes, **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
-| Testes de unidade | ✅ 369 passando, 0 falhas |
-| Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
+| Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
+| Testes de unidade | ✅ 376 passando, 0 falhas |
+| Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só em edição em contexto (in-place) |
@@ -270,6 +276,23 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-09-21** — **Alojamento de O'ring associativo, validado no SE.** Pedidos do
+  Carlos: janela no lado direito da tela; feature com o nome do anel
+  (`O'ring 2-214 - d2 3,53 x d1 24,99 - 1`, número por anel); canal pintado com o
+  estilo `Orange` da peça; lado da pressão no canal de face (interna apoia o Ø
+  externo, externa/vácuo o Ø interno, 1 % de aperto). Depois, o problema de fundo:
+  **ser ordenado não é ser associativo** — o esboço num plano base com linhas em
+  coordenada absoluta não tinha referência à peça, e o canal se perdia na 1ª edição
+  no síncrono. Sete rodadas ao vivo: plano `AddNormalToCurve` na aresta (segue o furo
+  movido, falha no Ø); amarras por API (colinear + `AddSet`, e depois cotas de
+  distância que nasceram erradas) — descartadas, e nem à mão o revolvido se mantinha.
+  O que ficou: **coroa circular extrudada** num plano preso a uma face plana, círculos
+  `AddConcentric` à aresta incluída com cota de Ø, perfil validado com
+  `igProfileAllowNested` (sem ele: −113 e feature falhada), extrusão **simétrica**
+  (distância = total, medida) e o esboço escondido por `ShowDimensions = false`. O
+  revolvido ficou só como reserva. 376 testes, 0 falhas. Tudo na skill
+  (`modeling-recipes.md`, `errors.md`).
+
 - **2026-09-18** — **a ponte dirigiu a Solid Edge pela primeira vez** (226.00.08.04):
   leitura, planos, árvore e o carrinho de exemplo do `se_modelar` (6 primitivas, 0
   falhas, corpo único) sobre COM real. A sonda de malha rodou na malha real — 4.168
@@ -351,26 +374,11 @@ Três decisões que valem lembrar:
   sinal é calibrado na própria peça pelas arestas da borda da caixa envolvente,
   e a análise **recusa classificar** se elas divergirem.
 
-## Dívida conhecida: as 7 falhas de `ORingGrooveTests`
+## Dívida resolvida: as falhas antigas de `ORingGrooveTests`
 
-Já existiam em `073406a` e o commit `701725f` as registra explicitamente. Os
-testes foram escritos contra uma especificação **anterior** à implementação que
-ficou, e as duas divergiram:
-
-| Teste | Espera | Implementação entrega |
-|---|---|---|
-| `CatalogoEmbutido_temAsTresSecoesDeMoldeETodasAConferir` | 3 seções: 1,78 / 2,62 / 3,53 | 5 seções — o catálogo ganhou 1,02 / 1,27 / 1,52 |
-| `CanalEstatico_temProfundidade80PorCento...` (×3) | profundidade = 0,80·d2, largura = 1,31·d2 | valores da `ORingHousingTable`, que não seguem uma razão fixa |
-| `Preenchimento_ficaNoAlvoEAbaixoDoLimite` | 0,70–0,80 | 0,6947 |
-| `Fkm_deixaOCanalMaisFolgadoQueNbr` | FKM mais folgado que NBR | não é o que sai |
-| `CatalogoEmbutido_asProgressoesBatemComOsCodigosConhecidos` | códigos que existiam antes | `Sequence contains no matching element` |
-
-**Decidir qual lado é a verdade é uma questão de domínio, não de código:** ou a
-`ORingHousingTable` (tabelas Parker/DL Seals, medidas reais de catálogo) está
-certa e os testes precisam ser reescritos contra ela, ou as razões da ISO 3601
-(80 % / 131 %) são o alvo e a tabela precisa ceder. **Resolver isso junto com a
-validação da ferramenta no SE** — não antes, para não travar uma fórmula que a
-peça real ainda vai contestar.
+As 7 falhas registradas em `701725f` (testes escritos contra uma especificação anterior
+à `ORingHousingTable`) não existem mais: os 376 testes passam, nenhum ignorado, e o
+alojamento foi validado no SE em 2026-09-21. Vale a tabela de catálogo.
 
 ## Próxima ação
 
@@ -413,6 +421,6 @@ precisa fechar. Decidir se o botão deve fechar o contorno sozinho, se a
 tolerância de encadeamento (0,01 mm) está apertada para essas peças, ou se isso é
 responsabilidade do desenho.
 
-Continuam pendentes de validação no CAD: **Alojamento de O'ring**, **Aplicar
+Continuam pendentes de validação no CAD: **Aplicar
 GAP**, **Duplicar eletrodo** e a **lista de corte na serra**; e em aberto a
 receita da rosca física M6, os ícones da ribbon e o orquestrador completo.

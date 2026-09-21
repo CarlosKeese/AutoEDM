@@ -187,10 +187,13 @@ confirmação e não sobrevive a um desligamento. Nenhuma ferramenta MCP consegu
 | **Somente leitura** | Revoga a escrita na hora; as ferramentas de leitura seguem funcionando. |
 | **Desligar ponte** | Derruba o pipe. O agente passa a receber a instrução de pedir a você para religar. |
 
-As doze ferramentas do catálogo: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
+O catálogo tem 28 ferramentas. As de leitura: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
 `se_medir_selecao`, `se_analisar_z`, `se_coordenadas`, `se_planos`, `se_reconhecer_malha` e
-`se_log` (leitura), mais `se_modelar`, `se_curvas_superficies` e `se_exportar_perfis_wedm`
-(escrita).
+`se_log`. As de escrita: `se_modelar`, `se_curvas_superficies` e `se_exportar_perfis_wedm`. Além
+delas, cada botão da ribbon tem a sua ferramenta (`se_criar_eletrodos`, `se_criar_base`,
+`se_aplicar_gap`, `se_alojamento_oring`...), com as perguntas das janelas viradas em argumentos,
+e `se_trocar_ambiente` alterna a peça entre síncrono e ordenado. Só os botões do grupo MCP ficam
+de fora. A referência completa está em [docs/MANUAL.md](docs/MANUAL.md), seção 2.3.
 
 `se_modelar` cria caixas e cilindros a partir de uma lista declarativa em mm, reusando
 `BlankModeler.CreateBox`/`CreateCylinder` — as duas já validadas no SE pelo "Criar Base".
@@ -251,7 +254,7 @@ A análise mede **faces curvas e arestas vivas** — o raio exato, direto do mod
 
 ## Ambiente de modelagem: síncrono x ordenado
 
-O add-in **nunca troca o ambiente da peça sozinha.** Quem troca é você, no Solid Edge. Isso é uma decisão de projeto, tomada depois de dois estragos concretos:
+O add-in **nunca troca o ambiente da peça sozinho**, e nenhum botão troca no meio de uma operação. Quem troca é você, no Solid Edge, ou o agente pela ferramenta `se_trocar_ambiente`: um passo à parte, só com a escrita liberada, que descarta a seleção antes da troca. Isso é uma decisão de projeto, tomada depois de dois estragos concretos:
 
 - **Esboços presos entre os ambientes.** `ProfileSets.Add()` cria esboço **ordenado** mesmo numa peça síncrona. Consumido por um recurso síncrono, ele fica órfão no nó "Ordenado" do PathFinder — e o usuário não consegue apagar pela interface.
 - **"Aplicar GAP" falhando em peça síncrona.** Ele lia as faces selecionadas, trocava para ordenado e só então pintava/offsetava. A troca reconstrói o corpo, e as faces já lidas viram *proxies* mortos.

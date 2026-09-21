@@ -192,15 +192,42 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
-        public void CanalDeFace_ecentradoNoDiametroMedioDoAnel_semEsticar()
+        public void CanalDeFace_pressaoInterna_anelApoiaNoDiametroExternoDoCanal()
         {
             var ring = Ring(30.0, 3.53);
-            var spec = ORingGrooveCalculator.Compute(ring, GrooveKind.AxialFace, 40.0, SealMotion.Static, Elastomer.Nbr);
+            var spec = ORingGrooveCalculator.Compute(ring, GrooveKind.AxialFace, 40.0, SealMotion.Static,
+                Elastomer.Nbr, FacePressure.Internal);
 
-            Assert.Equal(0.0, spec.Stretch, 6);
-            Assert.Equal(ring.MeanDiameter, (spec.GrooveInnerDiameter + spec.GrooveOuterDiameter) / 2.0, 6);
-            // largura RADIAL do anel anular = (OD − ID)/2
+            // O Ø externo do anel encosta (1 % apertado) na parede EXTERNA do canal.
+            Assert.Equal(ring.OuterDiameter * (1.0 - ORingGrooveRules.FaceSeatFit), spec.GrooveOuterDiameter, 6);
+            Assert.Equal(ORingGrooveRules.FaceSeatFit, spec.Stretch, 6);
+            Assert.True(spec.StretchIsOuterCompression);
+            Assert.True(spec.GrooveInnerDiameter < ring.InnerDiameter, "a folga fica do lado de DENTRO do anel");
+            // largura RADIAL do canal anular = (OD − ID)/2
             Assert.Equal(spec.Width, (spec.GrooveOuterDiameter - spec.GrooveInnerDiameter) / 2.0, 6);
+        }
+
+        [Fact]
+        public void CanalDeFace_pressaoExterna_anelApoiaNoDiametroInternoDoCanal()
+        {
+            var ring = Ring(30.0, 3.53);
+            var spec = ORingGrooveCalculator.Compute(ring, GrooveKind.AxialFace, 40.0, SealMotion.Static,
+                Elastomer.Nbr, FacePressure.External);
+
+            // O d1 abraça (1 % esticado) a parede INTERNA do canal.
+            Assert.Equal(ring.InnerDiameter * (1.0 + ORingGrooveRules.FaceSeatFit), spec.GrooveInnerDiameter, 6);
+            Assert.Equal(ORingGrooveRules.FaceSeatFit, spec.Stretch, 6);
+            Assert.False(spec.StretchIsOuterCompression);
+            Assert.True(spec.GrooveOuterDiameter > ring.OuterDiameter, "a folga fica do lado de FORA do anel");
+            Assert.Equal(spec.Width, (spec.GrooveOuterDiameter - spec.GrooveInnerDiameter) / 2.0, 6);
+        }
+
+        [Fact]
+        public void CanalDeFace_semDizerAPressao_eInterna()
+        {
+            var ring = Ring(30.0, 3.53);
+            var semPressao = ORingGrooveCalculator.Compute(ring, GrooveKind.AxialFace, 40.0, SealMotion.Static, Elastomer.Nbr);
+            Assert.Equal(FacePressure.Internal, semPressao.Pressure);
         }
 
         [Theory]
@@ -213,7 +240,7 @@ namespace AutoEDM.Core.Tests
             // a REGRA, sem o arredondamento de "o que o catálogo tinha".
             double target = ORingGrooveCalculator.FaceSealingDiameter(
                 holeMm, wallMm, d2, SealMotion.Static, Elastomer.Nbr);
-            var ring = Ring(target - d2, d2);
+            var ring = Ring(ORingGrooveCalculator.IdealInnerDiameter(GrooveKind.AxialFace, target, d2, SealMotion.Static), d2);
 
             var spec = ORingGrooveCalculator.Compute(ring, GrooveKind.AxialFace, target,
                 SealMotion.Static, Elastomer.Nbr);
@@ -230,7 +257,7 @@ namespace AutoEDM.Core.Tests
         {
             double target = ORingGrooveCalculator.FaceSealingDiameter(
                 outerMm, wallMm, d2, SealMotion.Static, Elastomer.Nbr, outward: false);
-            var ring = Ring(target - d2, d2);
+            var ring = Ring(ORingGrooveCalculator.IdealInnerDiameter(GrooveKind.AxialFace, target, d2, SealMotion.Static), d2);
 
             var spec = ORingGrooveCalculator.Compute(ring, GrooveKind.AxialFace, target,
                 SealMotion.Static, Elastomer.Nbr);
@@ -329,11 +356,64 @@ namespace AutoEDM.Core.Tests
             double d1 = ORingGrooveCalculator.IdealInnerDiameter(kind, dia, d2, motion);
             var spec = ORingGrooveCalculator.Compute(Ring(d1, d2), kind, dia, motion, Elastomer.Nbr);
 
-            double expected = kind == GrooveKind.AxialFace ? 0.0
+            double expected = kind == GrooveKind.AxialFace ? ORingGrooveRules.FaceSeatFit
                             : kind == GrooveKind.RadialInternal ? ORingGrooveRules.TargetOuterCompression
                             : ORingGrooveRules.TargetStretch(motion);
             Assert.Equal(expected, spec.Stretch, 3);
             Assert.True(spec.IsWithinStandard, string.Join(" | ", spec.Issues.Select(i => i.ToString())));
+        }
+
+        [Theory]
+        [InlineData(FacePressure.Internal)]
+        [InlineData(FacePressure.External)]
+        public void CanalDeFace_anelIdeal_centraOCanalNoAlvo(FacePressure pressure)
+        {
+            const double target = 40.0, d2 = 2.62;
+            double d1 = ORingGrooveCalculator.IdealInnerDiameter(GrooveKind.AxialFace, target, d2,
+                SealMotion.Static, Elastomer.Nbr, pressure);
+            var spec = ORingGrooveCalculator.Compute(Ring(d1, d2), GrooveKind.AxialFace, target,
+                SealMotion.Static, Elastomer.Nbr, pressure);
+
+            Assert.Equal(target, ORingGrooveCalculator.FaceGrooveCenter(spec), 6);
+            Assert.True(spec.IsWithinStandard, string.Join(" | ", spec.Issues.Select(i => i.ToString())));
+        }
+
+        // ---------------------------------------------------------------- nome da feature
+
+        [Fact]
+        public void NomeDaFeature_levaCodigoSecaoEDiametroInterno_eNumeroDeInstancia()
+        {
+            var ring = new ORingSize { InnerDiameter = 24.99, CrossSection = 3.53, Code = "2-214" };
+            string baseName = ORingGrooveNaming.BaseName(ring);
+
+            Assert.StartsWith("O'ring 2-214 - d2 ", baseName);
+            Assert.Contains(3.53.ToString("0.00"), baseName);
+            Assert.Contains(24.99.ToString("0.00"), baseName);
+            Assert.Equal(baseName + " - 1", ORingGrooveNaming.NextName(ring, new string[0]));
+        }
+
+        [Fact]
+        public void NomeDaFeature_numeroSegueOMaiorEmUso_soDoMesmoAnel()
+        {
+            var ring = new ORingSize { InnerDiameter = 24.99, CrossSection = 3.53, Code = "2-214" };
+            var other = new ORingSize { InnerDiameter = 20.22, CrossSection = 2.62, Code = "2-121" };
+            string b = ORingGrooveNaming.BaseName(ring);
+            var existing = new[]
+            {
+                b + " - 1", b + " - 3",                              // o 2 foi apagado: não é reaproveitado
+                ORingGrooveNaming.BaseName(other) + " - 7",          // outro anel não conta
+                "Recorte 12", null
+            };
+
+            Assert.Equal(b + " - 4", ORingGrooveNaming.NextName(ring, existing));
+            Assert.Equal(ORingGrooveNaming.BaseName(other) + " - 8", ORingGrooveNaming.NextName(other, existing));
+        }
+
+        [Fact]
+        public void NomeDaFeature_anelSemCodigo_naoDeixaBuraco()
+        {
+            var ring = new ORingSize { InnerDiameter = 10.0, CrossSection = 1.78 };
+            Assert.StartsWith("O'ring - d2 ", ORingGrooveNaming.BaseName(ring));
         }
 
         [Fact]

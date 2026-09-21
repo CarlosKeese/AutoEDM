@@ -38,6 +38,9 @@ namespace AutoEDM.Sealing
         public SealMotion Motion { get; set; }
         public Elastomer Elastomer { get; set; }
 
+        /// <summary>Lado da pressão — só pesa no canal de FACE (decide a parede de apoio).</summary>
+        public FacePressure Pressure { get; set; }
+
         /// <summary>Diâmetro MEDIDO na peça que serviu de referência: Ø do eixo, Ø do furo, ou
         /// o Ø médio pedido para o canal na face plana.</summary>
         public double SealingDiameter { get; set; }
@@ -84,8 +87,13 @@ namespace AutoEDM.Sealing
         public double Squeeze { get; set; }
 
         /// <summary>Estiramento do d1 (fração). Positivo estica, negativo sobra. Em canal de
-        /// FURO este campo guarda a COMPRESSÃO do diâmetro externo (positivo = comprimido).</summary>
+        /// FURO — e em canal de FACE com pressão INTERNA — este campo guarda a COMPRESSÃO do
+        /// diâmetro externo (positivo = comprimido).</summary>
         public double Stretch { get; set; }
+
+        /// <summary>O <see cref="Stretch"/> é compressão do Ø externo (e não estiramento do d1)?</summary>
+        public bool StretchIsOuterCompression =>
+            Kind == GrooveKind.RadialInternal || (Kind == GrooveKind.AxialFace && Pressure == FacePressure.Internal);
 
         /// <summary>Fração da área do canal ocupada pela borracha.</summary>
         public double Fill { get; set; }
@@ -119,7 +127,12 @@ namespace AutoEDM.Sealing
                 sb.AppendLine($"        (faixa publicada: largura {Mm(WidthMin)}–{Mm(WidthMax)}, " +
                               $"profundidade {Mm(DepthMin)}–{Mm(DepthMax)})");
             if (Kind == GrooveKind.AxialFace)
+            {
                 sb.AppendLine($"        Ø interno {Mm(GrooveInnerDiameter)}   Ø externo {Mm(GrooveOuterDiameter)}");
+                sb.AppendLine(Pressure == FacePressure.Internal
+                    ? "        pressão INTERNA: o anel apoia pelo Ø EXTERNO na parede externa do canal"
+                    : "        pressão EXTERNA: o anel apoia pelo Ø INTERNO na parede interna do canal");
+            }
             else
                 sb.AppendLine($"        Ø do fundo {Mm(GrooveBottomDiameter)}");
             sb.AppendLine($"        raio do fundo {Mm(BottomRadius)}   quebra de canto {Mm(EdgeBreak)}");
@@ -129,7 +142,7 @@ namespace AutoEDM.Sealing
             sb.AppendLine($"        cota de: {Source}");
             sb.AppendLine();
             sb.AppendLine($"Esmagamento {Pct(Squeeze)}   " +
-                          (Kind == GrooveKind.RadialInternal ? "compressão do Ø externo " : "estiramento ") + Pct(Stretch) +
+                          (StretchIsOuterCompression ? "compressão do Ø externo " : "estiramento ") + Pct(Stretch) +
                           $"   preenchimento {Pct(Fill)}");
             if (Issues.Count > 0)
             {

@@ -180,6 +180,113 @@ ProfileSet.Delete()                                  // ALWAYS — see the order
   the same boolean that unites the burn surface to the block. Delete the ring body if the
   boolean fails, or the part is left with a stray solid.
 
+- **The groove must be ASSOCIATIVE to the edge, or the first sync edit destroys it** (Carlos,
+  2026-09-21: "apesar do recurso ser ordenado, não existe vínculo do esboço com o modelo"). The
+  recipe below — base plane / `AddParallelByDistance` at a measured distance, four lines at
+  absolute coordinates — produces a groove that is correct *when created* and has **no reference
+  to the part at all**. Move or resize the hole in synchronous and the ordered groove stays where
+  it was. Being ordered only gave the sketch an owner; it gave it no parents.
+  - **Plane from the edge (CONFIRMED LIVE 2026-09-21, first try, ordered part, face groove on a
+    Ø20 cylinder top: plane origin landed ON the edge at (10,0,20), normal (0,1,0), axis inside it,
+    cut `igFeatureOK`, faces 3→7).** A plane normal to a
+    circle at a point of that circle *contains the circle's axis* — exactly the plane a revolve
+    needs. `RefPlanes.AddNormalToCurve(Curve=edge, PlanePoint=igCurveStart(14),
+    OrientationPlaneOrPivot=<base plane>, PivotOrigin=igPivotStart(3), [Local], [ParentCurve])`
+    (signature from the typelib dump + `Interop.SolidEdge` reflection; the orientation plane only
+    decides the sketch X direction — `RefPlanes.Item(1)` was accepted first; keep 2..3 as fallback).
+    Whether the groove then FOLLOWS an edit is a separate check (below) — creation succeeding
+    proves the plane is built from the edge, not that SE re-solves it on every edit. **Checked
+    live the same day: MOVING the cylinder → the groove followed ✓; changing its Ø → the groove
+    went eccentric ✗** (the sketch rides rigidly on the edge point, which leaves the axis). Verify with the profile frame that the
+    axis lies in it, as always. Sketch coordinates are local to the plane, so the groove now
+    moves **rigidly** with that point of the edge. Fall back to the loose plane only with a loud
+    "NOT associative" warning.
+  - **Still open: diameter changes.** Rigid-with-a-point is not enough when the hole's Ø changes —
+    the drawn axis line stays at the old radius from the plane point. The fix is to
+    `Profile.IncludeEdge(edge)` (projects the circle as its diameter segment) and constrain to it
+    with `Relations2d` (`AddPointOn`, `AddKeypoint`, `AddPerpendicular`, `AddColinear` — all
+    `(Object, Int32 keypointIndex, …)`, reflection 2026-09-21). Keypoint indices ARE in the interop
+    (`SolidEdgeConstants.KeypointIndexConstants`, reflection): `igLineStart=0`, `igLineEnd=1`,
+    `igLineMiddle=2`, `igCircleCenter=0`, `igArcStart=1`, `igArcEnd=2`. Confirmed LIVE that the
+    rigid anchor alone FAILS on a Ø change (2026-09-21: groove went eccentric).
+    Implemented next (NOT YET CONFIRMED LIVE): the included circle shows edge-on as a Ø-long
+    segment whose MIDDLE is on the axis → construction line L drawn on it + `AddColinear(L, proj)`
+    (axial), `AddPointOn(proj, igLineMiddle, axisLine)` (radial), and
+    `Relations2d.AddSet(n, ref Line2d[] {4 rect lines, axis, L})` so the whole profile moves as a
+    rigid body with the axis — concentric, same radii (a new Ø wants a new ring anyway).
+  - **`Profile.IncludeEdge` TRAP (live, 2026-09-21):** the call succeeds and really puts the edge
+    in the sketch, but its `[opt][out] Geometry2d` comes back **empty** (by-ref `ParameterModifier`
+    and all). Code that trusted the out-param bailed out before `ToggleConstruction`, the included
+    edge stayed as profile geometry, the revolve came back `Status` failed, and deleting that
+    feature disconnected the document (`RPC_E_DISCONNECTED`) — every later call died with it.
+    Rules: find what an include/project added by **diffing the profile's 2D collections**
+    (`Lines2d`, `Arcs2d`, `Circles2d`, … by COM identity), never by the out-param; and **before
+    the feature call, count the non-construction elements** (`IsConstructionElement`) — if it is
+    not exactly the contour you drew, delete everything the anchoring added and cut without it.
+    Anything you add to a sketch that is about to become a feature is a way to lose the feature.
+  - **Rigid-set shortcut FAILED live (2026-09-21).** `AddColinear(L, proj)` + `AddPointOn(proj,
+    igLineMiddle, axis)` + `Relations2d.AddSet(n, Line2d[])` were all accepted (no error, 3/3) and the
+    cut was fine — but after a Ø change the sketch stayed on the OLD centre, and when the user
+    constrained it by hand the rectangle fell apart ("Elementos desconectados" ×4, "vários perfis
+    abertos"). Two lessons: (1) **lines drawn end-to-end by coordinates are NOT connected** — without
+    `AddKeypoint(line_i, igLineEnd, line_j, igLineStart)` at every corner, the first solver move opens
+    the profile; (2) `AddSet` does not act as a rigid body you can drag by one member. Next attempt
+    (not yet confirmed): a FULLY DEFINED sketch — 4 corner keypoints, sides `AddParallel`/
+    `AddPerpendicular` to the axis line, axis `AddPerpendicular` to the included edge + its middle on
+    the axis, and driving dimensions (`Dimensions.Constraint = true`, then
+    `AddDistanceBetweenObjects(obj1, x1,y1,0,false, obj2, x2,y2,0,false)`, 2D sketch metres) for inner/
+    outer radius from the axis and axial position from the edge. Log `ProfileSet.IsUnderDefined`.
+  - **That failed too (live, 2026-09-21), and it taught the real lesson.** 10/10 relations took and
+    `End` returned 0 for the first time, but both `AddDistanceBetweenObjects` dimensions were BORN
+    at 7.15 mm (expected 5.017 / 8.717) — the pick points made SE measure something else — and since
+    they were driving, the solver bent the groove to the wrong Ø. Worse: the user then constrained
+    the sketch BY HAND and it still left the axis on a Ø change. **So the revolve approach itself is
+    the problem:** its sketch must lie in a plane containing the axis, and the only such plane you can
+    tie to the edge (`AddNormalToCurve`) has its origin ON the edge, which moves (and can re-orient)
+    when Ø changes. No constraint inside the sketch fixes a plane that moves wrongly.
+  - **Pivot (implemented, NOT YET CONFIRMED LIVE): annulus + extruded cutout.** Sketch on a plane
+    PERPENDICULAR to the axis tied to a planar face the edge touches (`Edge.GetFaces` → the planar
+    face whose normal ∥ axis; sketch on the face itself, or `RefPlanes.AddParallelByDistance(face,
+    d, side)`). There `IncludeEdge` yields a circle; two `Circles2d` + `Relations2d.AddConcentric`
+    to it + `Dimensions.AddCircularDiameter` (measures the circle itself — no pick points) +
+    `ExtrudedCutouts.AddFiniteMulti(1, Profile[], side, depth)`. Same rectangular section for face,
+    shaft and bore grooves; concentricity is the one thing the concentric relation guarantees.
+    **Prefer the modeling a human would draw over clever constraint tricks.**
+    First live run: it never ran — `Edge.GetFaces(ref 0, ref object[0])` (the SharpCornerProbe
+    pattern) threw `DISP_E_TYPEMISMATCH` on a circular edge, and the code silently fell back to the
+    revolve, so the user saw the old failure and blamed the new approach. **When a new path has a
+    fallback, log loudly that the fallback ran — and don't depend on an unproven marshal for the
+    entry condition:** the planar face is now the one the user clicked (face groove) or found by
+    bounding box among `Body.Faces[igQueryAll]` (normal ∥ axis, on the edge plane, covering the
+    circle); `GetFaces` is last resort.
+    Second live run: sketch PERFECT (circle included, 2/2 concentric, both Ø dims born right,
+    `IsUnderDefined = False`) — yet `ExtrudedCutouts.AddFiniteMulti` came back `igFeatureFailed`,
+    with side 1, and again with symmetric (3), so it was not the direction. `Profile.End(1|8)`
+    had returned **−113**. **An annulus is a NESTED profile: pass `igProfileAllowNested = 8192`**
+    (`ProfileValidationType`: Closed 1, Single 4, NoSelfIntersect 8, RefAxisRequired 16,
+    NoRefAxisIntersect 32, AllowNested 8192, AllowPointsAsProfiles 524288). Without it the profile is
+    rejected and the feature consuming it is born failed. (Fix = `End(1|8|8192)`, NOT YET CONFIRMED
+    LIVE.) Also: a failed ordered feature left in the tree after your cleanup deletes its sketch
+    reports "o perfil não existe mais" — delete the FEATURE (it takes the sketch) instead.
+  - **CONFIRMED LIVE (2026-09-21, 3rd run): the annulus + extruded cutout works.** `End(8201) = 0`,
+    sketch fully defined, face groove and shaft groove both `igFeatureOK`, and the user reported the
+    grooves now follow the part. `ExtrudedCutouts.AddFiniteMulti(1, Profile[], 3 /*symmetric*/, d)`:
+    **the symmetric distance is the TOTAL** (measured: 4.2 mm symmetric on a face → 2.1 mm in
+    material; 3.7 mm on a mid-groove plane → 3.7 mm wide). Symmetric removes the side question
+    entirely: sketch at mid-groove for shaft/bore, on the face with 2× depth for a face groove.
+    `RefPlanes.AddParallelByDistance(planarFace, 0, 2)` works as a "coincident plane"; passing the
+    Face straight to `Profiles.Add` gave an InvalidCast.
+  - **Hiding the sketch of an extruded feature (CONFIRMED LIVE 2026-09-21):** `Profile.Visible =
+    false` on the proxy you drew with was accepted and the circles STAYED on screen (for the revolve
+    it had been enough). What worked: **`ExtrudedCutout.ShowDimensions = false`** on the feature. The
+    other two routes gave nothing: `feature.Profile` came back null and `feature.GetProfiles(ref 0,
+    ref object[0])` threw `DISP_E_TYPEMISMATCH` (same family as `Edge.GetFaces` — the `[in,out]
+    SAFEARRAY(IDispatch)` wants a typed array, not `object[]`). A temp plane rejected mid-command
+    could not even be deleted right away (RPC_E_DISCONNECTED after its probe sketch was dropped) —
+    set `Visible = false` on it as the fallback, or it stays on screen.
+  - **How to test associativity:** create the groove, then in the synchronous part move the hole
+    face (and separately change its Ø) and check the groove followed. Creating it and measuring
+    faces proves nothing about this.
 - **Finding the sketch plane** is the part people get wrong. Don't assume `RefPlanes.Item(2)` is
   XZ. Walk items 1–3, discover each one's frame, keep the one whose **normal is perpendicular to
   the axis** (that plane is parallel to the axis), then offset it by the axis point's signed

@@ -23,7 +23,7 @@ namespace AutoEDM.Mcp
     /// RPC_E_* aleatório — o mesmo tipo de erro que o OleMessageFilter existe para tratar na
     /// GUI externa.
     /// </summary>
-    public sealed class SeToolRunner
+    public sealed partial class SeToolRunner
     {
         private readonly Func<object> _app;
         private readonly Func<BridgeMode> _mode;
@@ -50,6 +50,24 @@ namespace AutoEDM.Mcp
                 { "se_exportar_perfis_wedm", new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_planos",               new Requirement(DocKind.Part,     ModelingEnv.Any) },
                 { "se_reconhecer_malha",     new Requirement(DocKind.Part,     ModelingEnv.Any) },
+
+                // --- os botões da ribbon, um a um: a MESMA tabela Specs do ElectrodeRibbon ---
+                { "se_trocar_ambiente",       new Requirement(DocKind.Part,     ModelingEnv.Any) },
+                { "se_criar_eletrodos",       new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_criar_eletrodo_manual", new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_duplicar_eletrodo",     new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_lista_corte",           new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_lista_modificacoes",    new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_ficha",                 new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_criar_base",            new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
+                { "se_unir_superficies",      new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
+                { "se_aplicar_gap",           new Requirement(DocKind.Part,     ModelingEnv.Ordered) },
+                { "se_alojamento_oring",      new Requirement(DocKind.Part,     ModelingEnv.Ordered) },
+                { "se_sonda_malha",           new Requirement(DocKind.Part,     ModelingEnv.Any) },
+                { "se_sonda_interpart",       new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_gravador_iniciar",      new Requirement(DocKind.Any,      ModelingEnv.Any) },
+                { "se_gravador_gravar",       new Requirement(DocKind.Any,      ModelingEnv.Any) },
+                // 'se_sonda_rosca' também fica de fora: cria a própria peça descartável.
                 // 'se_modelar' NÃO entra aqui de propósito: com novaPeca=true não existe peça ativa
                 // para conferir, porque o documento é criado durante a chamada. Ele resolve o
                 // documento primeiro e só então aplica a MESMA regra (peça + síncrono), lá dentro.
@@ -123,6 +141,7 @@ namespace AutoEDM.Mcp
             if (string.Equals(spec.Name, "se_log", StringComparison.OrdinalIgnoreCase)) return TailLog(argsJson);
             // Resolve o documento por conta própria (pode CRIAR um), então vem antes da guarda genérica.
             if (string.Equals(spec.Name, "se_modelar", StringComparison.OrdinalIgnoreCase)) return Model(app, argsJson);
+            if (string.Equals(spec.Name, "se_sonda_rosca", StringComparison.OrdinalIgnoreCase)) return ThreadProbeTool(app, argsJson);
 
             // Daqui para baixo tudo exige documento: confere o pré-requisito declarado.
             dynamic doc = null;
@@ -143,12 +162,17 @@ namespace AutoEDM.Mcp
                 case "se_curvas_superficies": return SurfaceRimCurves(doc, captured);
                 case "se_exportar_perfis_wedm": return ExportWedm(doc, captured);
                 case "se_reconhecer_malha": return RecognizeMesh(doc, argsJson);
+                default:
+                    string button = DispatchButton(spec.Name, app, doc, argsJson, captured);
+                    if (button != null) return button;
+                    break;
             }
             return $"Ferramenta '{spec.Name}' está no catálogo mas não tem implementação — isto é um defeito do AutoEDM.";
         }
 
         /// <summary>Mesma regra dos botões: o tipo de documento e o ambiente de modelagem são
-        /// pré-requisito, e o AutoEDM NUNCA troca o ambiente sozinho.</summary>
+        /// pré-requisito, e NENHUMA ferramenta troca o ambiente no meio do caminho. A troca é
+        /// um passo à parte e explícito ('se_trocar_ambiente'), dado ANTES de selecionar.</summary>
         private static string CheckRequirement(string tool, dynamic doc)
         {
             Requirement req;
@@ -170,8 +194,9 @@ namespace AutoEDM.Mcp
             if (!ModelingEnvironment.Matches(req.Env, actual))
                 return $"RECUSADO: '{tool}' exige modelagem {ModelingEnvironment.Name(req.Env)}, e a peça está em " +
                        $"{ModelingEnvironment.Name(actual)}.\n\n" +
-                       "O AutoEDM nunca troca o ambiente de modelagem sozinho — a troca reconstrói o corpo e mata as faces " +
-                       "já lidas. Quem troca é o usuário, na barra de status do Solid Edge.";
+                       "Nenhuma ferramenta troca o ambiente no meio da operação — a troca reconstrói o corpo e mata as faces " +
+                       "já lidas. Troque ANTES, como passo à parte: 'se_trocar_ambiente' (exige escrita liberada) ou o " +
+                       "usuário na barra de status do Solid Edge. Depois da troca a seleção precisa ser refeita.";
             return null;
         }
 
@@ -208,7 +233,9 @@ namespace AutoEDM.Mcp
             sb.AppendLine($"  Selecionado(s): {(sel < 0 ? "(não lido)" : sel.ToString(CultureInfo.InvariantCulture))}");
 
             sb.AppendLine();
-            sb.Append("Lembre: 'se_analisar_z' e 'se_coordenadas' pedem MONTAGEM; as ferramentas de WEDM pedem PEÇA em SÍNCRONO.");
+            sb.Append("Lembre: 'se_analisar_z' e 'se_coordenadas' pedem MONTAGEM; as ferramentas de WEDM, 'se_criar_base' e " +
+                      "'se_unir_superficies' pedem PEÇA em SÍNCRONO; 'se_aplicar_gap' e 'se_alojamento_oring' pedem PEÇA em " +
+                      "ORDENADO. 'se_trocar_ambiente' alterna — troque ANTES de selecionar, porque a troca perde a seleção.");
             return sb.ToString();
         }
 
@@ -521,7 +548,7 @@ namespace AutoEDM.Mcp
                 return $"RECUSADO: 'se_modelar' exige modelagem SÍNCRONA e a peça está em {ModelingEnvironment.Name(env)}.\n\n" +
                        "A receita de extrusão usada aqui é a mesma do botão \"Criar Base\", validada em síncrono. Em ordenado o " +
                        "esboço criado por código fica preso na árvore sem o usuário conseguir apagá-lo.\n\n" +
-                       "O AutoEDM nunca troca o ambiente sozinho: quem troca é o usuário, na barra de status do Solid Edge." +
+                       "Troque antes com 'se_trocar_ambiente' (escrita liberada), ou o usuário na barra de status do Solid Edge." +
                        (novaPeca ? "\n\nA peça nova ficou aberta e VAZIA — dá para trocar o ambiente nela e chamar de novo." : "");
 
             List<Primitive> prims = ReadPrimitives(argsJson);

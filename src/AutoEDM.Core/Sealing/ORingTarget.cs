@@ -15,6 +15,14 @@ namespace AutoEDM.Sealing
         public bool Ok { get; set; }
         public string Error { get; set; }
 
+        /// <summary>A aresta COM que o usuário clicou. O modelador ancora nela o plano do esboço
+        /// — é o que faz o canal ACOMPANHAR a peça quando ela é editada no síncrono.</summary>
+        public object Edge { get; set; }
+
+        /// <summary>A face COM que o usuário clicou (a plana, num canal de face, é o próprio
+        /// apoio do esboço do canal extrudado).</summary>
+        public object Face { get; set; }
+
         /// <summary>0=X, 1=Y, 2=Z — o eixo de revolução do canal, deduzido da aresta circular.</summary>
         public int AxisIndex { get; set; }
 
@@ -134,6 +142,8 @@ namespace AutoEDM.Sealing
             var t = new ORingTarget
             {
                 Ok = true,
+                Edge = comEdge,
+                Face = comFace,
                 AxisIndex = axis,
                 CenterMm = new[] { (eMin[0] + eMax[0]) / 2.0, (eMin[1] + eMax[1]) / 2.0, (eMin[2] + eMax[2]) / 2.0 },
                 EdgeDiameterMm = (span[r1] + span[r2]) / 2.0

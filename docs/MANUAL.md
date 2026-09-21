@@ -54,7 +54,7 @@ Um add-in COM que vive **dentro do processo da Solid Edge** (`Edge.exe`) e autom
 | **Postiço** | Inserto do molde |
 | **WEDM** | Corte a fio. O AutoEDM exporta o perfil em `.igs`, um por altura Z |
 | **Pitágoras** | O CAM de corte a fio da casa, consumidor final dos `.igs` |
-| **Síncrono × ordenado** | Os dois ambientes de modelagem da SE. Métodos COM **diferentes**; o AutoEDM nunca troca sozinho |
+| **Síncrono × ordenado** | Os dois ambientes de modelagem da SE. Métodos COM **diferentes**; o AutoEDM nunca troca no meio de uma operação — só `se_trocar_ambiente`, como passo à parte |
 | **Ponte** | O named pipe que liga um agente à Solid Edge viva |
 
 ## 0.3 Onde ficam os arquivos
@@ -341,9 +341,9 @@ SeToolRunner.Execute                  thread STA da Solid Edge, COM ao vivo
 
 **Nenhuma ferramenta MCP alcança essa chave** — ela é só da ribbon. Um teste garante que *toda* ferramenta de escrita seja recusada em modo leitura, e que a recusa diga o que fazer.
 
-## 2.3 Referência das 12 ferramentas
+## 2.3 Referência das 28 ferramentas
 
-9 de leitura, 3 de escrita. Fonte: `Mcp/ToolCatalog.cs` (schema) e `Mcp/SeToolRunner.cs` (implementação e guardas).
+14 de leitura, 14 de escrita (a seção 2.3.1 traz as 15 que espelham os botões da ribbon, mais a troca de ambiente). Fonte: `Mcp/ToolCatalog.cs` (schema) e `Mcp/SeToolRunner.cs` (implementação e guardas).
 
 ### Leitura
 
@@ -390,10 +390,38 @@ Cada primitiva (`kind` e `heightMm` obrigatórios): `kind` `"caixa"`/`"cilindro"
 
 **`se_exportar_perfis_wedm`** — peça síncrona **já salva**. Grava um `.igs` por altura Z ao lado da peça. **Escreve em disco, não altera o modelo.**
 
+### 2.3.1 Os botões da ribbon e a troca de ambiente
+
+Cada botão virou uma ferramenta que chama **o mesmo método do Core**. Só a borda muda: onde o botão abre janela ou pergunta Sim/Não, a ferramenta recebe a resposta como argumento. Nada abre diálogo. Fonte: `Mcp/SeToolRunner.Buttons.cs`.
+
+| Ferramenta | Botão | Exige | Escreve | Argumentos |
+|---|---|---|---|---|
+| `se_trocar_ambiente` | (barra de status da SE) | peça | sim | `ambiente` `sincrono`/`ordenado` — **descarta a seleção** |
+| `se_criar_eletrodos` | Criar eletrodos | montagem | sim | `confirmar` — sem ele devolve só a conferência da queima |
+| `se_criar_eletrodo_manual` | Criar eletrodo (manual) | montagem + faces selecionadas | sim | — |
+| `se_duplicar_eletrodo` | Duplicar eletrodo | montagem + 1 ocorrência | sim | — |
+| `se_lista_corte` | Lista de corte | montagem + ocorrências | não | — (texto; a impressão fica na janela) |
+| `se_lista_modificacoes` | Lista de modificações | montagem | não | — (só a varredura; o .xlsx fica na janela) |
+| `se_ficha` | Ficha (spec-sheet) | montagem | arquivos | — |
+| `se_criar_base` | Criar Base | peça **síncrona** | sim | `apenasPlanejar`, `material`, `blank` (nº da lista), `afastamentoMm`, `alturaMm`, `fixacao`, `faixa` |
+| `se_unir_superficies` | Unir superfícies | peça **síncrona** | sim | — |
+| `se_aplicar_gap` | Aplicar GAP | peça **ordenada** | sim | `ra` — omitido = o Ra gravado na peça |
+| `se_alojamento_oring` | Alojamento de O'ring | peça **ordenada** + a FACE selecionada | sim | `apenasPlanejar` (**padrão true**), `arestas`, `tipo`, `vedacao`, `elastomero`, `pressao`, `secaoMm`, `afastamentoMm`, `anel`, `aceitarForaDaNorma` |
+| `se_sonda_malha` | Sonda de malha | peça | só com `seccionamento` | `seccionamento` — conferido contra a chave de escrita na hora |
+| `se_sonda_interpart` | Sonda inter-part | montagem | peças descartáveis | — |
+| `se_sonda_rosca` | Sonda de rosca (M6) | nada | peça descartável | `ligarExibicaoRosca` (opção global da SE) |
+| `se_gravador_iniciar` / `se_gravador_gravar` | Iniciar / Gravar leitura | documento | não | — (snapshot próprio, separado do da ribbon) |
+
+**O O'ring sem clique:** a janela coleta a aresta com um clique no modelo, e a ferramenta Selecionar da SE normalmente não deixa selecionar aresta. Por isso a entrada é **só a face**: as arestas circulares dela saem numeradas, e `arestas` escolhe quais viram alojamento.
+
+**Fora de propósito:** os cinco botões do grupo MCP. A chave de escrita é do usuário.
+
+**A troca de ambiente é um passo à parte.** A regra de nunca trocar **no meio** de uma operação continua valendo, e nenhuma outra ferramenta troca. `se_trocar_ambiente` limpa o `SelectSet` antes (a troca reconstrói o corpo, e o que estava selecionado vira proxy morto), desliga `DisplayAlerts` só durante a troca e relê o ambiente por um documento fresco. Fluxo típico: trocar → o usuário seleciona → a ferramenta do botão.
+
 ## 2.4 Como adicionar uma ferramenta
 
 1. Definir nome, descrição e `InputSchemaJson` em `Mcp/ToolCatalog.cs`. Marcar `Writes = true` se alterar o modelo ou gravar arquivo.
-2. Declarar o pré-requisito de documento e ambiente na tabela `Requirements` de `SeToolRunner.cs:41-56`.
+2. Declarar o pré-requisito de documento e ambiente na tabela `Requirements` de `SeToolRunner.cs`.
 3. Implementar em `SeToolRunner`. **Nunca deixar exceção subir**; devolver texto que o agente possa agir em cima.
 4. Recompilar **os dois processos**: `pwsh tools\deploy-dev.ps1 -Configuration Release -IncludeMcp`, com a SE **e** o Claude Code fechados. O agente lê o catálogo do **servidor**, não do add-in, e cada um carrega sua própria cópia do `Core` — esquecer o `-IncludeMcp` é a causa nº 1 de "minha ferramenta nova não aparece".
 
@@ -666,6 +694,11 @@ Captura uma face (cilíndrica = eixo ou furo; plana = vedação de face) e arest
 - **Afinamento por estiramento:** `d2_efetivo = d2·(1 − 0,5·estiramento)`, e é o d2 efetivo que entra no esmagamento.
 - **Parede mínima num canal de face: 1,0 mm**, medida até a **borda** do canal, não até o centro.
 - O perfil de corte ultrapassa a superfície em **0,05 mm**: sem essa sobra o corte fica tangente e o modelador pode não abrir o canal.
+- **Canal de face apoia o anel do lado da pressão** (combo *Pressão*, só habilitado em canal de face): pressão **interna** encosta o Ø externo do anel na parede externa do canal (Ø ext. do canal = Ø ext. do anel − 1 %); pressão **externa**/vácuo encosta o d1 na parede interna (Ø int. do canal = d1 + 1 %). A folga fica toda do lado de onde vem a pressão. Canal de eixo/furo não muda: o anel já se apoia no próprio diâmetro.
+- **A feature recebe o nome do anel**: `O'ring <código> - d2 <seção> x d1 <Ø interno> - <n>`. O `n` é o maior em uso **para o mesmo anel** + 1, lido da árvore na hora (apagar o `- 1` não faz o próximo herdar o nome).
+- **As faces do canal saem pintadas de laranja** (vedação): usa o estilo de face `Orange` da peça (ou `Laranja`), sem alterá-lo; se a peça não tiver nenhum, cria `AutoEDM_Vedacao` em RGB 255,128,0. Nome e cor são cosméticos — se falharem, o canal fica e o log diz por quê.
+- A janela abre encostada no **lado direito** da tela onde está o mouse, centrada na altura.
+- **Vínculo com a peça:** o canal é um **recorte extrudado de uma coroa circular**, com o esboço preso a uma face plana que a aresta toca e os dois círculos **concêntricos à aresta** (com cota de Ø), para acompanhar a peça quando ela é editada (furo movido ou Ø alterado). Se a aresta não tocar face plana perpendicular ao eixo, cai no corte revolvido com o esboço num plano **normal à aresta clicada** (`RefPlanes.AddNormalToCurve`), que acompanha o furo movido mas não a mudança de Ø. Ser ordenado não basta: o esboço antigo (plano base + linhas em coordenada absoluta) não tinha referência nenhuma à peça; sem plano amarrado, o log avisa "NÃO vai acompanhar". Validado ao vivo em 2026-09-21: o revolvido acompanha o furo movido e **falha** na mudança de Ø; o **extrudado** (coroa concêntrica, perfil aninhado `End(1|8|8192)`, extrusão simétrica — a distância é o total) cria o canal de face e o de eixo com a cota medida certa.
 
 **Filosofia: avisar, não recusar** — quem decide cortar é o operador. Candidato reprovado vai para o fim da fila, mas continua na lista.
 

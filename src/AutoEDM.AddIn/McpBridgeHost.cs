@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using System.Windows.Forms;
 using AutoEDM.Diagnostics;
@@ -25,8 +25,11 @@ namespace AutoEDM.AddIn
         /// "a SE está ocupada" em vez de o Claude Code ficar pendurado para sempre: se houver
         /// uma caixa de diálogo modal aberta no CAD, a thread da SE não processa o BeginInvoke
         /// até alguém fechá-la — e ninguém avisou o usuário que foi perguntado.
+        ///
+        /// 5 minutos, não 2: com os botões expostos ao agente, 'Criar eletrodos' numa cavidade
+        /// com vários detalhes cria, salva e insere uma peça por eletrodo, e isso passa de 2 min.
         /// </summary>
-        private const int OperationTimeoutMs = 120_000;
+        private const int OperationTimeoutMs = 300_000;
 
         private readonly Control _trampoline;
         private readonly SeToolRunner _runner;

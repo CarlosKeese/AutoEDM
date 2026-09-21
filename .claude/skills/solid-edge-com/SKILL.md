@@ -104,6 +104,19 @@ exceptions:
      failed with a bare `E_FAIL` that pointed nowhere near the real cause.
   The two exceptions: a document **your own code just created** (a throwaway probe part),
   and a switch the user explicitly asked for in that click.
+- **ORDERED is not ASSOCIATIVE.** An ordered feature recomputes only from the references its
+  sketch actually holds. A sketch on a base plane (or on `AddParallelByDistance` of one, at a
+  fixed number), with lines placed at absolute coordinates, holds **none** — so when the user
+  edits the synchronous body underneath (moves or resizes the hole the feature was built
+  around), the ordered feature stays behind and cuts air, or fails. Nothing errors at creation
+  time; the break only shows up at the user's next sync edit (AutoEDM O-ring grooves,
+  2026-09-21). "Put it in ordered so the sketch has an owner" (the rule above) fixes
+  *deletability*, not *associativity* — you need both. Build the sketch plane **from the
+  geometry the user picked** (`RefPlanes.AddNormalToCurve(edge, …)`, `AddParallelByTangent(…,
+  face, …)`, …) — `AddNormalToCurve` on a circular edge confirmed live 2026-09-21 — and tie sketch elements to projected model edges (`Profile.IncludeEdge` /
+  `ProjectEdge` + `Relations2d`) instead of only placing them by coordinates. When you can only
+  get the loose plane, **say so in the log**; a silent non-associative feature looks fine until
+  it doesn't. Recipe and status in `references/modeling-recipes.md` (annular grooves).
 - **Disable the command in the wrong environment, don't just fail in it.** The environment
   check belongs in the UI, not only at the bottom of the call stack — a greyed-out button
   teaches the constraint, an error dialog after the fact only reports it. In a ribbon add-in

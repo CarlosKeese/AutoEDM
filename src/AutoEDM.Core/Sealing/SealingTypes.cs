@@ -40,8 +40,8 @@ namespace AutoEDM.Sealing
     /// <summary>Onde o canal é cortado — sai da geometria selecionada, não de uma escolha solta.</summary>
     public enum GrooveKind
     {
-        /// <summary>Canal anular numa face PLANA (vedação de face/flange). O anel deita no canal:
-        /// não estica nem comprime, e o canal é dimensionado pelo diâmetro médio do anel.</summary>
+        /// <summary>Canal anular numa face PLANA (vedação de face/flange). O anel deita no canal,
+        /// encostado na parede que segura a pressão (ver FacePressure).</summary>
         AxialFace,
 
         /// <summary>Canal num EIXO (face cilíndrica com material por DENTRO). O anel é ESTICADO
@@ -51,5 +51,24 @@ namespace AutoEDM.Sealing
         /// <summary>Canal num FURO (face cilíndrica com material por FORA). O anel é COMPRIMIDO
         /// para entrar no furo e abre dentro do canal.</summary>
         RadialInternal
+    }
+
+    /// <summary>
+    /// De que lado vem a PRESSÃO num canal de FACE — decide em que parede o anel se APOIA.
+    /// A pressão empurra o anel contra a parede do lado oposto; se ele já estiver encostado
+    /// nela, não há folga para ele correr, rolar e morder a junta. Por isso o canal é
+    /// posicionado pelo diâmetro do anel que encosta na parede que segura a pressão, e não
+    /// centrado nele (prática dos manuais de vedação: Parker ORD 5700, canal de face).
+    /// Não se aplica a canal de eixo/furo: lá o anel já está apoiado pelo próprio diâmetro.
+    /// </summary>
+    public enum FacePressure
+    {
+        /// <summary>Pressão por DENTRO do anel (o caso comum: fluido no furo). O anel é empurrado
+        /// para fora, então o Ø EXTERNO dele encosta no Ø externo do canal.</summary>
+        Internal,
+
+        /// <summary>Pressão por FORA do anel (ou vácuo por dentro). O anel é empurrado para
+        /// dentro, então o Ø INTERNO dele encosta no Ø interno do canal.</summary>
+        External
     }
 }
