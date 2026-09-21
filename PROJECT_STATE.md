@@ -49,9 +49,10 @@ DLLs ficam travados.
 
 A ponte MCP está registrada em `.mcp.json` na raiz do repo, apontando para
 `src/AutoEDM.Mcp/bin/x64/Release/net8.0-windows/AutoEDM.Mcp.exe` — então `dotnet build`
-em Release já deixa o servidor pronto. Ele NÃO é ainda empacotado pelo `pack.ps1`:
-enquanto a ponte não tiver o 1º run validado no SE, não faz sentido enviar o binário no
-instalador do operador.
+em Release já deixa o servidor pronto. Ele NÃO é empacotado pelo `pack.ps1`: a ponte é
+ferramenta de desenvolvimento, e o instalador do operador não precisa do binário. (A
+condição original era "enquanto a ponte não tiver o 1º run validado no SE" — o 1º run
+aconteceu em 2026-09-18, e a decisão de não empacotar ficou de pé por outro motivo.)
 
 ## Decisão travada: o add-in nunca troca o ambiente de modelagem
 
@@ -89,7 +90,7 @@ porque a troca de ambiente reconstrói o corpo e mata as faces já lidas.
 | Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
 | Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | 🚧 escrito e coberto por 13 testes, **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
-| Testes de unidade | ✅ 272 passando, 0 falhas |
+| Testes de unidade | ✅ 369 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | 🚧 construído, **aguardando validação no SE** |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -127,7 +128,7 @@ Três peças, e a divisão é imposta pelos alvos: o add-in é obrigatoriamente 
 |---|---|---|
 | `Mcp/BridgeProtocol` + `ToolCatalog` | `Core` (2 alvos) | Contrato de fio e catálogo — escritos uma vez, usados pelos dois lados |
 | `Mcp/BridgeServer` | `Core`, roda no add-in | Named pipe `AutoEDM.Bridge.v1`, um cliente por vez, reconecta |
-| `Mcp/SeToolRunner` | `Core`, roda na thread da SE | Executa as 11 ferramentas, aplica a guarda de documento/ambiente |
+| `Mcp/SeToolRunner` | `Core`, roda na thread da SE | Executa as ferramentas do catálogo, aplica a guarda de documento/ambiente |
 | `Modeling/PrimitiveModel` | `Core` | Caixas e cilindros declarativos sobre o `BlankModeler` ja validado |
 | `AddIn/McpBridgeHost` | add-in | Trampolim para a thread STA da SE + a chave de escrita |
 | `src/AutoEDM.Mcp` | processo próprio | JSON-RPC 2.0 em stdio ↔ pipe |

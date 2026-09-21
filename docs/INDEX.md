@@ -13,6 +13,9 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | Documento | Descrição |
 |---|---|
 | [`README.md`](../README.md) | Visão geral do projeto, propósito, estado atual, build & run. |
+| [`docs/MANUAL.md`](./MANUAL.md) | **O manual de funcionamento** — a camada COM, as duas APIs (Core e ponte MCP), a skill e as 25 funcionalidades com as regras de negócio e seus valores exatos. É o documento que liga botão → id → handler → classe do Core. Comece por aqui para entender **como** o projeto funciona; pelo `README` para saber **o que** ele faz. |
+| [`PROJECT_STATE.md`](../PROJECT_STATE.md) | Estado por ferramenta, decisões travadas e histórico datado das sessões. |
+| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Fluxo de PR e as regras de ouro (inclusive a convenção de idioma). |
 | [`docs/INDEX.md`](./INDEX.md) | Este índice. |
 
 ## ⭐ Ler primeiro — Solid Edge por COM
@@ -54,7 +57,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 
 | Documento | Descrição |
 |---|---|
-| [`.claude/skills/solid-edge-com/SKILL.md`](../.claude/skills/solid-edge-com/SKILL.md) | Skill com os fatos validados de COM do SE (assinaturas, armadilhas, receitas de modelagem). |
+| [`.claude/skills/solid-edge-com/SKILL.md`](../.claude/skills/solid-edge-com/SKILL.md) | Entrada da skill: regras duras + índice. Os apoios carregam sob demanda — `api-signatures.md` (assinaturas e enums confirmados), `modeling-recipes.md`, `discovery.md`, `addin-ribbon.md`, `edm-electrode.md`, `mesh-reverse.md`, `errors.md` (HRESULT → causa → correção). Visão geral em [`docs/MANUAL.md` → Parte 3](./MANUAL.md#parte-3--a-skill-solid-edge-com). |
 | [`docs/PROJECT.md` → Regras para IAs colaboradoras](./PROJECT.md#regras-para-ias-colaboradoras) | Divisão de trabalho (Carlos testa · Claude constrói) e regras comuns. |
 
 ## Fontes da verdade

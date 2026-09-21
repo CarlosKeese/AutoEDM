@@ -211,7 +211,8 @@ real por introspecção ao vivo, em vez de um round-trip humano copiando log a c
 | **Inspecionar seleção** | SPY: dumpa tipo, propriedades, métodos e coleções do objeto COM selecionado — e soma a type library ao mapa acumulado `SE_API_dump_<versão>.txt`. |
 | **Iniciar leitura de ação manual** | Snapshot das features **antes** de você fazer a operação à mão no SE. |
 | **Gravar log da leitura** | Diff contra o snapshot: grava o tipo e as propriedades das features que você criou, para reproduzir por COM. |
-| **Sonda de rosca (M6)** | Cria uma peça descartável com cinco furos M6, cada um por uma receita diferente da API de rosca. O log traz o `HoleData`, o `Status` da feature e o erro da rosca física — para descobrir qual receita produz a hélice cortada de verdade. |
+| **Sonda inter-part** | Mapeia as rotas de cópia inter-part (`CopySurfaces`, `CreateTopologyReference`, `AddBodyByTag`…) em peças descartáveis. Não encosta na cavidade. |
+| **Sonda de rosca (M6)** | Cria uma peça descartável com quatro furos M6, cada um por uma receita diferente da API de rosca. O log traz o `HoleData`, o `Status` da feature e o erro da rosca física — para descobrir qual receita produz a hélice cortada de verdade. |
 
 ---
 
@@ -281,6 +282,7 @@ Na primeira execução o add-in grava `%LOCALAPPDATA%\AutoEDM\config.json` com o
   "DetailGapMm": 1.0,
   "HolderHeightMm": 15.0,
   "HolderBaseClearanceMm": 1.0,
+  "RevisionPropertyNames": ["Revisão", "Revision"],
   "RaOffsetBands": null,
   "RaColorEntries": null
 }
@@ -293,6 +295,7 @@ Na primeira execução o add-in grava `%LOCALAPPDATA%\AutoEDM\config.json` com o
 | `ColorTolerance` | Tolerância RGB (0–255) ao casar a cor da face com uma entrada da paleta de Ra. |
 | `DetailGapMm` | Distância máxima entre faces para elas contarem como o **mesmo** detalhe na segmentação. |
 | `HolderHeightMm` / `HolderBaseClearanceMm` | Altura do bloco da base e a folga sob ele. |
+| `RevisionPropertyNames` | Nomes da propriedade de arquivo que marca uma peça **nova** na Lista de modificações. O nome é casado **inteiro** (acento e maiúscula não importam) — nunca por pedaço, senão a propriedade padrão "Número da Revisão", que é contador de salvamentos, entra no lugar e o relatório inteiro sai errado. |
 | `RaOffsetBands` | Tabela `Ra máximo → offset (mm)`. `null` ou lista vazia = tabela de fábrica. |
 | `RaColorEntries` | Paleta `RGB → Ra alvo`. `null` ou lista vazia = paleta de fábrica. |
 
@@ -506,9 +509,12 @@ Legenda: ✅ funcionando · 🚧 em andamento · 📋 planejado.
 
 ## Documentação
 
-- [`docs/PROJECT.md`](docs/PROJECT.md) — direção interna, verdades do domínio e regras da equipe.
-- [`docs/COM_INTEGRATION.md`](docs/COM_INTEGRATION.md) — guia técnico de integração COM com o Solid Edge.
+- [`docs/MANUAL.md`](docs/MANUAL.md) — **o manual de funcionamento**: camada COM, as duas APIs (Core e ponte MCP), a skill, e as 25 funcionalidades com as regras de negócio e seus valores exatos. É por onde se entende **como** o add-in funciona por dentro.
 - [`docs/GUIA_SOLID_EDGE_COM.md`](docs/GUIA_SOLID_EDGE_COM.md) — a "pedra de roseta": como descobrir a API do SE por introspecção.
+- [`docs/MEMORIA_SOLID_EDGE_COM.md`](docs/MEMORIA_SOLID_EDGE_COM.md) — o que a API COM deixa e o que recusa fazer, com evidência por item.
+- [`docs/INTER-PART.md`](docs/INTER-PART.md) — antes de tocar em cópia entre peças: o que já falhou e o que nunca foi tentado.
+- [`docs/PROJECT.md`](docs/PROJECT.md) — direção interna e verdades do domínio. **Histórico** (julho/2026): o roadmap está superado.
+- [`docs/COM_INTEGRATION.md`](docs/COM_INTEGRATION.md) — guia técnico de integração COM. **Atenção:** a seção de edição in-place afirma que `Occurrence.Activate = true` entra em contexto, o que foi **refutado** — vale a `MEMORIA_SOLID_EDGE_COM.md`.
 - [`docs/INDEX.md`](docs/INDEX.md) — catálogo de API, métodos e constantes do dump.
 - [`docs/api/`](docs/api/) — referências markdown por namespace do Solid Edge.
 - [`docs/REVISAO-AutoEDM.md`](docs/REVISAO-AutoEDM.md) — revisão de código e decisões pendentes.
