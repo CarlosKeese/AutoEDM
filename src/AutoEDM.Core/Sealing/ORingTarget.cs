@@ -236,13 +236,23 @@ namespace AutoEDM.Sealing
         }
 
         /// <summary>
-        /// Eixo ou furo? Compara o raio do cilindro com o quanto o CORPO se afasta do eixo: se
-        /// o cilindro é o contorno externo do corpo, é eixo; se o corpo continua bem além dele,
-        /// o cilindro é um furo. Heurística — por isso o resultado é "sugestão" e a janela
-        /// deixa trocar.
+        /// Eixo ou furo? PRIMEIRO pela normal da própria face: numa peça sólida a normal aponta
+        /// para FORA do material — para longe do eixo num EIXO, para o eixo num FURO. Não
+        /// depende do resto da peça.
+        ///
+        /// A regra antiga (raio do cilindro × alcance do CORPO inteiro) fica só de reserva: ela
+        /// errou ao vivo (2026-09-21) numa peça ESCALONADA — um eixo Ø22 sobre uma aba maior
+        /// virou "furo", porque o corpo passava do cilindro por causa da aba, e o canal foi
+        /// cortado para o lado errado com um anel de furo, que ficou solto.
         /// </summary>
         private static GrooveKind GuessShaftOrBore(object comFace, ORingTarget t, int r1, int r2)
         {
+            bool? away = NormalPointsAwayFromAxis(comFace, t);
+            if (away.HasValue)
+                return away.Value ? GrooveKind.RadialExternal : GrooveKind.RadialInternal;
+
+            Log.Warn("  [O'ring] a normal da face não pôde ser lida — eixo/furo pela regra antiga (alcance do " +
+                     "corpo), que ERRA em peça escalonada. Confira o tipo de canal na janela.");
             try
             {
                 object body = ((dynamic)comFace).Body;
@@ -262,6 +272,64 @@ namespace AutoEDM.Sealing
             }
             catch (Exception e) { Log.Warn("  [O'ring] eixo-ou-furo indeterminado: " + e.GetBaseException().Message); }
             return GrooveKind.RadialInternal; // furo é o caso mais comum em molde
+        }
+
+        /// <summary>
+        /// A normal da face, no meio do seu intervalo de parâmetros, aponta para longe do eixo?
+        /// <c>Face.GetParamRange</c> (cru, validado ao vivo no BRepRadiusProbe) dá o (u, v) do
+        /// meio; <c>Face.GetPointAtParam</c> e <c>Face.GetNormal</c> — mesma forma do
+        /// <c>Edge.GetPointAtParam</c> validado no WEDM: (n, [in,out] params, [out] resultado)
+        /// by-ref — dão o ponto e a normal ali. null = não deu para ler.
+        /// </summary>
+        private static bool? NormalPointsAwayFromAxis(object face, ORingTarget t)
+        {
+            double[] pMin, pMax;
+            string why;
+            if (!FaceGeometry.TryTwoArrayOut(face, "GetParamRange", out pMin, out pMax, out why) ||
+                pMin == null || pMax == null || pMin.Length < 2 || pMax.Length < 2)
+            { Log.Warn("  [O'ring] GetParamRange da face: " + (why ?? "vazio")); return null; }
+            var uv = new[] { (pMin[0] + pMax[0]) / 2.0, (pMin[1] + pMax[1]) / 2.0 };
+
+            var ptArgs = new object[] { 1, uv.Clone(), new double[0] };
+            var nArgs = new object[] { 1, uv.Clone(), new double[0] };
+            if (!InvokeByRef(face, "GetPointAtParam", ptArgs, out why)) { Log.Warn("  [O'ring] Face.GetPointAtParam: " + why); return null; }
+            if (!InvokeByRef(face, "GetNormal", nArgs, out why)) { Log.Warn("  [O'ring] Face.GetNormal: " + why); return null; }
+            double[] p = ToDoubles(ptArgs[2]), n = ToDoubles(nArgs[2]);
+            if (p == null || p.Length < 3 || n == null || n.Length < 3) { Log.Warn("  [O'ring] ponto/normal da face vieram vazios."); return null; }
+
+            // Radial = do eixo até o ponto (componente perpendicular ao eixo), em mm.
+            var radial = new double[3];
+            for (int i = 0; i < 3; i++) radial[i] = i == t.AxisIndex ? 0.0 : p[i] * 1000.0 - t.CenterMm[i];
+            double rLen = Math.Sqrt(radial[0] * radial[0] + radial[1] * radial[1] + radial[2] * radial[2]);
+            double nLen = Math.Sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+            if (rLen < 1e-6 || nLen < 1e-12) { Log.Warn("  [O'ring] ponto no eixo ou normal nula."); return null; }
+            double cos = (radial[0] * n[0] + radial[1] * n[1] + radial[2] * n[2]) / (rLen * nLen);
+            Log.Info($"  [O'ring] normal da face a {rLen:0.000} mm do eixo, cos(normal, radial) = {cos:0.000} → " +
+                     $"{(cos > 0 ? "aponta para FORA: EIXO" : "aponta para o eixo: FURO")}.");
+            if (Math.Abs(cos) < 0.5) { Log.Warn("  [O'ring] normal quase tangente — inconclusivo."); return null; }
+            return cos > 0;
+        }
+
+        private static bool InvokeByRef(object com, string method, object[] args, out string why)
+        {
+            why = null;
+            try
+            {
+                var mod = new System.Reflection.ParameterModifier(args.Length);
+                for (int i = 1; i < args.Length; i++) mod[i] = true;
+                com.GetType().InvokeMember(method, System.Reflection.BindingFlags.InvokeMethod, null, com, args,
+                    new[] { mod }, System.Globalization.CultureInfo.InvariantCulture, null);
+                return true;
+            }
+            catch (Exception e) { why = e.GetBaseException().Message; return false; }
+        }
+
+        private static double[] ToDoubles(object o)
+        {
+            if (!(o is Array a)) return null;
+            var d = new double[a.Length];
+            for (int i = 0; i < a.Length; i++) d[i] = Convert.ToDouble(a.GetValue(i));
+            return d;
         }
 
         /// <summary>

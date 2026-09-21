@@ -31,7 +31,7 @@ namespace AutoEDM.Sealing
     /// MEDIDO na peça (<see cref="ORingGrooveCalculator"/>). O catálogo só responde "qual anel
     /// comprar" — se ele estiver incompleto, o canal ainda sai certo para o anel escolhido.
     /// </summary>
-    public sealed class ORingCatalog
+    public sealed partial class ORingCatalog
     {
         public const string FileName = "oring-catalog.txt";
 
@@ -102,7 +102,11 @@ namespace AutoEDM.Sealing
         /// — mesmo estilo do HOLES.TXT do Solid Edge. Uma linha ruim é pulada com aviso, nunca
         /// derruba o catálogo inteiro.
         /// </summary>
-        public static ORingCatalog Parse(IEnumerable<string> lines)
+        public static ORingCatalog Parse(IEnumerable<string> lines) => Parse(lines, "G");
+
+        /// <summary>Igual, com a SÉRIE das medidas do arquivo ("G" = AS568, "DL" = métrico
+        /// DL Seals) e um 6º campo opcional: o composto (NBR/FKM) em que a medida existe.</summary>
+        public static ORingCatalog Parse(IEnumerable<string> lines, string series)
         {
             var sizes = new List<ORingSize>();
             int lineNo = 0;
@@ -125,10 +129,11 @@ namespace AutoEDM.Sealing
                 {
                     InnerDiameter = d1,
                     CrossSection = d2,
-                    Series = "G",
+                    Series = series,
                     Code = f.Length > 2 ? f[2].Trim() : null,
                     Verified = f.Length > 3 && IsTruthy(f[3]),
-                    Tolerance = tol
+                    Tolerance = tol,
+                    Material = f.Length > 5 ? ParseMaterial(f[5]) : null
                 });
             }
             return new ORingCatalog(sizes);
@@ -141,6 +146,18 @@ namespace AutoEDM.Sealing
             s = (s ?? "").Trim().Replace(',', '.');
             return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v);
         }
+
+        private static Elastomer? ParseMaterial(string s)
+        {
+            s = (s ?? "").Trim().ToUpperInvariant();
+            if (s == "NBR") return Elastomer.Nbr;
+            if (s == "FKM" || s == "VITON") return Elastomer.Fkm;
+            return null;
+        }
+
+        /// <summary>Os anéis dos dois catálogos juntos (o AS568 e, se pedido, o métrico).</summary>
+        public static ORingCatalog Merge(ORingCatalog a, ORingCatalog b) =>
+            new ORingCatalog((a?.Sizes ?? new List<ORingSize>()).Concat(b?.Sizes ?? new List<ORingSize>()));
 
         private static bool IsTruthy(string s)
         {

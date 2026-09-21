@@ -363,6 +363,7 @@ namespace AutoEDM.Mcp
                     "\"tipo\":{\"type\":\"string\",\"enum\":[\"eixo\",\"furo\",\"face\"],\"description\":\"Omitido = o que a geometria da face sugere.\"}," +
                     "\"vedacao\":{\"type\":\"string\",\"enum\":[\"estatica\",\"reciproca\",\"rotativa\"],\"description\":\"Padrão estática.\"}," +
                     "\"elastomero\":{\"type\":\"string\",\"enum\":[\"nbr\",\"fkm\"],\"description\":\"Padrão NBR.\"}," +
+                    "\"metricos\":{\"type\":\"boolean\",\"description\":\"Inclui os anéis milimétricos DL Seals (no composto escolhido). Padrão false.\"}," +
                     "\"pressao\":{\"type\":\"string\",\"enum\":[\"interna\",\"externa\"],\"description\":\"Só canal de face: lado da pressão. interna (PADRÃO) = anel apoia no Ø externo do canal; externa/vácuo = no Ø interno.\"}," +
                     "\"secaoMm\":{\"type\":\"number\",\"description\":\"Seção do cordão (d2). Omitido = cada aresta usa a que o diâmetro dela pede.\"}," +
                     "\"afastamentoMm\":{\"type\":\"number\",\"minimum\":0,\"description\":\"Eixo/furo: aresta → centro do canal, no eixo (padrão 5). Face: parede entre a aresta e o canal (padrão e mínimo 1).\"}," +

@@ -165,10 +165,14 @@ namespace AutoEDM.Sealing
             else if (spec.Kind == GrooveKind.RadialInternal)
             {
                 double maxComp = ORingGrooveRules.MaxOuterCompression(elastomer);
-                if (spec.Stretch > maxComp)
+                if (spec.Stretch > maxComp * ORingGrooveRules.OuterCompressionTolerance)
                     Add(GrooveIssueLevel.Error,
-                        $"o anel entra comprimido {Pct(spec.Stretch)} no diâmetro externo, acima do limite de " +
+                        $"o anel entra comprimido {Pct(spec.Stretch)} no diâmetro externo, muito acima do limite de " +
                         $"{Pct(maxComp)}: ele enruga dentro do canal em vez de encostar liso.");
+                else if (spec.Stretch > maxComp)
+                    Add(GrooveIssueLevel.Warning,
+                        $"o anel entra comprimido {Pct(spec.Stretch)} no diâmetro externo, pouco acima do limite de " +
+                        $"{Pct(maxComp)} — preferível a um anel frouxo, mas confira na montagem.");
                 else if (spec.Stretch < -0.005)
                     Add(GrooveIssueLevel.Warning,
                         $"o anel fica folgado {Pct(-spec.Stretch)} no canal do furo: pode não assentar no fundo.");
@@ -220,13 +224,18 @@ namespace AutoEDM.Sealing
         /// </summary>
         public static IReadOnlyList<ORingCandidate> Rank(ORingCatalog catalog, GrooveKind kind,
             double sealingDiameterMm, SealMotion motion, Elastomer elastomer, double? crossSectionMm = null,
-            FacePressure pressure = FacePressure.Internal)
+            FacePressure pressure = FacePressure.Internal, double sectionTolerance = 0.0)
         {
             if (catalog == null || catalog.Count == 0) return new List<ORingCandidate>();
 
-            IEnumerable<ORingSize> pool = crossSectionMm.HasValue
-                ? catalog.WithCrossSection(crossSectionMm.Value)
-                : catalog.Sizes;
+            // sectionTolerance > 0: aceita seções VIZINHAS (fração da pedida) — é o que deixa os
+            // anéis métricos (1,5 / 2,0 / 2,5…) entrarem quando a seção sugerida é a AS568 (1,78…).
+            IEnumerable<ORingSize> pool = !crossSectionMm.HasValue ? catalog.Sizes
+                : sectionTolerance > 0
+                    ? catalog.Sizes.Where(s => Math.Abs(s.CrossSection - crossSectionMm.Value) <= sectionTolerance * crossSectionMm.Value + 1e-9)
+                    : catalog.WithCrossSection(crossSectionMm.Value);
+            // Anel de catálogo POR COMPOSTO (DL Seals) só vale no elastômero dele.
+            pool = pool.Where(s => !s.Material.HasValue || s.Material.Value == elastomer);
 
             double targetStretch = ORingGrooveRules.TargetStretch(motion);
             var ranked = new List<ORingCandidate>();
@@ -239,10 +248,14 @@ namespace AutoEDM.Sealing
                 double score;
                 if (kind == GrooveKind.AxialFace)
                     score = Math.Abs(FaceGrooveCenter(spec) - sealingDiameterMm);
-                else if (kind == GrooveKind.RadialInternal)
-                    score = Math.Abs(spec.Stretch - ORingGrooveRules.TargetOuterCompression) * 1000.0;
                 else
-                    score = Math.Abs(spec.Stretch - targetStretch) * 1000.0;
+                {
+                    // Desvio do alvo; do lado FROUXO pesa mais (LoosePenalty) — no eixo e no furo,
+                    // Stretch MENOR que o alvo é o anel mais solto.
+                    double target = kind == GrooveKind.RadialInternal ? ORingGrooveRules.TargetOuterCompression : targetStretch;
+                    double dev = spec.Stretch - target;
+                    score = Math.Abs(dev) * (dev < 0 ? ORingGrooveRules.LoosePenalty : 1.0) * 1000.0;
+                }
 
                 // Um candidato reprovado vai para o fim da fila, mas continua na lista: o
                 // operador pode ter motivo para aceitar, e ver o "quase" ajuda a decidir.

@@ -426,6 +426,8 @@ namespace AutoEDM.Mcp
                        ". A face selecionada é mesmo a de vedação?";
 
             ORingCatalog catalog = ORingCatalog.LoadOrCreateDefault();
+            bool metric = ReadBool(argsJson, "metricos", false);
+            if (metric) catalog = ORingCatalog.Merge(catalog, ORingCatalog.LoadOrCreateMetric());
             ORingTarget first = circles[0].Target;
             GrooveKind kind = ParseKind(ReadString(argsJson, "tipo"), first.SuggestedKind);
             SealMotion motion = ParseMotion(ReadString(argsJson, "vedacao"));
@@ -474,7 +476,8 @@ namespace AutoEDM.Mcp
                 plan.SealingDiameterMm = faceKind
                     ? ORingGrooveCalculator.FaceSealingDiameter(t.EdgeDiameterMm, offset, plan.SectionMm, motion, rubber, t.FaceGrooveOutward)
                     : t.SealingDiameterMm;
-                plan.Candidates = ORingGrooveCalculator.Rank(catalog, kind, plan.SealingDiameterMm, motion, rubber, plan.SectionMm, pressure);
+                plan.Candidates = ORingGrooveCalculator.Rank(catalog, kind, plan.SealingDiameterMm, motion, rubber, plan.SectionMm, pressure,
+                    metric && double.IsNaN(fixedSection) ? 0.30 : 0.0);
                 if (plan.Candidates.Count == 0)
                 {
                     double ideal = ORingGrooveCalculator.IdealInnerDiameter(kind, plan.SealingDiameterMm, plan.SectionMm, motion, rubber, pressure);

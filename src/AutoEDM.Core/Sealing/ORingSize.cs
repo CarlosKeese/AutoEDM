@@ -34,6 +34,12 @@ namespace AutoEDM.Sealing
         /// </summary>
         public bool Verified { get; set; }
 
+        /// <summary>Composto em que o fornecedor faz ESTA medida; null = qualquer (a tabela
+        /// AS568 é só dimensional). O catálogo métrico da DL Seals é por composto: a mesma
+        /// medida pode existir em NBR e não em Viton — e oferecer um anel que não se compra no
+        /// elastômero escolhido não serve para nada.</summary>
+        public Elastomer? Material { get; set; }
+
         /// <summary>d1 + 2·d2 — diâmetro EXTERNO do anel livre (mm).</summary>
         public double OuterDiameter => InnerDiameter + 2.0 * CrossSection;
 

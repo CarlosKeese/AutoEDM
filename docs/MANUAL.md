@@ -406,7 +406,7 @@ Cada botão virou uma ferramenta que chama **o mesmo método do Core**. Só a bo
 | `se_criar_base` | Criar Base | peça **síncrona** | sim | `apenasPlanejar`, `material`, `blank` (nº da lista), `afastamentoMm`, `alturaMm`, `fixacao`, `faixa` |
 | `se_unir_superficies` | Unir superfícies | peça **síncrona** | sim | — |
 | `se_aplicar_gap` | Aplicar GAP | peça **ordenada** | sim | `ra` — omitido = o Ra gravado na peça |
-| `se_alojamento_oring` | Alojamento de O'ring | peça **ordenada** + a FACE selecionada | sim | `apenasPlanejar` (**padrão true**), `arestas`, `tipo`, `vedacao`, `elastomero`, `pressao`, `secaoMm`, `afastamentoMm`, `anel`, `aceitarForaDaNorma` |
+| `se_alojamento_oring` | Alojamento de O'ring | peça **ordenada** + a FACE selecionada | sim | `apenasPlanejar` (**padrão true**), `arestas`, `tipo`, `vedacao`, `elastomero`, `pressao`, `metricos`, `secaoMm`, `afastamentoMm`, `anel`, `aceitarForaDaNorma` |
 | `se_sonda_malha` | Sonda de malha | peça | só com `seccionamento` | `seccionamento` — conferido contra a chave de escrita na hora |
 | `se_sonda_interpart` | Sonda inter-part | montagem | peças descartáveis | — |
 | `se_sonda_rosca` | Sonda de rosca (M6) | nada | peça descartável | `ligarExibicaoRosca` (opção global da SE) |
@@ -678,6 +678,8 @@ Cadeia validada ponta a ponta até o Pitágoras em 2026-09-16.
 ## 4.6 Alojamento de anel de vedação — id 14 (peça, **ordenada**)
 
 Captura uma face (cilíndrica = eixo ou furo; plana = vedação de face) e arestas circulares, mede o diâmetro, escolhe o anel no catálogo, dimensiona o canal e corta como retângulo revolvido 360°. É a **única janela modeless** do add-in, porque a seleção de aresta precisa que o usuário clique na SE com a janela aberta.
+
+**Anéis métricos (opcional):** a caixa *Incluir anéis métricos (DL Seals)* soma à escolha o catálogo milimétrico da DL Seals (set/2025) — 731 medidas em Nitrílica 70 e 283 em Viton (marrom, preto, verde), extraídas do PDF do fornecedor, em `%LOCALAPPDATA%\AutoEDM\oring-catalog-metrico.txt` (6º campo = composto). Cada anel só aparece no elastômero dele (NBR ↔ Nitrílica 70, FKM ↔ Viton); Nitrílica 90, silicone e EPDM ficam de fora. Com a seção em automático, entram também seções vizinhas (±30 %), porque as métricas não são as da série AS568. Desligada por padrão. Na escolha do anel, **folga pesa o dobro de aperto**; no canal de furo, compressão até 1,5× o limite da norma é aviso, não reprovação.
 
 **Tabela primeiro, cálculo depois:** a cota vem da tabela Parker quando a seção está tabelada e o movimento não é rotativo; a origem (tabela ou cálculo) sai escrita no relatório. Catálogo: 349 medidas do Parker 001-5 BR / SAE AS 568-A, em `%LOCALAPPDATA%\AutoEDM\oring-catalog.txt`.
 

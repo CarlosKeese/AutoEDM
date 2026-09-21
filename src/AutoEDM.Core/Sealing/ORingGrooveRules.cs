@@ -91,6 +91,22 @@ namespace AutoEDM.Sealing
         public const double TargetOuterCompression = 0.01;
 
         /// <summary>
+        /// Até quanto ACIMA do limite de compressão do canal de furo o anel ainda é aceito, com
+        /// aviso (múltiplo de <see cref="MaxOuterCompression"/>). Critério do Carlos
+        /// (2026-09-21): "um pouco esticado é melhor que totalmente frouxo — variando pouco". O
+        /// caso real: Ø26,20 no fundo, 2-117 ficava 2,6 % frouxo e 2-118 3,4 % apertado; o
+        /// apertado é o que ele quer.
+        /// </summary>
+        public const double OuterCompressionTolerance = 1.5;
+
+        /// <summary>
+        /// Na escolha do anel, quanto a FOLGA pesa a mais que o APERTO, para o mesmo desvio do
+        /// alvo. Anel frouxo não assenta no fundo do canal e pode torcer na montagem; um pouco
+        /// apertado só assenta melhor.
+        /// </summary>
+        public const double LoosePenalty = 2.0;
+
+        /// <summary>
         /// Canal de FACE: quanto o anel entra APERTADO contra a parede que o apoia (ver
         /// <see cref="FacePressure"/>). Pressão interna: o Ø externo do canal fica 1 % menor que
         /// o Ø externo do anel. Pressão externa: o Ø interno do canal fica 1 % maior que o d1 (o

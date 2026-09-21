@@ -64,7 +64,12 @@ namespace AutoEDM.AddIn.UI
         }
 
         private readonly dynamic _app;            // Application do add-in — NUNCA desconecta
-        private readonly ORingCatalog _catalog;
+        private readonly ORingCatalog _baseCatalog;   // AS568 (o de sempre)
+        private ORingCatalog _metricCatalog;          // DL Seals — carregado só quando pedido
+        private ORingCatalog _catalog;                // o que a escolha usa agora
+
+        /// <summary>Seções vizinhas aceitas no modo automático com os métricos ligados (±30 %).</summary>
+        private const double MetricSectionBand = 0.30;
 
         private object _comFace;
         private readonly List<object> _comEdges = new List<object>();
@@ -82,6 +87,7 @@ namespace AutoEDM.AddIn.UI
         private Button _btnFace, _btnEdge, _btnCreate, _btnClose, _btnCatalog;
         private ComboBox _cboKind, _cboMotion, _cboElastomer, _cboPressure, _cboSection, _cboRing;
         private NumericUpDown _numOffset;
+        private CheckBox _chkMetric;
         private Label _lblOffset;
         private TextBox _txtReport;
         private readonly ToolTip _tips = new ToolTip();
@@ -89,7 +95,8 @@ namespace AutoEDM.AddIn.UI
         public ORingGrooveForm(object app, ORingCatalog catalog)
         {
             _app = app;
-            _catalog = catalog ?? ORingCatalog.LoadOrCreateDefault();
+            _baseCatalog = catalog ?? ORingCatalog.LoadOrCreateDefault();
+            _catalog = _baseCatalog;
             BuildUi();
         }
 
@@ -159,6 +166,18 @@ namespace AutoEDM.AddIn.UI
                                            "parede oposta, então o canal é posicionado com o anel JÁ ENCOSTADO nela — " +
                                            "pressão por dentro apoia o Ø externo do anel; por fora (ou vácuo), o Ø interno.\r\n" +
                                            "No canal de eixo/furo o anel já se apoia no próprio diâmetro, e isto não se aplica.");
+
+            _chkMetric = Add(new CheckBox
+            {
+                Left = 220, Top = y, Width = 328, Height = 22,
+                Text = "Incluir anéis métricos (DL Seals)"
+            });
+            _tips.SetToolTip(_chkMetric, "Soma à escolha os anéis milimétricos da DL Seals (catálogo set/2025), no " +
+                                         "composto escolhido: NBR = Nitrílica 70, FKM = Viton. Em seção AUTOMÁTICA " +
+                                         "entram também as seções vizinhas (±30 %), porque as métricas (1,5 / 2,0 / 2,5…) " +
+                                         "não são as da série AS568.");
+            _chkMetric.CheckedChanged += (s, e) => ToggleMetric();
+            y += 28;
 
             _cboSection = Combo("Seção do cordão (d2)", 12, ref y, new string[0]);
             _tips.SetToolTip(_cboSection, "Grossura do cordão. Em AUTOMÁTICA, cada aresta usa a seção que o " +
@@ -711,8 +730,9 @@ namespace AutoEDM.AddIn.UI
         private IReadOnlyList<ORingCandidate> Rank(GroovePlan plan)
         {
             plan.SealingDiameterMm = SealingDiameterOf(plan);
+            double band = _chkMetric.Checked && !Section().HasValue ? MetricSectionBand : 0.0;
             return ORingGrooveCalculator.Rank(_catalog, Kind(), plan.SealingDiameterMm,
-                Motion(), Rubber(), SectionFor(plan), Pressure());
+                Motion(), Rubber(), SectionFor(plan), Pressure(), band);
         }
 
         /// <summary>Dá a um plano o melhor anel disponível para ELE.</summary>
@@ -964,6 +984,30 @@ namespace AutoEDM.AddIn.UI
             _btnCreate.Enabled = false;
         }
 
+        /// <summary>Liga/desliga os anéis métricos: troca o catálogo da escolha e refaz a lista de
+        /// seções (as métricas aparecem nela), mantendo a seção escolhida quando ela ainda existe.</summary>
+        private void ToggleMetric()
+        {
+            if (_chkMetric.Checked && _metricCatalog == null) _metricCatalog = ORingCatalog.LoadOrCreateMetric();
+            _catalog = _chkMetric.Checked ? ORingCatalog.Merge(_baseCatalog, _metricCatalog) : _baseCatalog;
+
+            double? keep = Section();
+            _loading = true;
+            _cboSection.Items.Clear();
+            _cboSection.Items.Add(AutoSectionItem);
+            foreach (double d2 in _catalog.CrossSections) _cboSection.Items.Add(d2.ToString("0.00"));
+            int idx = 0;
+            if (keep.HasValue)
+                for (int i = 0; i < _catalog.CrossSections.Count; i++)
+                    if (Math.Abs(_catalog.CrossSections[i] - keep.Value) < 0.005) { idx = i + 1; break; }
+            _cboSection.SelectedIndex = idx;
+            _loading = false;
+
+            Log.Info($"Alojamento de O'ring: anéis métricos {(_chkMetric.Checked ? "LIGADOS" : "desligados")} — " +
+                     $"{_catalog.Count} medida(s) na escolha.");
+            RefillRings();
+        }
+
         private void OpenCatalog(object sender, EventArgs e)
         {
             try
@@ -971,6 +1015,12 @@ namespace AutoEDM.AddIn.UI
                 string path = ORingCatalog.DefaultPath;
                 if (!System.IO.File.Exists(path)) ORingCatalog.LoadOrCreateDefault(path); // cria com a tabela embutida
                 System.Diagnostics.Process.Start("notepad.exe", "\"" + path + "\"");
+                if (_chkMetric.Checked)
+                {
+                    string metric = ORingCatalog.MetricDefaultPath;
+                    if (!System.IO.File.Exists(metric)) ORingCatalog.LoadOrCreateMetric(metric);
+                    System.Diagnostics.Process.Start("notepad.exe", "\"" + metric + "\"");
+                }
             }
             catch (Exception ex)
             {

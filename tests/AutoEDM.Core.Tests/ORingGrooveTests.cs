@@ -417,6 +417,80 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
+        public void CanalNoFuro_umPoucoApertadoGanhaDeFrouxo()
+        {
+            // O caso real do Carlos (2026-09-21): fundo Ø26,20. 2-117 (OD 25,54) fica 2,6 %
+            // frouxo; 2-118 (OD 27,13) fica 3,4 % comprimido. O apertado deve vir primeiro.
+            var catalog = new ORingCatalog(new[] { Ring(20.30, 2.62), Ring(21.89, 2.62) });
+            var ranked = ORingGrooveCalculator.Rank(catalog, GrooveKind.RadialInternal, 22.0,
+                SealMotion.Static, Elastomer.Nbr, 2.62);
+
+            Assert.Equal(21.89, ranked[0].Ring.InnerDiameter, 2);
+            Assert.True(ranked[0].Spec.IsWithinStandard, string.Join(" | ", ranked[0].Spec.Issues.Select(i => i.ToString())));
+            Assert.Contains(ranked[0].Spec.Issues, i => i.Level == GrooveIssueLevel.Warning);
+        }
+
+        [Fact]
+        public void CanalNoFuro_muitoComprimido_continuaReprovado()
+        {
+            // Fundo Ø26,20: um anel de OD 28,0 fica ~6,4 % comprimido — acima de 1,5× o limite.
+            var spec = ORingGrooveCalculator.Compute(Ring(28.0 - 2 * 2.62, 2.62), GrooveKind.RadialInternal,
+                22.0, SealMotion.Static, Elastomer.Nbr);
+            Assert.False(spec.IsWithinStandard);
+        }
+
+        // ---------------------------------------------------------------- catálogo métrico DL Seals
+
+        [Fact]
+        public void CatalogoMetrico_trazNbr70EVitonDaDlSeals()
+        {
+            var m = ORingCatalog.BuiltInDlSealsMetric();
+            Assert.Equal(1014, m.Count);
+            Assert.Equal(731, m.Sizes.Count(s => s.Material == Elastomer.Nbr));
+            Assert.Equal(283, m.Sizes.Count(s => s.Material == Elastomer.Fkm));
+            Assert.All(m.Sizes, s => Assert.Equal(ORingCatalog.MetricSeries, s.Series));
+
+            // amostras conferidas contra o PDF impresso
+            Assert.Contains(m.Sizes, s => s.Code == "7662" && s.InnerDiameter == 18.00 && s.CrossSection == 2.00 && s.Material == Elastomer.Nbr);
+            Assert.Contains(m.Sizes, s => s.Code == "M7022" && s.InnerDiameter == 16.50 && s.CrossSection == 2.62 && s.Material == Elastomer.Fkm);
+            Assert.Contains(m.Sizes, s => s.Code == "7425" && s.InnerDiameter == 58.00 && s.CrossSection == 1.80);   // impresso "74,25"
+            Assert.Contains(m.Sizes, s => s.Code == "V7488" && s.InnerDiameter == 255.00 && s.CrossSection == 5.70);
+        }
+
+        [Fact]
+        public void CatalogoMetrico_idaEVoltaPeloArquivoMantemOComposto()
+        {
+            var m = ORingCatalog.BuiltInDlSealsMetric();
+            var back = ORingCatalog.Parse(ORingCatalog.RenderMetric(m).Split(new[] { "\r\n", "\n" }, StringSplitOptions.None),
+                ORingCatalog.MetricSeries);
+            Assert.Equal(m.Count, back.Count);
+            Assert.Equal(283, back.Sizes.Count(s => s.Material == Elastomer.Fkm));
+        }
+
+        [Fact]
+        public void Rank_soOfereceAnelDoCompostoEscolhido()
+        {
+            var nbrOnly = new ORingCatalog(new[] { new ORingSize { InnerDiameter = 18.0, CrossSection = 2.0, Material = Elastomer.Nbr, Verified = true } });
+            Assert.Empty(ORingGrooveCalculator.Rank(nbrOnly, GrooveKind.RadialExternal, 21.0, SealMotion.Static, Elastomer.Fkm, 2.0));
+            Assert.Single(ORingGrooveCalculator.Rank(nbrOnly, GrooveKind.RadialExternal, 21.0, SealMotion.Static, Elastomer.Nbr, 2.0));
+        }
+
+        [Fact]
+        public void EixoD21Fkm_comMetricos_achaAnelUmPoucoEsticado()
+        {
+            // O caso do Carlos (2026-09-21): na série G o melhor era 2-018, 2 % FOLGADO. Com os
+            // métricos e as seções vizinhas da 1,78, sai um anel esticado dentro do limite do FKM.
+            var catalog = ORingCatalog.Merge(ORingCatalog.BuiltInSeriesG(), ORingCatalog.BuiltInDlSealsMetric());
+            var ranked = ORingGrooveCalculator.Rank(catalog, GrooveKind.RadialExternal, 21.0,
+                SealMotion.Static, Elastomer.Fkm, 1.78, FacePressure.Internal, sectionTolerance: 0.30);
+
+            var best = ranked[0];
+            Assert.Equal(ORingCatalog.MetricSeries, best.Ring.Series);
+            Assert.True(best.Spec.Stretch > 0, $"estiramento {best.Spec.Stretch:P1}");
+            Assert.True(best.Spec.IsWithinStandard, string.Join(" | ", best.Spec.Issues.Select(i => i.ToString())));
+        }
+
+        [Fact]
         public void Rank_poeOsAprovadosNaFrenteDosReprovados()
         {
             var catalog = ORingCatalog.BuiltInSeriesG();

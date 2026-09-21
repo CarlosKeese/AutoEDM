@@ -287,6 +287,15 @@ ProfileSet.Delete()                                  // ALWAYS — see the order
   - **How to test associativity:** create the groove, then in the synchronous part move the hole
     face (and separately change its Ø) and check the groove followed. Creating it and measuring
     faces proves nothing about this.
+- **Shaft or bore? Ask the FACE, not the body's bounding box** (live, 2026-09-21). "Cylinder
+  radius vs. how far the body reaches from the axis" called a Ø22 shaft a BORE because a larger
+  flange below it made the body reach r = 13; the groove was cut the wrong way and the ring floated.
+  Use the face's own orientation: at the middle of `Face.GetParamRange` (raw, no m→mm), read
+  `Face.GetPointAtParam` and `Face.GetNormal` — `(1, ref double[]{u,v}, ref double[0])`, same by-ref
+  shape as the WEDM-validated `Edge.GetPointAtParam` — and take cos(normal, radial): > 0 = the normal
+  points away from the axis = shaft; < 0 = bore (solid B-rep normals point out of material).
+  CONFIRMED LIVE 2026-09-21 on the same stepped part (cos = 1.000 → shaft, Ø21 and Ø20.5); keep
+  the bbox rule only as a logged fallback.
 - **Finding the sketch plane** is the part people get wrong. Don't assume `RefPlanes.Item(2)` is
   XZ. Walk items 1–3, discover each one's frame, keep the one whose **normal is perpendicular to
   the axis** (that plane is parallel to the axis), then offset it by the axis point's signed

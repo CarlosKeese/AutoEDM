@@ -96,8 +96,8 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | 🚧 escrito e coberto por 13 testes, **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 376 passando, 0 falhas |
-| Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão |
+| Testes de unidade | ✅ 382 passando, 0 falhas |
+| Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só em edição em contexto (in-place) |
@@ -292,6 +292,13 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
   (distância = total, medida) e o esboço escondido por `ShowDimensions = false`. O
   revolvido ficou só como reserva. 376 testes, 0 falhas. Tudo na skill
   (`modeling-recipes.md`, `errors.md`).
+  No mesmo dia, um caso aberto do Carlos: numa peça ESCALONADA, um eixo Ø22 virou
+  "furo" (a regra comparava o cilindro com o alcance do corpo, e a aba de baixo
+  enganava) — o canal saiu para o lado errado e o anel ficou solto. Agora eixo/furo sai
+  da **normal da própria face** (validado ao vivo). Critério dele para o anel: "um pouco
+  esticado é melhor que frouxo, variando pouco" — folga pesa o dobro de aperto, e no
+  furo a compressão até 1,5× o limite é aviso. E o **catálogo métrico da DL Seals**
+  (Nitrílica 70 e Viton, 1014 medidas, extraído do PDF), opcional na janela. 382 testes.
 
 - **2026-09-18** — **a ponte dirigiu a Solid Edge pela primeira vez** (226.00.08.04):
   leitura, planos, árvore e o carrinho de exemplo do `se_modelar` (6 primitivas, 0
