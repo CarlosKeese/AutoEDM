@@ -110,9 +110,18 @@ by SPY 2026-07-16).** The human's steps and the exact features they create (feat
    SHRINKS" rule, per the project's Ra→offset table), `FaceOffsetBlendType=194`
    (`igIgnoreBlends`). This is the concrete call to automate the GAP-offset step.
 
-To find WHICH open edges bound each X,Y gap, note `edge.Faces.Count` is **not readable by late
-binding** here (returns nothing) — get boundary edges another way (per-face `Loops`, or the
-surface's laminar-edge query) rather than counting adjacent faces.
+To find WHICH open edges bound each X,Y gap, count adjacent faces with **`Edge.GetFaces`** —
+`Edge` has no `Faces` property (the earlier note here said "not readable by late binding"; the
+real cause was calling a member that doesn't exist). Recipe in `api-signatures.md` (typed
+`Face[0]` out array, by-ref).
+
+**What actually unites (2026-09-21, two live parts):** (1) take the surface the human prepared —
+the latest `StitchSurface` if there is one — never a `CopySurface` of its faces; (2) `Model.Attach`
+with that surface's **`Body[]`** (`surf.Faces[1].Item(1).Body`), fpcSide=2; (3) don't re-stitch an
+existing stitch and don't delete it afterwards (it owns the human's `Extend Surface` features).
+Extending the rim up to the block by COM is still unsolved (`ExtendSurfaces.AddEx` = `E_FAIL` in
+sync; see `api-signatures.md`), so the human extends by hand and the button warns when the rim
+stops below the block.
 
 **Real workflow clarified (Carlos, 2026-07-17) — Inter-Part Copy DOES work, but only in-context.**
 The human creates the electrode as a new part **in the assembly**, then edits it **in-context**

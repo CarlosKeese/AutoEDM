@@ -450,18 +450,24 @@ namespace AutoEDM.Electrode
         {
             var faces = new List<object>();
 
-            int selN = 0;
+            int selN = 0, unreadable = 0;
+            string firstErr = null;
             try
             {
                 dynamic ss = partDoc.SelectSet;
                 try { selN = (int)ss.Count; } catch { selN = 0; }
                 for (int i = 1; i <= selN; i++)
                 {
-                    object item; try { item = ss.Item(i); } catch { continue; }
+                    object item;
+                    try { item = ss.Item(i); }
+                    catch (Exception e) { unreadable++; firstErr = firstErr ?? e.GetBaseException().Message; continue; }
                     AddFacesFrom(item, faces);
                 }
             }
             catch { }
+            // Visto 2026-09-21: "2 face(s) via SelectSet (19 sel.)" — 17 itens sumiram aqui em silêncio.
+            if (unreadable > 0)
+                Log.Warn($"SelectSet: {unreadable}/{selN} item(ns) ilegível(is) em SelectSet.Item(i) — ignorado(s). 1º erro: {firstErr}");
             if (faces.Count > 0) { source = $"SelectSet ({selN} sel.)"; return faces; }
 
             int csN = 0;
@@ -675,7 +681,11 @@ namespace AutoEDM.Electrode
 
             // A costura consolida superfície + patches num corpo só; é ela que fecha de verdade.
             var intermediates = new List<object>();
-            dynamic tool = TryConsolidateStitch(partDoc, surf, patches, intermediates);
+            // Superfície que JÁ é uma costura e sem patch novo: costurar de novo não fecha nada.
+            bool alreadyStitched = surfSrc.StartsWith("StitchSurface existente", StringComparison.Ordinal);
+            dynamic tool = alreadyStitched && patches.Count == 0
+                ? surf
+                : TryConsolidateStitch(partDoc, surf, patches, intermediates);
             result.CreatedFeatures.AddRange(intermediates);
 
             if (!readyToUnite)
@@ -700,7 +710,8 @@ namespace AutoEDM.Electrode
 
             var used = new List<object>(patches);
             used.AddRange(intermediates);
-            bool united = TryUniteToBlock(partDoc, blockModel, tool, surf, used);
+            bool keepSurf = surfSrc != null && surfSrc.StartsWith("StitchSurface existente", StringComparison.Ordinal);
+            bool united = TryUniteToBlock(partDoc, blockModel, tool, surf, used, keepSurf);
             if (!united)
             {
                 Log.Warn("Unir: União automática falhou — bloco/faixa/furos preservados, nada foi perdido. " +
@@ -771,6 +782,16 @@ namespace AutoEDM.Electrode
                 return result;
             }
 
+            // A seleção pode trazer item que não é Face (visto em quase todo log: "1/N") — filtra
+            // UMA vez aqui, para a pintura e o offset trabalharem sobre as mesmas faces.
+            burnFaces = FaceColorPainter.OnlyFaces(burnFaces, "Aplicar GAP").ConvertAll(f => (object)f);
+            if (burnFaces.Count == 0)
+            {
+                result.Warnings.Add("Nada na seleção é FACE — selecione as faces de queima (não o corpo/recurso) e tente de novo.");
+                Log.Warn("Aplicar GAP: " + result.Warnings[result.Warnings.Count - 1]);
+                return result;
+            }
+
             FaceColorPainter.Paint(partDoc, burnFaces, choice.Color, choice.Ra);
 
             object offsetFeature = TryApplyGapOffset(burnFaces, choice, blockModel);
@@ -833,7 +854,7 @@ namespace AutoEDM.Electrode
         /// (não lança) e ainda assim marcar a feature como FALHOU.
         /// </summary>
         private static bool TryUniteToBlock(dynamic partDoc, dynamic blockModel, dynamic tool,
-            dynamic surf, List<object> patches)
+            dynamic surf, List<object> patches, bool keepSurf)
         {
             AssertSynchronous(partDoc);
 
@@ -854,7 +875,7 @@ namespace AutoEDM.Electrode
             if (!united)
             {
                 Log.Warn("Unir: Model.BooleanFeatures.Add sem sucesso — tentando Model.Attach como alternativa.");
-                united = TryUniteViaAttach(model, tools);
+                united = TryUniteViaAttach(model, (object)tool, tools);
             }
             if (!united) return false;
 
@@ -862,7 +883,7 @@ namespace AutoEDM.Electrode
             // DENTRO do bloco (consumidas pela união/anexação síncrona — mesmo raciocínio já
             // registrado acima: "a superfície é CONSUMIDA/reparentada pro corpo") — excluir deixa
             // a árvore limpa em vez de acumular CopySurface/StitchSurface "fantasmas" sem uso.
-            TryDeleteUsedSurfaces(tool, surf, patches);
+            TryDeleteUsedSurfaces(tool, surf, patches, keepSurf);
             return true;
         }
 
@@ -981,7 +1002,7 @@ namespace AutoEDM.Electrode
         /// lança: a exclusão é limpeza cosmética, não pode reverter uma união que já deu certo;
         /// se falhar (ex.: já foi consumida/removida pela própria união), só loga e segue.
         /// </summary>
-        private static void TryDeleteUsedSurfaces(dynamic tool, dynamic surf, List<object> patches)
+        private static void TryDeleteUsedSurfaces(dynamic tool, dynamic surf, List<object> patches, bool keepSurf)
         {
             bool sameObject = ReferenceEquals(tool, surf);
             if (!sameObject)
@@ -989,8 +1010,14 @@ namespace AutoEDM.Electrode
                 try { tool.Delete(); Log.Info("Unir: superfície de consolidação (StitchSurface) excluída — já incorporada ao bloco."); }
                 catch (Exception e) { Log.Warn("Unir: excluir a StitchSurface de consolidação falhou (cosmético, não desfaz a união) — " + e.GetBaseException().Message); }
             }
-            try { surf.Delete(); Log.Info("Unir: superfície de queima original (CopySurface) excluída — já incorporada ao bloco."); }
-            catch (Exception e) { Log.Warn("Unir: excluir a CopySurface original falhou (cosmético, não desfaz a união — pode já ter sido consumida) — " + e.GetBaseException().Message); }
+            // A StitchSurface preparada pelo Carlos é dona dos Extend Surface dele — o botão não
+            // a criou, então não a apaga (a limpeza é cosmética; apagar história alheia não é).
+            if (keepSurf) Log.Info("Unir: superfície preparada à mão (StitchSurface) mantida na árvore.");
+            else
+            {
+                try { surf.Delete(); Log.Info("Unir: superfície de queima original (CopySurface) excluída — já incorporada ao bloco."); }
+                catch (Exception e) { Log.Warn("Unir: excluir a CopySurface original falhou (cosmético, não desfaz a união — pode já ter sido consumida) — " + e.GetBaseException().Message); }
+            }
 
             // Os patches dos vãos (mesma lógica): a geometria deles entrou na costura/união.
             // Muitos já terão sido consumidos — falhar aqui é normal, por isso só loga.
@@ -1050,19 +1077,41 @@ namespace AutoEDM.Electrode
         /// porque costuma falhar). Não cria feature registrada (retorna `void`) — se unir por aqui,
         /// não há o que nomear/conferir depois na árvore. `fpcSide` NÃO é opcional (achado
         /// 2026-07-20, log `092656`) — tenta os 2 valores conhecidos de lado.
+        ///
+        /// CORREÇÃO 2026-09-21 (sondagem ao vivo, peça EE03): o `Attach` quer o CORPO da
+        /// superfície (`SolidEdgeGeometry.Body[]`), não o feature. Com o `StitchSurface[]` deu
+        /// E_FAIL nos dois lados (igual ao log de 09-11); com o `Body[]` da MESMA superfície,
+        /// na MESMA peça, anexou de primeira (fpcSide=2: corpo 20→37 faces, Z 6→0). O array do
+        /// feature continua como segunda tentativa — foi com ele que o Attach passou em 09-10.
         /// </summary>
-        private static bool TryUniteViaAttach(object model, System.Array tools)
+        private static bool TryUniteViaAttach(object model, object tool, System.Array featureTools)
         {
-            foreach (var side in new[] { 2 /* igRight */, 1 /* igLeft */ })
+            object body = SurfBodyOf(tool);
+            System.Array bodyTools = body != null ? ToTypedBodyArray(body) : null;
+            if (bodyTools == null || bodyTools.Length == 0)
+                Log.Warn("Unir: não li o Body da superfície (Faces.Item(1).Body) — tentando o Attach só com o feature.");
+
+            var attempts = new List<KeyValuePair<string, System.Array>>();
+            if (bodyTools != null && bodyTools.Length > 0) attempts.Add(new KeyValuePair<string, System.Array>("Body", bodyTools));
+            attempts.Add(new KeyValuePair<string, System.Array>(featureTools.GetType().GetElementType()?.Name ?? "feature", featureTools));
+
+            foreach (var attempt in attempts)
             {
-                try
+                foreach (var side in new[] { 2 /* igRight */, 1 /* igLeft */ })
                 {
-                    object[] attachArgs = { tools.Length, tools, true, side };
-                    model.GetType().InvokeMember("Attach", BindingFlags.InvokeMethod, null, model, attachArgs);
-                    Log.Info($"Unir: superfície ANEXADA ao bloco (Model.Attach, bAdd=true, fpcSide={side}).");
-                    return true;
+                    try
+                    {
+                        // psaObjects é SAFEARRAY(IDispatch)* — by-ref, como no teste que anexou.
+                        object[] attachArgs = { attempt.Value.Length, attempt.Value, true, side };
+                        var mod = new ParameterModifier(attachArgs.Length);
+                        mod[1] = true;
+                        model.GetType().InvokeMember("Attach", BindingFlags.InvokeMethod, null, model, attachArgs,
+                            new[] { mod }, CultureInfo.InvariantCulture, null);
+                        Log.Info($"Unir: superfície ANEXADA ao bloco (Model.Attach com {attempt.Key}[], bAdd=true, fpcSide={side}).");
+                        return true;
+                    }
+                    catch (Exception e) { Log.Warn($"Unir: Model.Attach com {attempt.Key}[] (fpcSide={side}) falhou — " + e.GetBaseException().Message); }
                 }
-                catch (Exception e) { Log.Warn($"Unir: Model.Attach (fpcSide={side}) falhou — " + e.GetBaseException().Message); }
             }
             return false;
         }
@@ -1182,17 +1231,34 @@ namespace AutoEDM.Electrode
         {
             List<OpenEdge> open = scan.Edges;
 
-            int vertical = 0, horizontal = 0, shown = 0;
-            double vTopZ = double.NegativeInfinity, vBotZ = double.PositiveInfinity;
+            const double rimTolMm = 0.01;
+            int vertical = 0, horizontal = 0, rimShort = 0, shown = 0;
+            double vTopZ = double.NegativeInfinity, vBotZ = double.PositiveInfinity, rimLowZ = double.PositiveInfinity;
             foreach (OpenEdge e in open)
             {
                 if (e.MinMm == null) continue;
                 if (e.IsVertical) { vertical++; vTopZ = Math.Max(vTopZ, e.MaxMm[2]); vBotZ = Math.Min(vBotZ, e.MinMm[2]); }
-                else horizontal++;
+                else
+                {
+                    horizontal++;
+                    if (e.MaxMm[2] < blockBottomZmm - rimTolMm) { rimShort++; rimLowZ = Math.Min(rimLowZ, e.MinMm[2]); }
+                }
                 if (shown++ < 40) Log.Info($"  aresta aberta: Z {e.MinMm[2]:0.0}→{e.MaxMm[2]:0.0} mm ({(e.IsVertical ? "VERTICAL (vão lateral X,Y)" : "horizontal (rim)")}).");
             }
 
             Log.Info($"Unir ({phase}): {open.Count} aresta(s) ABERTA(s) — {horizontal} horizontal(is) (rim topo/fundo), {vertical} vertical(is) (vãos laterais X,Y a fechar).");
+
+            // Rim que NÃO chega ao bloco: o Attach precisa do contorno aberto EM CIMA da face do
+            // bloco — com vão, ele dá E_FAIL. A extensão automática ainda não existe
+            // (`ExtendSurfaces.AddEx` via COM deu E_FAIL em síncrono, sondagem 2026-09-21), então
+            // aqui só avisa com a medida, para o "Estender superfície" ser feito na mão.
+            if (rimShort > 0)
+            {
+                string msg = $"{rimShort} aresta(s) do rim param em Z≈{rimLowZ:0.00} mm, abaixo da base do bloco " +
+                             $"(Z≈{blockBottomZmm:0.00} mm) — estenda essas arestas até o bloco ('Estender superfície') antes de unir.";
+                Log.Warn("Unir: " + msg);
+                result.Warnings.Add(msg);
+            }
 
             if (vertical == 0)
             {
@@ -1474,12 +1540,28 @@ namespace AutoEDM.Electrode
             try { dynamic faces = model.Body.Faces[1]; return (int)faces.Count; } catch { return -1; }
         }
 
-        /// <summary>Nº de faces adjacentes a uma aresta: 1 = fronteira (aberta/não-costurada); 2 = costurada.</summary>
+        /// <summary>
+        /// Nº de faces adjacentes a uma aresta: 1 = fronteira (aberta/não-costurada); 2 = costurada.
+        ///
+        /// CORREÇÃO 2026-09-21 (sondagem ao vivo, peça EE03): a `Edge` NÃO tem propriedade `Faces`
+        /// — só o método `GetFaces([out] NumFaces, [out] Faces)`. A versão anterior lia `e.Faces`,
+        /// que falhava SEMPRE: todo log do "Unir" dizia "N sem contagem de faces" e nenhuma aresta
+        /// aberta jamais foi achada (o fechamento automático nunca rodou). O array de saída precisa
+        /// ser TIPADO (`Face[]`): `object[]` vira SAFEARRAY(VARIANT) → DISP_E_TYPEMISMATCH.
+        /// </summary>
         private static int EdgeFaceCount(object edge)
         {
-            try { dynamic e = edge; dynamic f = e.Faces; return (int)f.Count; } catch { }
-            try { dynamic e = edge; dynamic f = e.Faces[1]; return (int)f.Count; } catch { }
-            return -1;
+            try
+            {
+                object[] args = { 0, new SolidEdgeGeometry.Face[0] };
+                var mod = new ParameterModifier(2);
+                mod[0] = true;
+                mod[1] = true;
+                edge.GetType().InvokeMember("GetFaces", BindingFlags.InvokeMethod, null, edge, args,
+                    new[] { mod }, CultureInfo.InvariantCulture, null);
+                return Convert.ToInt32(args[0], CultureInfo.InvariantCulture);
+            }
+            catch { return -1; }
         }
 
         /// <summary>
@@ -1567,9 +1649,31 @@ namespace AutoEDM.Electrode
         /// não precisa fazer Surface→Copy à mão). <paramref name="created"/>=true quando a
         /// criamos (o chamador rastreia p/ o Cleanup).
         /// </summary>
+        ///
+        /// CORREÇÃO 2026-09-21 (Teste.par, Carlos: "mesmo estendendo manualmente, o botão não
+        /// uniu"): a superfície preparada à mão é uma StitchSurface (costura + Extend), e este
+        /// método só conhecia CopySurface — sem nenhuma, COPIAVA as faces da seleção e tentava
+        /// anexar a cópia, deitada exatamente em cima da original (Attach E_FAIL). No 2º clique
+        /// reusava essa cópia e "unia" o duplicado, deixando a superfície do Carlos solta. A
+        /// StitchSurface existente agora vem PRIMEIRO; anexar o Body dela uniu de primeira
+        /// (14→27 faces).
         private static dynamic GetBurnCopySurface(dynamic partDoc, out string src, out bool created)
         {
             src = null; created = false;
+
+            // (0) Superfície já costurada pelo Carlos — a ÚLTIMA é a mais recente.
+            try
+            {
+                object ss = ((object)partDoc.Constructions).GetType().InvokeMember(
+                    "StitchSurfaces", BindingFlags.GetProperty, null, (object)partDoc.Constructions, null);
+                int n = Convert.ToInt32(ss.GetType().InvokeMember("Count", BindingFlags.GetProperty, null, ss, null));
+                if (n > 0)
+                {
+                    src = $"StitchSurface existente ({n}ª de {n})";
+                    return ss.GetType().InvokeMember("Item", BindingFlags.InvokeMethod, null, ss, new object[] { n });
+                }
+            }
+            catch (Exception e) { Log.Warn("Unir: não li Constructions.StitchSurfaces — " + e.GetBaseException().Message); }
 
             // (1) Já existe uma CopySurface na peça?
             try
@@ -1726,12 +1830,17 @@ namespace AutoEDM.Electrode
             catch (Exception e) { Log.Warn("Unir: corpo não expõe a interface Body (E_NOINTERFACE) — " + e.GetBaseException().Message); return new SolidEdgeGeometry.Body[0]; }
         }
 
-        /// <summary>O corpo (Body) de uma superfície de construção p/ o auto-trim — usa
-        /// <c>surf.Body</c> se existir; senão o próprio <paramref name="surf"/>.</summary>
-        private static object SurfBodyOf(dynamic surf)
+        /// <summary>
+        /// O CORPO (Body) de uma superfície de construção. CopySurface/StitchSurface/
+        /// SurfaceByBoundary NÃO expõem `.Body` (dump da typelib) — o caminho é pela face:
+        /// <c>surf.Faces[igQueryAll].Item(1).Body</c>. Null se não der.
+        /// </summary>
+        private static object SurfBodyOf(object surf)
         {
-            try { object b = surf.Body; if (b != null) return b; } catch { }
-            return (object)surf;
+            var faces = new List<object>();
+            AddFacesFrom(surf, faces);
+            if (faces.Count == 0 || ReferenceEquals(faces[0], surf)) return null;
+            try { return ((dynamic)faces[0]).Body; } catch { return null; }
         }
 
         private static int ModelsCount(dynamic partDoc)

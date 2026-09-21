@@ -212,8 +212,10 @@ ProfileSet.Delete()                         // esboço feito por código fica tr
   | Offset de superfície (spark gap) | `Constructions.OffsetSurfaces.Add(Side, offsetDistance, FaceSet, [opt]Boundary) → OffsetSurface` |
   | Engrossar superfície em sólido | `Models.AddThickenFeature(…)` |
 
-  - **NÃO existe `ExtendSurfaces`** — para uma superfície alcançar/fechar contra um sólido, **engrosse**
-    (`AddThickenFeature`), reconstrua com `SurfaceByBoundaries`, ou substitua a face do sólido.
+  - **`ExtendSurfaces` existe, mas em `Constructions.Item(i)`** (ConstructionModel), não no Model nem
+    em `Constructions` (corrigido 2026-09-21). Em síncrono o `AddEx` deu E_FAIL em tudo que foi testado,
+    então estender continua manual. Para unir a superfície ao sólido: `Model.Attach` com o `Body[]` da
+    superfície (ver `MEMORIA_SOLID_EDGE_COM.md` §2.8).
   - `FaceArray`/`SurfaceArray` querem o **`SAFEARRAY(IDispatch)` TIPADO**. Um `SelectSet` de faces te dá as
     faces (pegada) mas **nenhum objeto de superfície** para costurar — crie um com `CopySurfaces.Add(faces)` primeiro.
 

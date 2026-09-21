@@ -116,6 +116,19 @@ property). It no longer does:
   work, snapshot again, and diff **by name** (not count — stitching CONSUMES input surfaces, so
   counts drop; names catch adds AND removes). Log the doc identity (`Name/Type/Models.Count`)
   each snapshot — an empty diff usually means `ActiveDocument` wasn't the part being edited.
+- **Live probe from OUTSIDE SE, no rebuild/deploy (2026-09-21 — how the Attach/GetFaces/paint
+  fixes were found in minutes instead of deploy rounds).** Windows PowerShell **5.1**
+  (`powershell.exe`, .NET Framework — pwsh 7 has no `GetActiveObject`) +
+  `Add-Type -Path Probe.cs -ReferencedAssemblies Interop.SolidEdge.dll` compiles a small C# helper
+  that does `Marshal.GetActiveObject("SolidEdge.Application")` and calls everything through
+  `InvokeMember` + `ParameterModifier` (NOT `dynamic` — it can't see type info across the
+  process boundary). Typed arrays (`Face[]`, `Edge[]`, `Body[]`) come from the interop. You can
+  also load the project's own built `AutoEDM.Core.dll` (net472) with an `AssemblyResolve` hook
+  and call the real method (e.g. `FaceColorPainter.Paint`) before any deploy — pass arguments as
+  `$x.PSObject.BaseObject` in an `object[]`, or PowerShell hands `PSObject` to the method.
+  Don't touch the user's part for a write test: create a throwaway one (the MCP `se_modelar`
+  with `novaPeca=true` makes a box, unsaved). In the AutoEDM repo the MCP bridge pipe
+  (`AutoEDM.Bridge.v1`, one JSON line) is also reachable by hand when the MCP client is down.
 
 ## The install's DATA tables (free answers, no SE run)
 

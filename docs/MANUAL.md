@@ -152,7 +152,7 @@ PartDocument.Models → Model.Item(i) → Model.Body → Body.Faces[queryType] �
 2. `Face.GetRGBAVals([out] R,G,B,A)` — é a cor do **corpo**.
 3. **Mapa por FEATURE** — a cor aplicada pelo menu de pintura da SE **não aparece** em nenhuma das duas; só em `feature.GetStyle()`. A cor de feature sobrepõe a do corpo (`FaceSelector.cs:211-280`).
 
-Para **pintar**, o caminho é `Body.SetFacesStyle`: escrever em `Face.Style.Diffuse*` falha em silêncio porque `Face.Style` vem nulo (`Electrode/FaceColorPainter.cs:9-30`).
+Para **pintar**, o caminho é `Body.SetFacesStyle`: escrever em `Face.Style.Diffuse*` falha em silêncio porque `Face.Style` vem nulo. Só faces entram (a seleção costuma trazer um item que não é face), uma chamada por corpo, e o resultado é conferido lendo `Face.Style.StyleName` de volta (`Electrode/FaceColorPainter.cs`).
 
 **Aresta** não se pega pelo `SelectSet`: a ferramenta Selecionar da SE, em ambiente de peça, só localiza face e feature. É preciso um comando **nosso** com filtro de localização — `Application.CreateCommand` → `Command.Start()` → `Mouse.AddToLocateFilter` → evento `MouseClick`, cujo último argumento **é** o objeto clicado (`AddIn/UI/SePicker.cs:7-26`).
 

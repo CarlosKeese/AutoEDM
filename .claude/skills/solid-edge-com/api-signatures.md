@@ -129,6 +129,18 @@ newer SE build uses it), but **that type being reflectable ≠ this Model instan
 Rule: **reflect the interop for signatures/enum values, but confirm the member EXISTS by dumping
 the live object** (`ComDiagnostics.LogMembers`/`DumpObject`) before you build on it.
 
+**…and check the typelib dump for WHICH object owns it before declaring it missing (2026-09-21).**
+`ExtendSurfaces` does exist live — on **`ConstructionModel`**, i.e. `partDoc.Constructions.Item(i)`
+(`docs/api/SolidEdgePart.md`, section `ConstructionModel`). `partDoc.Constructions.ExtendSurfaces`
+and `Model.ExtendSurfaces` both give `DISP_E_UNKNOWNNAME`; the old probe only looked at those two
+and concluded "doesn't exist". The collection is shared (every `Item(i)` lists the same features).
+But **`ExtendSurfaces.AddEx` in a SYNCHRONOUS part failed for every input** — types 1/2/3, 0,5/1/2 mm,
+8 rim edges or 1, edges from the `Body` or from the `StitchSurface` feature: `E_FAIL` (the first
+call of each process gives `E_NOINTERFACE` instead). `Add1(..., TargetSurface=face)` →
+`E_INVALIDARG`. Sync `Extend Surface` features made in the UI read back `Distance`/`Target` as
+`E_NOINTERFACE` (sync features have no parameters). Automating the extend is still open; the
+AutoEDM button only warns when the rim stops below the block.
+
 **What the live SE-2023 Model (163 members) ACTUALLY exposes** for surface→solid / boolean
 (DIAG-confirmed, with the `.Add` signatures the probe read live):
 
@@ -136,8 +148,8 @@ the live object** (`ComDiagnostics.LogMembers`/`DumpObject`) before you build on
 |---|---|
 | Thicken a surface's faces into a solid | `partDoc.Models.AddThickenFeature(Side FeaturePropertyConstants, offset double, nFaces int, Faces SAFEARRAY(IDispatch)) → Model` |
 | Boolean unite bodies (**Ordered-only in practice — see caveat**) | `Model.Unions.Add(nTargets, TargetArray SAFEARRAY(IDispatch), nTools, ToolsArray SAFEARRAY(IDispatch), SETargetDesignBodyOption, SETargetConstructionBodyOption)` (igCreateSingleDesignBodyOnNonManifold=2, igCreateSingleConstructionGeneralBody=1; both enums also have a `0` = igCreateMultiple…OnNonManifoldOption — safer default, doesn't fail the op on a non-manifold result). **`Unions` IS in the stale PIA** (unlike `FaceOffsets.AddEx`, below) — `(SolidEdgePart.Unions)model.Unions` compiles, and tlbimp generated its SAFEARRAY params as `ref Array` (not a plain array) — pass `ref targets, ref tools`. **Array element type is NOT one-size-fits-all — cast each side to what it actually IS, not to a generic `Body`:** a solid Model's target casts fine to `SolidEdgeGeometry.Body[]` (`model.Body`), but a **`CopySurface` tool does NOT implement `SolidEdgeGeometry.Body`** — casting it throws `E_NOINTERFACE` on IID `{09FCA073-DFBF-11D0-A275-080036C5ED02}` (confirmed live, 2026-07-17). A `CopySurface` is already a valid `IDispatch`; type its array element as `SolidEdgePart.CopySurface[]` instead (`new SolidEdgePart.CopySurface[] { (SolidEdgePart.CopySurface)surf }`) — `Unions.Add`'s `SAFEARRAY(IDispatch)` doesn't care that target/tool are different concrete interop types, it just needs each element to genuinely implement *some* real COM interface, not `object`. **CAVEAT (2026-07-20, 2 more real tests, correctly-typed target AND tool):** for a raw/un-stitched surface merging into a solid, `Unions.Add` reliably threw `E_FAIL` when the document was actually in SYNCHRONOUS mode — for that specific surface→solid "attach" use case, use `Model.Attach` or `Model.BooleanFeatures.Add` (next rows), NOT `Unions.Add`. `Unions.Add` may still be the right call for solid+solid merges (e.g. two design bodies) — not re-tested for that case. |
-| **Attach a surface directly onto a solid ("anexar"), SYNCHRONOUS, no tree feature created** | `Model.Attach(NumOfObjects: int, psaObjects: SAFEARRAY(IDispatch)*, bAdd: bool, fpcSide: FeaturePropertyConstants) -> void`. Confirmed live 2026-07-20 (AutoEDM). Returns `void` — no new feature registers anywhere; the only trace is the SOURCE `CopySurface`/`StitchSurface` migrating into `Model.Features` (previously only in `Constructions.CopySurfaces`). `fpcSide` is **required** (no `[opt]` in the dump) — try `igRight=2` then `igLeft=1`. Tool array must be typed (`SolidEdgePart.CopySurface[]`/`StitchSurface[]`), not `object[]`. **Must run in Sync mode** — same silent-no-op-outside-native-mode risk as `AddThickenFeature` if the doc is already Ordered from a previous step. |
-| Boolean unite, SYNCHRONOUS-capable alternative to `Unions` | `Model.BooleanFeatures.Add(NumberOfTools: int, Tools: VARIANT, Function: BooleanFeatureConstants, [opt]PlaneSide: VARIANT) -> BooleanFeature`. No explicit Target param (implicit = the Model's own body). `Function=3` = `seBooleanUnite` (`1`=Intersect, `2`=Subtract, `4`=PlaneFront — `docs/api/constants.md`). Less field-tested than `Attach` (found in the same 2026-07-20 sondagem, not yet the primary path in AutoEDM). **Fetch the collection via `Type.InvokeMember("BooleanFeatures", BindingFlags.GetProperty, ...)`, not dynamic property access** — `model.BooleanFeatures` threw `E_NOINTERFACE` even though the collection genuinely exists live (PIA-version mismatch, see error table). |
+| **Attach a surface directly onto a solid ("anexar"), SYNCHRONOUS, no tree feature created** | `Model.Attach(NumOfObjects: int, psaObjects: SAFEARRAY(IDispatch)*, bAdd: bool, fpcSide: FeaturePropertyConstants) -> void`. Confirmed live 2026-07-20 (AutoEDM). Returns `void` — no new feature registers anywhere; the only trace is the SOURCE `CopySurface`/`StitchSurface` migrating into `Model.Features` (previously only in `Constructions.CopySurfaces`). `fpcSide` is **required** (no `[opt]` in the dump) — try `igRight=2` then `igLeft=1`. **Pass the surface's BODY, not the feature (2026-09-21, 2 parts):** `new SolidEdgeGeometry.Body[] { body }` where `body = surf.Faces[1].Item(1).Body` (Copy/Stitch/SurfaceByBoundary features expose no `.Body`) — with `StitchSurface[]` it was `E_FAIL` on both sides, with the `Body[]` of the SAME surface it attached first try (fpcSide=2; 20→37 and 14→27 faces). The feature array (`CopySurface[]`) worked once in older logs and is kept as fallback. Pass the array by-ref (`ParameterModifier`). A rim lying EXACTLY on the block face (same Z) is enough — no need to penetrate. **Attach the surface the user prepared, not a copy of its faces:** a `CopySurface` of a `StitchSurface`'s faces lies on top of the original and `Attach` gives `E_FAIL`. **Must run in Sync mode** — same silent-no-op-outside-native-mode risk as `AddThickenFeature` if the doc is already Ordered from a previous step. |
+| Boolean unite, SYNCHRONOUS-capable alternative to `Unions` | `Model.BooleanFeatures.Add(NumberOfTools: int, Tools: VARIANT, Function: BooleanFeatureConstants, [opt]PlaneSide: VARIANT) -> BooleanFeature`. **With a construction SURFACE as tool it gave `E_NOINTERFACE` in EVERY AutoEDM run (2026-09-10 → 09-21)** — it is a body-vs-body boolean; for surface→solid use `Attach` with `Body[]`. No explicit Target param (implicit = the Model's own body). `Function=3` = `seBooleanUnite` (`1`=Intersect, `2`=Subtract, `4`=PlaneFront — `docs/api/constants.md`). Less field-tested than `Attach` (found in the same 2026-07-20 sondagem, not yet the primary path in AutoEDM). **Fetch the collection via `Type.InvokeMember("BooleanFeatures", BindingFlags.GetProperty, ...)`, not dynamic property access** — `model.BooleanFeatures` threw `E_NOINTERFACE` even though the collection genuinely exists live (PIA-version mismatch, see error table). |
 | Boolean subtract (also a hole workaround) | `Model.Subtracts.Add(nTargets, TargetArray, nTools, ToolsArray, DirectionArray SAFEARRAY(SESubtractDirection), targetOpt, constrOpt)` |
 | Boolean intersect | `Model.Intersects.Add(nTargets, TargetArray, nTools, ToolsArray, targetOpt, constrOpt)` |
 | Redefine/replace solid faces with a surface | `Model.RedefineFaces.Add(nFaces, [in,out] FacesArray, nEdges, [in,out] NonLaminarEdgesArray, [in,out] TangencyTypeArray, FaceMerge SurfaceByBoundaryPatchTopology, ReplaceFacesOnSolidBody bool) → RedefineFace` |
@@ -333,6 +345,19 @@ for through the curve API: the **axis** is the direction whose box extent is ~0,
 is the box mid-point, and the **diameter** is either of the other two extents (their being equal
 is also your circularity check). No curve-geometry calls, no guessing. Also on `Edge`:
 `IsClosed`, `GetFaces([out] n, [in,out] faces)`, `Geometry`.
+
+**`Edge` has NO `Faces` property** — only `GetFaces`. Counting faces per edge (1 = open/laminar,
+2 = stitched) is `InvokeMember("GetFaces", args = { 0, new SolidEdgeGeometry.Face[0] })` with both
+args by-ref; the result is `args[0]`. An `object[]` placeholder (or `null`) gives
+`DISP_E_TYPEMISMATCH` because the out array is `SAFEARRAY(IDispatch)`. `edge.Faces` failed on every
+edge for months, so "0 open edges" meant "couldn't read", not "closed" (confirmed live 2026-09-21).
+
+**Face color (`FaceStyle`) — confirmed live 2026-09-21:** the name property is **`StyleName`**
+(there is no `Name`: `DISP_E_UNKNOWNNAME`). `Document.FaceStyles.Item("name")` finds a style by
+name; a missing name throws HRESULT `0x80040B50`. `FaceStyles.Add(name, "")` + `Diffuse{Red,Green,
+Blue}` (0..1) + `Body.SetFacesStyle(n, Face[] by-ref, style)` paints, and `Face.Style.StyleName`
+reads it back. Send **one call per body**: faces from different bodies in one call gave `E_FAIL`.
+The paint **survives a later `FaceOffsets.AddEx`** (ordered): the offset face keeps the style.
 
 **Ask the profile where its plane actually is — never deduce it from which RefPlane you used.**
 `Profile.Convert2DCoordinate(x2d, y2d, [out] x3d, [out] y3d, [out] z3d)` and
