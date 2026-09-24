@@ -104,7 +104,8 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
 | Orquestrador "gerar todos os eletrodos" | 📋 planejado |
 | Nova peça (molde) | 🚧 construída (2026-09-24), coberta por teste, **aguardando validação no SE** |
-| Grupo **Molde** (Refrigeração, Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
+| Refrigeração (molde) | 🚧 construída (2026-09-24), plano coberto por teste, **aguardando o 1º run no SE** |
+| Grupo **Molde** (Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
 
 ## Regra de ouro
 
@@ -278,6 +279,11 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-09-24** — **Refrigeração (Fase 2 do plano de molde).** Botão id 27 (peça ordenada) +
+  MCP `se_refrigeracao_plano` (só leitura) / `se_refrigeracao`. Linhas retas do esboço 3D da
+  peça → um furo por passada (colineares juntas), plano normal à aresta na ponta de entrada,
+  sobrefuro Ø/2 e ponta 118° nos cruzamentos; engate/tampão = furo roscado coaxial com rosca
+  de tubo lida da base de furos da SE (strings exatas — a NPT tem espaços). 415 testes.
 - **2026-09-24** — **Nova peça (molde), Fase 1 do plano.** Botão id 26 no grupo Molde. A
   janela de seleção do eletrodo virou genérica (`FacePickForm` + `FacePickSpec`) e serve os
   dois botões. Peça vazia `{molde}.{NNN}.par` no próximo número da série (fixa .100, móvel

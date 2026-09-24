@@ -202,7 +202,7 @@ namespace AutoEDM.Selection
 
         /// <summary><c>Body.FacesByRay[x,y,z, dx,dy,dz]</c> — propriedade COM parametrizada (dump:
         /// SolidEdgeGeometry.Body). <paramref name="ok"/> = a chamada respondeu (mesmo vazia).</summary>
-        private static List<object> FacesByRay(object body, double[] o, double[] d, out bool ok)
+        internal static List<object> FacesByRay(object body, double[] o, double[] d, out bool ok)
         {
             var list = new List<object>();
             ok = false;
@@ -224,7 +224,7 @@ namespace AutoEDM.Selection
         }
 
         /// <summary>Plano B: faces do corpo cuja caixa o raio cruza.</summary>
-        private static List<object> FacesCrossedByBox(object body, double[] o, double[] d)
+        internal static List<object> FacesCrossedByBox(object body, double[] o, double[] d)
         {
             var hits = new List<object>();
             try

@@ -47,6 +47,16 @@ namespace AutoEDM.Mcp
     /// </summary>
     public static class ToolCatalog
     {
+        private const string CoolingArgs =
+            "{\"type\":\"object\",\"properties\":{" +
+                    "\"diametroMm\":{\"type\":\"number\",\"description\":\"Ø do canal (6, 8, 10 ou 12). Padrão 8.\"}," +
+                    "\"sobrefuroMm\":{\"type\":\"number\",\"description\":\"Quanto o furo passa do cruzamento. Padrão Ø/2.\"}," +
+                    "\"roscaEngate\":{\"type\":\"string\",\"description\":\"Tamanho da rosca do engate como na base de furos (ex.: G1/4, R 1/4-19, 1/8-27 NPT). Padrão G1/4.\"}," +
+                    "\"roscaTampao\":{\"type\":\"string\",\"description\":\"Tamanho da rosca do tampão. Padrão G1/8.\"}," +
+                    "\"pontas\":{\"type\":\"object\",\"description\":\"Troca a terminação AUTOMÁTICA de uma boca (engate nas pontas do caminho, tampão nos prolongamentos); chave = a do plano (ex.: {\\\"L1:I\\\":\\\"engate\\\",\\\"L3:F\\\":\\\"cega\\\"}).\",\"additionalProperties\":{\"type\":\"string\"}}," +
+                    "\"todasAsLinhas\":{\"type\":\"boolean\",\"description\":\"true = todas as linhas de todos os esboços 3D, ignorando a seleção.\"}}," +
+                    "\"additionalProperties\":false}";
+
         private const string NoArgs = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}";
 
         public static readonly IReadOnlyList<ToolSpec> All = new List<ToolSpec>
@@ -284,6 +294,28 @@ namespace AutoEDM.Mcp
                     "móvel .200, extração .300), na pasta da montagem, e a insere com a ORIENTAÇÃO DA MONTAGEM, com a origem " +
                     "no centro das faces nos dois eixos de planta e no ponto mais baixo/alto no eixo de altura. As escolhas " +
                     "ficam gravadas para o projeto. Não salva a montagem."
+            },
+            new ToolSpec
+            {
+                Name = "se_refrigeracao_plano",
+                Writes = false,
+                InputSchemaJson = CoolingArgs,
+                Description =
+                    "SÓ LEITURA. Plano da refrigeração na PEÇA ativa: lê as linhas retas do(s) esboço(s) 3D (da seleção, ou de " +
+                    "todos), prolonga até a face os trechos que acabam em cantos dentro da placa (medido na peça), acha as bocas (chaves 'L1:I' = início da linha 1, 'L1:F' = fim), junta linhas colineares " +
+                    "numa passada só e lista os furos que 'se_refrigeracao' criaria — entrada, profundidade, ponta/fundo, " +
+                    "roscas — e os problemas. Mostra também as roscas de tubo da base de furos. Nada é alterado."
+            },
+            new ToolSpec
+            {
+                Name = "se_refrigeracao",
+                Writes = true,
+                InputSchemaJson = CoolingArgs,
+                Description =
+                    "Botão 'Refrigeração' (grupo Molde). PEÇA em modelagem ORDENADA. Cria os canais a partir das linhas do esboço " +
+                    "3D: um FURO do Ø escolhido por passada de broca, no plano normal à linha na ponta de entrada (fica preso à " +
+                    "linha), com sobrefuro e ponta de broca nos cruzamentos; e um furo roscado de tubo coaxial em cada ponta " +
+                    "marcada como engate/tampão. Rode 'se_refrigeracao_plano' antes e mostre o plano ao usuário. Não salva."
             },
             new ToolSpec
             {

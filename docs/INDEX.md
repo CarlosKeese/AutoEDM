@@ -13,7 +13,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | Documento | Descrição |
 |---|---|
 | [`README.md`](../README.md) | Visão geral do projeto, propósito, estado atual, build & run. |
-| [`docs/MANUAL.md`](./MANUAL.md) | **O manual de funcionamento** — a camada COM, as duas APIs (Core e ponte MCP), a skill e as 26 funcionalidades com as regras de negócio e seus valores exatos. É o documento que liga botão → id → handler → classe do Core. Comece por aqui para entender **como** o projeto funciona; pelo `README` para saber **o que** ele faz. |
+| [`docs/MANUAL.md`](./MANUAL.md) | **O manual de funcionamento** — a camada COM, as duas APIs (Core e ponte MCP), a skill e as 27 funcionalidades com as regras de negócio e seus valores exatos. É o documento que liga botão → id → handler → classe do Core. Comece por aqui para entender **como** o projeto funciona; pelo `README` para saber **o que** ele faz. |
 | [`PROJECT_STATE.md`](../PROJECT_STATE.md) | Estado por ferramenta, decisões travadas e histórico datado das sessões. |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Fluxo de PR e as regras de ouro (inclusive a convenção de idioma). |
 | [`docs/INDEX.md`](./INDEX.md) | Este índice. |

@@ -29,7 +29,7 @@ As mesmas do resto do add-in (ver `PROJECT_STATE.md` e a skill `solid-edge-com`)
 |---|---|---|---|
 | 0 ✅ | Grupo "Molde" + O'ring movido; **Criar eletrodo (manual)** por seleção na janela | — | Feito em 2026-09-24. A janela do eletrodo manual valida `SePicker` **em montagem**, que as fases 1–5 também usam. |
 | 1 ✅ | **Nova peça** | Fase 0 | Extrai a "fábrica de peça" do `CreateAndPlaceElectrode` — base de tudo que cria peça na montagem (inclusive as gavetas). |
-| 2 | **Refrigeração** | — | Cria o motor "curva do esboço 3D → cilindro + furos nas pontas", reaproveitado pelas fases 3 e 5. |
+| 2 🚧 | **Refrigeração** | — | Cria o motor "curva do esboço 3D → cilindro + furos nas pontas", reaproveitado pelas fases 3 e 5. |
 | 3 | **Canais de alimentação** | Fase 2 | Mesmo motor, com mais seções (trapezoidal, meia-cana) e o plano de partição. |
 | 4 | **Pontos de injeção** | Fase 3 | O ponto de injeção normalmente nasce na ponta de um canal; com a fase 3 pronta, o ponto e a direção já vêm do canal. |
 | 5 | **Extratores** | Fase 2 + nível 2 da usinabilidade | Precisa conhecer os canais de refrigeração (distância) e usa a mesma varredura raster do nível 2. |
@@ -95,7 +95,28 @@ produção" — é preciso reconferir).
 **Perguntas ao Carlos.** Convenção de nome das peças do molde; onde fica o template;
 se a peça nasce com material/propriedades (código do produto, nº do molde) preenchidos.
 
-## Fase 2 — Refrigeração
+## Fase 2 — Refrigeração (construída em 2026-09-24, aguardando validação no SE)
+
+**Como ficou** (detalhe no MANUAL, seção 4.5c). Respostas do Carlos: esboço 3D **na peça**; Ø
+6/8/10/12; terminações cega, passante, engate e tampão. Decisões: linhas colineares = uma passada;
+canal = recurso de FURO num plano normal à aresta (associativo); engate/tampão = furo roscado
+coaxial com rosca de tubo lida da base de furos da SE; sobrefuro padrão Ø/2. **Ficaram para
+depois:** distância mínima canal↔cavidade/canal (conferência), recurso de montagem atravessando
+placas (V2), rebaixo do engate.
+
+**1º run ao vivo (2026-09-24):** o clique numa linha entrega `Edge`; a leitura das linhas, o plano
+normal à aresta e o 1º furo funcionaram (lado 1 certo, medição confirmou) — mas a aresta do esboço 3D
+MORRE a cada furo criado (todo `AddNormalToCurve` seguinte deu E_FAIL). E o Carlos desenha o CAMINHO
+da água, com cantos dentro da placa. Resposta, mesmo dia: plano pelo plano-base (sem aresta),
+prolongamento automático dos cantos até a face medido na peça, tampão/engate automáticos, todas as
+linhas ao abrir.
+
+**A confirmar no 1º run ao vivo (original):** o que o clique numa linha de esboço 3D entrega; se
+`AddNormalToCurve` aceita a aresta do esboço 3D; o lado do furo (a primeira tentativa usa
+"lado 1 = −normal", observado na fixação do bloco, e a medição corrige); se a rosca de tubo liga
+(`TreatmentType = 37` lido de volta).
+
+**Plano original:**
 
 **O que faz.** O Carlos desenha o traçado dos canais como **linhas num esboço 3D**; o botão
 transforma cada linha num furo cilíndrico do Ø escolhido e trata cada **ponta** conforme o

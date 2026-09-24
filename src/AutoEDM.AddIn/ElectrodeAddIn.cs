@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 17; // incrementar ao mudar a ribbon (v17 = grupo Molde primeiro com "Nova peça"; Criar Base/Unir/GAP em Eletrodos)
+            AddInEx.GuiVersion = 18; // incrementar ao mudar a ribbon (v18 = "Refrigeração" no grupo Molde)
 
             Current = this;
             App = application;

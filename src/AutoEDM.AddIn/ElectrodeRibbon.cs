@@ -49,6 +49,7 @@ namespace AutoEDM.AddIn
         private const int CmdMcpSomenteLeitura = 23; // MCP: volta a ponte para somente-leitura
         private const int CmdSondaMalha = 24;       // ENG. REVERSA: sonda de diagnóstico sobre a malha (SÓ LEITURA)
         private const int CmdListaModificacoes = 25; // Folha de revisões: peças com grupo "Rev.N" na árvore ordenada
+        private const int CmdRefrigeracao = 27;     // MOLDE: canais de refrigeração a partir das linhas do esboço 3D (PEÇA ordenada)
         private const int CmdNovaPeca = 26;         // MOLDE: peça vazia codificada (.100/.200/.300) na origem das faces escolhidas
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
@@ -72,6 +73,7 @@ namespace AutoEDM.AddIn
                 case CmdCriarEletrodos: CriarEletrodos(); break;
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
                 case CmdNovaPeca: NovaPeca(); break;
+                case CmdRefrigeracao: Refrigeracao(); break;
                 case CmdCoordenadas: AbrirCoordenadas(); break;
                 case CmdListaCorte: AbrirListaCorte(); break;
                 case CmdListaModificacoes: AbrirListaModificacoes(); break;
@@ -244,6 +246,30 @@ namespace AutoEDM.AddIn
                     },
                 };
             });
+        }
+
+        /// <summary>
+        /// Botão "Refrigeração" do grupo Molde (Carlos, 2026-09-24): na PEÇA ordenada, as linhas do
+        /// esboço 3D viram furos de canal (ponta de broca e sobrefuro nos cruzamentos) e as pontas
+        /// livres recebem cega/passante/engate/tampão. Janela modeless única, como o O'ring.
+        /// </summary>
+        private static CoolingChannelForm _coolingForm;
+
+        private void Refrigeracao()
+        {
+            if (!AllowedHere(CmdRefrigeracao, explain: true)) return;
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
+            {
+                if (_coolingForm != null && !_coolingForm.IsDisposed) { _coolingForm.BringToFront(); _coolingForm.Activate(); return; }
+                if (_pickForm != null && !_pickForm.IsDisposed) _pickForm.Close();   // uma janela com o mouse da SE por vez
+                Log.Info("===== REFRIGERAÇÃO — janela aberta =====");
+                _coolingForm = new CoolingChannelForm((object)app);
+                _coolingForm.FormClosed += (s, e) => { _coolingForm = null; Log.Info("===== FIM (REFRIGERAÇÃO) ====="); };
+                _coolingForm.Show();
+            }
+            catch (Exception ex) { Fail("abrir a refrigeração", ex); }
         }
 
         /// <summary>
@@ -1094,6 +1120,9 @@ namespace AutoEDM.AddIn
                 // Esboço + corte revolvido: em ORDENADO o esboço é filho legítimo do recurso e
                 // some junto quando o usuário apaga o canal. Em síncrono viraria órfão.
                 { CmdAlojamentoORing,     new CommandSpec("ALOJAMENTO DE O'RING", DocKind.Part, ModelingEnv.Ordered) },
+                // Furos ordenados, cada um com esboço num plano normal à linha — o esboço é filho do
+                // furo (mesma regra do O'ring); em síncrono ficaria órfão.
+                { CmdRefrigeracao,        new CommandSpec("REFRIGERAÇÃO",         DocKind.Part, ModelingEnv.Ordered) },
                 // WEDM: só LÊ as curvas e grava .igs. Síncrono porque é onde o Carlos prepara os perfis.
                 { CmdExportarPerfisWedm,  new CommandSpec("EXPORTAR PERFIS WEDM (IGES por Z)", DocKind.Part, ModelingEnv.Synchronous) },
                 // Cria curva derivada a partir das arestas das superfícies: mesmo ambiente do

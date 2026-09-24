@@ -111,7 +111,7 @@ namespace AutoEDM.Core.Tests
                 {
                     "se_alojamento_oring", "se_aplicar_gap", "se_criar_base", "se_criar_eletrodo_manual",
                     "se_criar_eletrodos", "se_curvas_superficies", "se_duplicar_eletrodo", "se_exportar_perfis_wedm",
-                    "se_ficha", "se_modelar", "se_nova_peca", "se_sonda_interpart", "se_sonda_rosca", "se_trocar_ambiente",
+                    "se_ficha", "se_modelar", "se_nova_peca", "se_refrigeracao", "se_sonda_interpart", "se_sonda_rosca", "se_trocar_ambiente",
                     "se_unir_superficies"
                 },
                 writers.ToArray());

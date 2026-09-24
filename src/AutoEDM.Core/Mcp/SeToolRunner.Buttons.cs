@@ -10,6 +10,7 @@ using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Model;
 using AutoEDM.Mold;
+using AutoEDM.Mold.Cooling;
 using AutoEDM.Reporting;
 using AutoEDM.Reverse;
 using AutoEDM.Revisions;
@@ -44,6 +45,8 @@ namespace AutoEDM.Mcp
                 case "se_criar_eletrodos": return CreateElectrodes(app, doc, argsJson);
                 case "se_criar_eletrodo_manual": return CreateElectrodeManual(app, doc);
                 case "se_nova_peca": return NewMoldPart(app, doc, argsJson);
+                case "se_refrigeracao_plano": return Cooling(app, doc, argsJson, create: false);
+                case "se_refrigeracao": return Cooling(app, doc, argsJson, create: true);
                 case "se_duplicar_eletrodo": return DuplicateElectrode(app, doc);
                 case "se_lista_corte": return SawCutList(app, doc);
                 case "se_lista_modificacoes": return ChangeList(doc);
@@ -217,6 +220,66 @@ namespace AutoEDM.Mcp
             if (res.Created) prefs.Save(asmPath);
             return (res.Created ? "CRIADO. " : "NÃO criado. ") + res.Message +
                    (skipped > 0 ? $" ({skipped} item(ns) da seleção não eram faces e ficaram de fora.)" : "");
+        }
+
+        /// <summary>Botões de refrigeração: o plano (só leitura) e a criação — mesmos argumentos.</summary>
+        private static string Cooling(dynamic app, dynamic doc, string argsJson, bool create)
+        {
+            List<PipeThread> threads = CoolingService.Threads((object)app);
+            double dia = 8;
+            string d = ReadString(argsJson, "diametroMm");
+            if (d != null && double.TryParse(d, NumberStyles.Float, CultureInfo.InvariantCulture, out double dv)) dia = dv;
+            CoolingOptions opt = CoolingService.DefaultOptions(threads, dia);
+            string o = ReadString(argsJson, "sobrefuroMm");
+            if (o != null && double.TryParse(o, NumberStyles.Float, CultureInfo.InvariantCulture, out double ov)) opt.OvershootMm = ov;
+            string fe = ReadString(argsJson, "roscaEngate"), pl = ReadString(argsJson, "roscaTampao");
+            if (fe != null) opt.FittingThread = CoolingService.FindThread(threads, fe);
+            if (pl != null) opt.PlugThread = CoolingService.FindThread(threads, pl);
+
+            // Terminação: automática (engate nas pontas do caminho, tampão nos prolongamentos); só o
+            // que vier em "pontas" é trocado.
+            var overrides = new Dictionary<string, CoolingTerminal>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using (JsonDocument j = JsonDocument.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson))
+                    if (j.RootElement.TryGetProperty("pontas", out JsonElement pontas) && pontas.ValueKind == JsonValueKind.Object)
+                        foreach (JsonProperty pr in pontas.EnumerateObject())
+                            switch ((pr.Value.GetString() ?? "").ToLowerInvariant())
+                            {
+                                case "cega": overrides[pr.Name] = CoolingTerminal.Blind; break;
+                                case "passante": overrides[pr.Name] = CoolingTerminal.Through; break;
+                                case "engate": overrides[pr.Name] = CoolingTerminal.Fitting; break;
+                                case "tampao": case "tampão": overrides[pr.Name] = CoolingTerminal.Plug; break;
+                            }
+            }
+            catch { }
+
+            var warnings = new List<string>();
+            List<CoolingLine> lines = CoolingService.ReadLines(doc, !ReadBool(argsJson, "todasAsLinhas", false), warnings, out string source);
+            if (lines.Count == 0)
+                return "Nenhuma linha reta encontrada (" + source + "). " + string.Join(" ", warnings);
+
+            CoolingPlan plan = CoolingService.BuildPlan(doc, lines, overrides, opt, out string note);
+            var sb = new StringBuilder();
+            sb.AppendLine($"Linhas: {source}. {note}");
+            sb.Append(CoolingService.Describe(lines, plan, opt));
+            foreach (string w in warnings) sb.AppendLine("AVISO: " + w);
+            if (!create)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Roscas: engate {opt.FittingThread?.Size.Trim() ?? "(nenhuma)"}, tampão {opt.PlugThread?.Size.Trim() ?? "(nenhuma)"}; " +
+                              $"{threads.Count} rosca(s) de tubo na base de furos.");
+                sb.Append("PLANO — nada foi criado.");
+                return sb.ToString();
+            }
+            if (plan.Holes.Count == 0) return "NÃO criado — o plano não tem furo.\n" + sb;
+
+            CoolingResult res = CoolingChannelModeler.Create(app, lines, plan, opt);
+            sb.AppendLine();
+            sb.AppendLine($"CRIADO(S): {res.Created} de {plan.Holes.Count} furo(s).");
+            foreach (string f in res.Failed) sb.AppendLine("FALHOU: " + f);
+            foreach (string w in res.Warnings) sb.AppendLine("AVISO: " + w);
+            return sb.ToString();
         }
 
         private static string DuplicateElectrode(dynamic app, dynamic doc)

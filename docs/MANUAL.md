@@ -1,6 +1,6 @@
 # AutoEDM — Manual de funcionamento
 
-> **O que é:** o manual único do projeto — a camada COM, as duas APIs (Core e MCP), a skill `solid-edge-com` e as 26 funcionalidades entregues, com as regras de negócio e seus valores exatos.
+> **O que é:** o manual único do projeto — a camada COM, as duas APIs (Core e MCP), a skill `solid-edge-com` e as 27 funcionalidades entregues, com as regras de negócio e seus valores exatos.
 > **Para quem:** quem vai manter ou estender o AutoEDM (pessoa ou agente), e quem precisa saber *por que* um número é aquele antes de mudá-lo.
 > **Como ler:** cada afirmação traz `arquivo:linha`. O código é a fonte da verdade; quando este manual divergir dele, o código vence e o manual é que está errado.
 > **Levantado em:** 2026-09-21, contra o commit `20c58ee`. Conferido nesta data: 25 botões na ribbon, 12 ferramentas MCP (3 de escrita), 369 casos de teste, `GuiVersion = 16`.
@@ -15,7 +15,7 @@
 | [1](#parte-1--com-a-camada-solid-edge) | **COM** — conexão, registro, ciclo de vida, geometria, escopos, armadilhas |
 | [2](#parte-2--api-o-core-e-a-ponte-mcp) | **API** — o Core em C# e as 12 ferramentas MCP |
 | [3](#parte-3--a-skill-solid-edge-com) | **SKILL** — `solid-edge-com`: o que impõe e quando carrega o quê |
-| [4](#parte-4--funcionalidades) | **Funcionalidades** — os 26 comandos e suas regras de negócio |
+| [4](#parte-4--funcionalidades) | **Funcionalidades** — os 27 comandos e suas regras de negócio |
 | [5](#parte-5--operação) | Operação — build, registro, deploy, o ciclo com a SE aberta |
 | [A](#apêndice-a--estado-da-documentação-2026-09-21) | Apêndice — estado da documentação |
 
@@ -476,7 +476,7 @@ Na prática: quando uma sessão descobre algo no CAD, o achado entra em `api-sig
 
 # Parte 4 — Funcionalidades
 
-## 4.1 Os 26 comandos
+## 4.1 Os 27 comandos
 
 A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `Specs` (`ElectrodeRibbon.cs:982-1032`) define o pré-requisito. **No ambiente errado o botão fica cinza** (relógio de 750 ms) e, se clicado, explica.
 
@@ -494,6 +494,7 @@ A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `S
 | 7 | Unir superfícies | Eletrodos | peça | **SÍNCRONO** |
 | 11 | Aplicar GAP | Eletrodos | peça | **ORDENADO** |
 | 26 | Nova peça | Molde | montagem | qualquer |
+| 27 | Refrigeração | Molde | peça | **ORDENADO** |
 | 14 | Alojamento de anel | Molde | peça | **ORDENADO** |
 | 18 | Curvas das superfícies | WEDM | peça | **SÍNCRONO** |
 | 17 | Exportar perfis (IGES) | WEDM | peça | **SÍNCRONO** |
@@ -695,6 +696,27 @@ Cria uma peça **vazia** do molde, codificada e posicionada a partir de faces cl
 | Preferências | eixo, lado da origem e última parte, por montagem, em `%LOCALAPPDATA%\AutoEDM\mold-projects.json` | `MoldProjectSettings` |
 
 O nome é recalculado no momento de criar (outra peça pode ter nascido desde a prévia) e a criação recusa se o arquivo já existir. A montagem não é salva.
+
+## 4.5c Refrigeração — id 27 (peça, **ordenada**)
+
+As linhas retas de um **esboço 3D da placa** viram canais. Janela modeless `CoolingChannelForm`; Core `AutoEDM.Mold.Cooling` (`CoolingPlanner` puro, `CoolingLineReader`, `HoleDatabase`, `CoolingChannelModeler`, `CoolingService`). MCP: `se_refrigeracao_plano` (só leitura) e `se_refrigeracao`.
+
+| Regra | Valor | Onde |
+|---|---|---|
+| Linhas | as arestas retas de `Constructions.Sketch3DFeatures[i].Edges[igQueryAll]`, pontas por `Edge.GetEndPoints`; clicadas (filtro linha + aresta) ou todas | `CoolingLineReader` |
+| Ø do canal | 6 / 8 / 10 / 12 mm | `CoolingService.Diameters` |
+| Passada de broca | linhas **colineares** encadeadas viram **um** furo | `CoolingPlanner` |
+| Automático | a janela abre com **todas** as linhas dos esboços 3D (ou a seleção, se houver linha selecionada) e o plano pronto | `CoolingChannelForm.OnShown` |
+| Boca na face | ponta que chega na face (medida na peça: raio de saída do material ≤ 0,5 mm); chave `L3:I` (início) / `L3:F` (fim) | `CoolingPlanner`, `CoolingExitProbe` |
+| Prolongamento | passada cujas duas pontas ficam **dentro** da placa (cantos do caminho): prolongada até a face pela ponta de saída mais curta, preferindo a face **externa** (na caixa do corpo) a um bolsão; avisa se o prolongamento passar a menos de 1 Ø de outro canal | `CoolingPlanner.Plan`, `CoolingExitProbe` |
+| Terminação automática | boca de prolongamento = **tampão**; ponta do caminho na face = **engate**; o usuário troca por boca na tabela | `CoolingPlanner.AutoTerminal` |
+| Entrada | uma boca na face (com duas, a mais aberta: engate > tampão > passante > cega) ou a boca do prolongamento; entrada cega = **problema** | `CoolingPlanner.Plan` |
+| Fundo | cruzamento → comprimento + **sobrefuro** (padrão **Ø/2**) e ponta de broca **118°** (profundidade até o ombro); ponta cega → ponta de broca na ponta desenhada; ponta aberta → fundo reto, **+0,5 mm** além da face | `CoolingPlanner.Plan` |
+| Engate / tampão | furo **roscado coaxial** em cada ponta que pede: rosca de tubo da **base de furos da SE** (`Preferences\Holes\*.xlsx`, aba Threaded — strings exatas), profundidade da rosca da planilha ou **12 mm**, furo = rosca + 2 mm. Padrões: engate G1/4, tampão G1/8 | `HoleDatabase`, `CoolingChannelModeler.HoleData` |
+| Modelagem | recurso de **furo** (`Holes.AddFinite` / `AddFiniteEx` com rosca cosmética). Plano: canal paralelo a um eixo → `AddParallelByDistance` do plano-base perpendicular, na boca (não depende da aresta, que morre a cada furo); inclinado → `AddNormalToCurve` na aresta **relida** antes de cada furo | `CoolingChannelModeler` |
+| Roscas oferecidas | ISO Metric + ANSI Inch da base (as outras normas repetem as mesmas G/R); padrão engate **G1/4**, tampão **G1/8** | `CoolingService` |
+| Conferência | referencial do esboço (origem na ponta, normal no eixo) e o furo **medido** (as faces cobrem um ponto de dentro do canal); lado errado → apaga e refaz do outro lado | `CoolingChannelModeler.TryHole` |
+| Nome na árvore | `Refrigeração Ø8 - L1+L2`, `Engate G1/4 - L1:I`, `Tampão G1/8 - L3:F` | `CoolingPlanner` |
 
 ## 4.6 Alojamento de anel de vedação — id 14 (peça, **ordenada**)
 

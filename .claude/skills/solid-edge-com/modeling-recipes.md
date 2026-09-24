@@ -121,6 +121,15 @@ So **probe sketches are sketches, and you cannot pool them**. Counting them stil
 throwaway `ProfileSet` per base plane, times every item in a batch, is a lot of sketches — but
 the answer is to **delete each one right after it answers, and verify**, not to share a set.
 
+**Edges of a 3D sketch DIE after every feature you add (live, 2026-09-24).** Lines of a 3D sketch
+are reachable only as topology — `Constructions.Sketch3DFeatures[i].Edges[igQueryAll=1]` →
+`Edge.GetEndPoints` (the interop 219 has no 3D-sketch types at all). `RefPlanes.AddNormalToCurve` on
+such an edge worked for the FIRST hole; every later call with edges read before it returned
+`E_FAIL` — the model recompute invalidated them. Re-read the edge (match by endpoints) right before
+each use, or avoid it: for axis-parallel channels a plane `AddParallelByDistance` of the base plane
+perpendicular to the channel, at the entry, needs no edge at all (and also serves an entry that is
+not on the line).
+
 **Fixation holes (validated recipe).** Mark centers with **`Profile.Holes2d.Add(x,y)`** —
 NOT `Circles2d` (a plain circle makes the hole feature create **zero holes, with no error**).
 Then `HoleData = PartDocument.HoleDataCollection.Add(HoleType, DiameterMeters, …)` with
