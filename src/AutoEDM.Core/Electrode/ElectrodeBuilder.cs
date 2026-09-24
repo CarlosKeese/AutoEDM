@@ -26,6 +26,26 @@ namespace AutoEDM.Electrode
         public double TopZmm { get; set; }
     }
 
+    /// <summary>
+    /// Uma face escolhida na MONTAGEM, já desembrulhada: a <see cref="Face"/> crua (coordenadas
+    /// da PEÇA) e, quando a seleção veio embrulhada, a <see cref="Occurrence"/> dona — é ela
+    /// que leva a face para as coordenadas da montagem sem adivinhar por nome de documento
+    /// (cavidade repetida usa o mesmo .par em várias ocorrências).
+    /// </summary>
+    public sealed class PickedFace
+    {
+        public object Face { get; }
+        public object Occurrence { get; }
+        public string OccurrenceName { get; }
+
+        public PickedFace(object face, object occurrence, string occurrenceName)
+        {
+            Face = face;
+            Occurrence = occurrence;
+            OccurrenceName = occurrenceName;
+        }
+    }
+
     /// <summary>Resultado de <see cref="ElectrodeBuilder.DuplicateElectrodeToNextGap"/>.</summary>
     public sealed class DuplicateElectrodeResult
     {
@@ -464,6 +484,31 @@ namespace AutoEDM.Electrode
         /// </summary>
         public ManualElectrodeResult CreateElectrodeFromSelection(dynamic asmDoc, ElectrodeParams p)
         {
+            if (asmDoc == null) throw new ArgumentNullException(nameof(asmDoc));
+            List<PickedFace> picks = ReadSelectedFaces(asmDoc, out int skipped);
+            if (skipped > 0)
+                Log.Warn($"Criar eletrodo manual: {skipped} item(ns) da seleção ignorado(s) (não são faces).");
+            if (picks.Count == 0)
+            {
+                var none = new ManualElectrodeResult
+                {
+                    Message = "Nenhuma FACE selecionada. No Solid Edge, clique na ocorrência e clique DE NOVO " +
+                        "no mesmo ponto (ou segure Alt ao clicar) para selecionar a FACE em vez da peça inteira — " +
+                        "selecione o(s) fundo(s) do bolsão a erodir e tente de novo."
+                };
+                Log.Warn("Criar eletrodo manual: " + none.Message);
+                return none;
+            }
+            return CreateElectrodeFromFaces(asmDoc, p, picks);
+        }
+
+        /// <summary>
+        /// O miolo do "Criar eletrodo (manual)", com as faces como ARGUMENTO: a janela de seleção
+        /// por etapas (clique a clique no modelo) e o caminho antigo (SelectSet) chegam aqui com
+        /// a mesma lista. Cria e posiciona UMA peça vazia no centro XY + Z mais fundo das faces.
+        /// </summary>
+        public ManualElectrodeResult CreateElectrodeFromFaces(dynamic asmDoc, ElectrodeParams p, IList<PickedFace> picks)
+        {
             var result = new ManualElectrodeResult();
             if (_connector.Application == null)
                 throw new InvalidOperationException("Conecte o SolidEdgeConnector primeiro.");
@@ -472,29 +517,62 @@ namespace AutoEDM.Electrode
             dynamic app = _connector.Application;
             var ctx = new AssemblyContext(asmDoc);
 
-            List<object> faces = CollectSelectedFaces(asmDoc, out int skipped, out object firstParentOccurrence);
+            List<object> faces = (picks ?? new List<PickedFace>()).Where(k => k?.Face != null).Select(k => k.Face).ToList();
             if (faces.Count == 0)
             {
-                result.Message = "Nenhuma FACE selecionada. No Solid Edge, clique na ocorrência e clique DE NOVO " +
-                    "no mesmo ponto (ou segure Alt ao clicar) para selecionar a FACE em vez da peça inteira — " +
-                    "selecione o(s) fundo(s) do bolsão a erodir e tente de novo.";
+                result.Message = "Nenhuma FACE escolhida. Clique no(s) fundo(s) do bolsão a erodir e tente de novo.";
                 Log.Warn("Criar eletrodo manual: " + result.Message);
                 return result;
             }
-            if (skipped > 0)
-                Log.Warn($"Criar eletrodo manual: {skipped} item(ns) da seleção ignorado(s) (não são faces).");
+
+            // A 1ª face com dona conhecida decide a ocorrência de REFERÊNCIA (orientação do
+            // eletrodo). Faces de outras peças entram no centro/fundo pela pose de cada uma.
+            PickedFace owned = picks.FirstOrDefault(k => k?.Occurrence != null);
+            object firstParentOccurrence = owned?.Occurrence;
+            List<string> owners = picks.Where(k => k?.OccurrenceName != null)
+                                       .Select(k => k.OccurrenceName).Distinct().ToList();
+            if (owners.Count > 1)
+                Log.Warn($"Criar eletrodo manual: faces de {owners.Count} ocorrências ({string.Join(", ", owners)}) — " +
+                         $"centro pelas faces de todas; orientação de '{owners[0]}'.");
 
             double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
             double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
             int withBox = 0;
-            foreach (var f in faces)
+            // Caixas de faces de OUTRA ocorrência vão para o espaço da ocorrência de referência
+            // (a que posiciona o eletrodo) pela pose de cada uma — juntar coordenadas locais de
+            // peças diferentes deslocava o eletrodo (dois postiços lado a lado, 2026-09-24).
+            var poses = new Dictionary<string, OccurrenceTransform>();
+            OccurrenceTransform PoseOf(PickedFace k)
             {
-                if (!FaceGeometry.TryGetRangeMm(f, out double[] mn, out double[] mx)) continue;
+                if (k?.Occurrence == null || k.OccurrenceName == null) return null;
+                if (!poses.TryGetValue(k.OccurrenceName, out OccurrenceTransform t))
+                    poses[k.OccurrenceName] = t = AssemblyContext.TryGetPose(WrapOccurrence(k.Occurrence));
+                return t;
+            }
+            OccurrenceTransform refPose = PoseOf(owned);
+            int remapped = 0, unmapped = 0;
+            foreach (PickedFace k in picks.Where(k => k?.Face != null))
+            {
+                if (!FaceGeometry.TryGetRangeMm(k.Face, out double[] mn, out double[] mx)) continue;
+                if (owned != null && k.OccurrenceName != null && k.OccurrenceName != owned.OccurrenceName)
+                {
+                    OccurrenceTransform facePose = PoseOf(k);
+                    if (facePose != null && refPose != null)
+                    {
+                        OccurrenceTransform.MapBoxMm(facePose, refPose, mn, mx, out mn, out mx);
+                        remapped++;
+                    }
+                    else unmapped++;
+                }
                 withBox++;
                 minX = Math.Min(minX, mn[0]); maxX = Math.Max(maxX, mx[0]);
                 minY = Math.Min(minY, mn[1]); maxY = Math.Max(maxY, mx[1]);
                 minZ = Math.Min(minZ, mn[2]); maxZ = Math.Max(maxZ, mx[2]);
             }
+            if (remapped > 0)
+                Log.Info($"Criar eletrodo manual: {remapped} face(s) de outra(s) ocorrência(s) levadas ao espaço de '{owned.OccurrenceName}' pela pose de cada uma.");
+            if (unmapped > 0)
+                Log.Warn($"Criar eletrodo manual: {unmapped} face(s) de outra ocorrência SEM pose legível — entraram em coordenadas locais; confira a posição.");
             if (withBox == 0)
             {
                 result.Message = "Não consegui ler a geometria (bounding box) das faces selecionadas.";
@@ -505,7 +583,7 @@ namespace AutoEDM.Electrode
             // Ocorrência dona das faces (top-level) -> transform peça->montagem, igual ao
             // fluxo automático (translação + rotação Z; X/Y avisa e não aplica, Log 53).
             // Preferência: .ImmediateParent capturado direto do embrulho da seleção (confirmado
-            // ao vivo 2026-07-21 — ver CollectSelectedFaces); fallback = casamento por nome de
+            // ao vivo 2026-07-21 — ver ReadSelectedFaces); fallback = casamento por nome de
             // documento, p/ quando a seleção não vier embrulhada.
             OccurrenceInfo cavity = firstParentOccurrence != null
                 ? WrapOccurrence(firstParentOccurrence)
@@ -610,29 +688,16 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
-        /// Faces (objetos COM crus) da SelectSet atual — tolerante a itens que não são faces.
-        /// NUNCA falha silenciosamente: se a SelectSet vier vazia/inacessível, ou se algum item
-        /// não for uma face utilizável, loga o motivo real (exceção ou dump SPY do tipo do item)
-        /// em vez de só devolver "0 faces" sem explicação.
-        ///
-        /// CONFIRMADO ao vivo 2026-07-21 (log `101106`): selecionar uma face de OCORRÊNCIA direto
-        /// na montagem (sem entrar em contexto) NÃO devolve a `Face` crua em `SelectSet.Item(i)` —
-        /// devolve um objeto EMBRULHO com `.Object` (a `Face` de verdade — confirmado no dump:
-        /// membros Area/Body/Edges/GetRange/Vertices) e `.ImmediateParent` (a `Occurrence` dona —
-        /// confirmado: Name/OccurrenceDocument/PartFileName/GetTransform). Por isso
-        /// `SelectSet.Count` já vinha correto (o bug de contagem zerada de antes era outra coisa/
-        /// já resolvido), mas TODO item falhava `TryGetRangeMm` e a mensagem "Nenhuma FACE
-        /// selecionada" saía mesmo com a seleção visível. Fix: se o item cru não for uma face
-        /// utilizável, tenta `.Object` antes de desistir. Também devolve o `.ImmediateParent` do
-        /// PRIMEIRO item embrulhado — é a ocorrência dona de forma DIRETA, mais confiável que o
-        /// casamento por nome de documento do <see cref="FindOwningOccurrence"/> (fallback p/
-        /// quando a seleção não vem embrulhada, ex.: SE de outra versão).
+        /// Faces da SelectSet atual, já desembrulhadas (<see cref="TryUnwrapFace"/>) — tolerante
+        /// a itens que não são faces. NUNCA falha silenciosamente: se a SelectSet vier
+        /// vazia/inacessível, ou se algum item não for uma face utilizável, loga o motivo real
+        /// (exceção ou dump SPY do tipo do item) em vez de só devolver "0 faces" sem explicação.
+        /// Pública porque a janela de seleção por etapas pré-carrega o que já estava selecionado.
         /// </summary>
-        private static List<object> CollectSelectedFaces(dynamic doc, out int skipped, out object firstParentOccurrence)
+        public static List<PickedFace> ReadSelectedFaces(dynamic doc, out int skipped)
         {
-            var faces = new List<object>();
+            var faces = new List<PickedFace>();
             skipped = 0;
-            firstParentOccurrence = null;
             dynamic ss;
             try { ss = doc.SelectSet; }
             catch (Exception ex) { Log.Warn($"Criar eletrodo manual: doc.SelectSet inacessível: {ex.GetBaseException().Message}"); return faces; }
@@ -649,34 +714,70 @@ namespace AutoEDM.Electrode
                 catch (Exception ex) { Log.Warn($"Criar eletrodo manual: SelectSet.Item({i}) falhou: {ex.GetBaseException().Message}"); continue; }
                 if (item == null) { skipped++; continue; }
 
-                object candidate = item;
-                object parent = null;
-                if (!FaceGeometry.TryGetRangeMm(candidate, out _, out _))
-                {
-                    // Seleção de face de ocorrência (fora de contexto) — desembrulha via .Object;
-                    // .ImmediateParent (se existir) é a Occurrence dona, capturada de graça aqui.
-                    // InvokeMember (não `dynamic`) de propósito: é o MESMO mecanismo que o SPY
-                    // (ComDiagnostics.DumpObjectInner) usa pra ler ".Object" com sucesso — troca
-                    // feita 2026-07-22 (log `073330`) depois que a versão com `dynamic` ainda
-                    // devolvia "Nenhuma FACE selecionada" mesmo com o SPY mostrando `.Object`
-                    // como uma Face genuína (Area/Body/GetRange/Vertices); exceções agora são
-                    // LOGADAS (nunca mais escondidas atrás de um catch vazio).
-                    parent = TryGetComProperty(item, "ImmediateParent", "Criar eletrodo manual", i);
-                    candidate = TryGetComProperty(item, "Object", "Criar eletrodo manual", i);
-                }
-
-                if (candidate != null && FaceGeometry.TryGetRangeMm(candidate, out _, out _))
-                {
-                    faces.Add(candidate);
-                    if (firstParentOccurrence == null && parent != null) firstParentOccurrence = parent;
-                }
-                else
-                {
-                    skipped++;
-                    ComDiagnostics.DumpObject($"Criar eletrodo manual: SelectSet[{i}] não é face utilizável", item, 1);
-                }
+                PickedFace pick = TryUnwrapFace(item, $"SelectSet[{i}]");
+                if (pick != null) faces.Add(pick);
+                else skipped++;
             }
             return faces;
+        }
+
+        /// <summary>
+        /// Um item escolhido na montagem (do <c>SelectSet</c> ou o objeto clicado que o comando de
+        /// seleção por etapas recebe) → face crua + ocorrência dona. Null se não for face — com o
+        /// dump SPY do item no log, para a próxima rodada dizer o que veio.
+        ///
+        /// Seleção de face de ocorrência (fora de contexto) vem EMBRULHADA: <c>.Object</c> é a
+        /// Face e <c>.ImmediateParent</c> a Occurrence (confirmado ao vivo 2026-07-21, log
+        /// `101106`). Lidas por InvokeMember (não `dynamic`) de propósito: é o MESMO mecanismo
+        /// que o SPY (ComDiagnostics.DumpObjectInner) usa pra ler ".Object" com sucesso — troca
+        /// feita 2026-07-22 (log `073330`) depois que a versão com `dynamic` ainda devolvia
+        /// "Nenhuma FACE selecionada" com o SPY mostrando `.Object` como uma Face genuína.
+        /// </summary>
+        public static PickedFace TryUnwrapFace(object item, string where = "item")
+        {
+            if (item == null) return null;
+            const string ctx = "Criar eletrodo manual";
+
+            object candidate = item;
+            object parent = null;
+            if (!LooksLikeFace(candidate))
+            {
+                parent = TryGetComPropertyQuiet(item, "ImmediateParent");
+                candidate = TryGetComProperty(item, "Object", $"{ctx} ({where})");
+            }
+
+            if (candidate == null || !LooksLikeFace(candidate))
+            {
+                ComDiagnostics.DumpObject($"{ctx}: {where} não é face utilizável", item, 1);
+                return null;
+            }
+            if (!FaceGeometry.TryGetRangeMm(candidate, out _, out _))
+                Log.Warn($"{ctx}: {where} é face, mas a caixa dela não leu (comum em face curva) — " +
+                         "entra na lista; o centro/fundo do eletrodo sai das faces que leram.");
+
+            // A dona só vale se for mesmo uma ocorrência (tem OccurrenceDocument); num item cru
+            // de peça o ImmediateParent pode ser outra coisa.
+            string name = null;
+            if (parent != null && TryGetComPropertyQuiet(parent, "OccurrenceDocument") == null) parent = null;
+            if (parent != null) name = TryGetComPropertyQuiet(parent, "Name") as string;
+            if (parent == null)
+                Log.Info($"{ctx}: {where} veio como face CRUA (sem ocorrência dona) — a ocorrência sai do casamento por documento.");
+            return new PickedFace(candidate, parent, name);
+        }
+
+        /// <summary>
+        /// É uma Face? A caixa lida basta, mas NÃO é exigida: em face curva os três caminhos do
+        /// <see cref="FaceGeometry.TryGetRangeMm"/> podem falhar (visto no nariz arredondado do
+        /// "Criar Base", 2026-07-17), e exigir a caixa descartava justamente a queima curva. Sem
+        /// caixa, vale ser face pela topologia: tem <c>Area</c> e <c>Body</c> e NÃO é o embrulho
+        /// da seleção de montagem (que tem <c>.Object</c>).
+        /// </summary>
+        private static bool LooksLikeFace(object o)
+        {
+            if (o == null) return false;
+            if (FaceGeometry.TryGetRangeMm(o, out _, out _)) return true;
+            if (TryGetComPropertyQuiet(o, "Object") != null) return false;
+            return TryGetComPropertyQuiet(o, "Area") != null && TryGetComPropertyQuiet(o, "Body") != null;
         }
 
         /// <summary>
@@ -1973,7 +2074,7 @@ namespace AutoEDM.Electrode
         /// <summary>Ocorrências (objetos COM crus, envolvidos em <see cref="OccurrenceInfo"/>) da
         /// SelectSet atual — tolerante a itens que não são ocorrências (ex.: uma face
         /// selecionada por engano). NUNCA falha silenciosamente, mesmo padrão de
-        /// <see cref="CollectSelectedFaces"/>. <paramref name="logTag"/> identifica o comando
+        /// <see cref="ReadSelectedFaces"/>. <paramref name="logTag"/> identifica o comando
         /// chamador nas linhas de log (ex.: "Duplicar eletrodo", "Coordenadas") — a mesma
         /// leitura da SelectSet serve a mais de um botão.</summary>
         private static List<OccurrenceInfo> CollectSelectedOccurrences(dynamic doc, out int skipped, string logTag = "Duplicar eletrodo")
@@ -2005,9 +2106,9 @@ namespace AutoEDM.Electrode
                 if (occDoc == null)
                 {
                     // Mesmo embrulho achado na seleção de face de ocorrência (2026-07-21/22, ver
-                    // CollectSelectedFaces) — se selecionar a ocorrência inteira também vier
+                    // ReadSelectedFaces) — se selecionar a ocorrência inteira também vier
                     // embrulhado nalguma situação, `.ImmediateParent` é a Occurrence de verdade.
-                    // InvokeMember (não `dynamic`) pelo mesmo motivo de CollectSelectedFaces:
+                    // InvokeMember (não `dynamic`) pelo mesmo motivo de ReadSelectedFaces:
                     // é o mecanismo comprovado (usado pelo SPY) — o `dynamic` ficou sob suspeita
                     // depois de "Criar eletrodo manual" continuar falhando com ele (log `073330`).
                     candidate = TryGetComProperty(item, "ImmediateParent", logTag, i);

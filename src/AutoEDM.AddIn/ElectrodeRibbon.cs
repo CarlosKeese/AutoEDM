@@ -179,22 +179,39 @@ namespace AutoEDM.AddIn
 
         /// <summary>
         /// Versão MANUAL do "Criar eletrodos" (Carlos): em vez da detecção automática por
-        /// cor/nível de Z, o usuário SELECIONA à mão a(s) FACE(s) do fundo do bolsão (no SE,
-        /// clique na ocorrência e clique DE NOVO no mesmo ponto — ou segure Alt — para
-        /// selecionar a FACE em vez da peça inteira; não existe um "modo" de seleção
-        /// separado a ligar, é o comportamento nativo de seleção em 2 cliques do SE) e
-        /// clica este botão UMA vez por eletrodo. Cria e posiciona UMA peça VAZIA (sem
-        /// bloco/base ainda) no centro XY + Z mais fundo das faces escolhidas — mesmo
-        /// pipeline do "Criar eletrodos" automático. ESCREVE na montagem (não salva).
+        /// cor/nível de Z, o usuário escolhe à mão a(s) FACE(s) do fundo do bolsão. Desde
+        /// 2026-09-24 o botão não exige mais a pré-seleção: abre uma janela MODELESS que assume
+        /// o mouse da SE e recebe as faces clique a clique (<see cref="ManualElectrodeForm"/>);
+        /// o que já estava selecionado entra na lista. Cada "Criar eletrodo" cria e posiciona
+        /// UMA peça VAZIA no centro XY + Z mais fundo das faces — mesmo pipeline do automático
+        /// — e a janela segue aberta para o próximo. ESCREVE na montagem (não salva).
         /// </summary>
+        private static ManualElectrodeForm _manualForm;
+
         private void CriarEletrodoManual()
         {
-            Run(CmdCriarEletrodoManual, (connector, doc, p) =>
+            if (!AllowedHere(CmdCriarEletrodoManual, explain: true)) return;
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
             {
-                ManualElectrodeResult res = NewBuilder(connector).CreateElectrodeFromSelection(doc, p);
-                MessageBox.Show(res.Message, "AutoEDM — Criar eletrodo (manual)", MessageBoxButtons.OK,
-                    res.Created ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-            });
+                if (_manualForm != null && !_manualForm.IsDisposed)
+                {
+                    _manualForm.BringToFront();
+                    _manualForm.Activate();
+                    return;
+                }
+
+                Log.Info("===== CRIAR ELETRODO (MANUAL) — janela aberta =====");
+                // `object`, não `dynamic`: com argumento dynamic a chamada inteira vira dinâmica
+                // (a regra do "Duplicar eletrodo"), e aqui o tipo de retorno importa.
+                object appObj = app;
+                _manualForm = new ManualElectrodeForm(appObj, (doc, faces) =>
+                    NewBuilder(SolidEdgeConnector.Attach(appObj)).CreateElectrodeFromFaces(doc, LoadParams(), faces));
+                _manualForm.FormClosed += (s, e) => { _manualForm = null; Log.Info("===== FIM (CRIAR ELETRODO MANUAL) ====="); };
+                _manualForm.Show();
+            }
+            catch (Exception ex) { Fail("abrir o criar eletrodo (manual)", ex); }
         }
 
         /// <summary>

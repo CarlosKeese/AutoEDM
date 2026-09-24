@@ -82,7 +82,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Spec-sheet de eletrodos | ✅ construído |
 | Criar eletrodos c/ blank | ✅ validado no SE |
 | Criar Base | ✅ validado no SE |
-| Criar eletrodo (manual) | ✅ validado no SE |
+| Criar eletrodo (manual) | ✅ validado no SE; janela de seleção por clique **validada (2026-09-24)** — face à vista pelo raio do cursor, centro certo com faces de vários postiços, 11–20 ms por clique |
 | Unir superfícies | ✅ validado no SE |
 | Guarda de ambiente por comando | ✅ construído |
 | Configuração externa (`config.json`) | ✅ construído, coberto por teste |
@@ -103,6 +103,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Copiar superfícies (Inter-Part Copy) | 🚧 só em edição em contexto (in-place) |
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
 | Orquestrador "gerar todos os eletrodos" | 📋 planejado |
+| Grupo **Molde** (Nova peça, Refrigeração, Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
 
 ## Regra de ouro
 
@@ -276,6 +277,24 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-09-24** — **Grupo "Molde" na ribbon e eletrodo manual por clique.** O
+  Alojamento de O'ring saiu do grupo "Peça" para o novo grupo "Molde". O "Criar eletrodo
+  (manual)" deixou de exigir faces pré-selecionadas: abre uma janela modeless que assume o
+  mouse da SE com filtro de face (`ManualElectrodeForm` + `SePicker`), soma/retira faces
+  clique a clique e cria um eletrodo atrás do outro. Core: `CreateElectrodeFromFaces` é o
+  miolo, `TryUnwrapFace` desembrulha o item. Os seis botões de molde pedidos (Nova peça,
+  Refrigeração, Canais, Pontos de injeção, Extratores, Gavetas) foram **planejados, não
+  implementados**, em [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md), com a sequência de
+  desenvolvimento. No mesmo dia, a janela foi acertada ao vivo em cinco rodadas: filtro
+  com todos os tipos de face; a localização da SE dentro do comando não respeita
+  profundidade (QuickPick/Simples pegavam a peça de trás, Simples nem entrega o clique),
+  então a face sai de um **raio de visão nosso** (`VisibleFacePicker`: câmera da janela +
+  pixel do cursor via `DrawHwnd`/`TransformDCToModel` — o (x, y, z) do `MouseClick` NÃO
+  está sob o cursor — e primeiro impacto na malha das faces); SmartLocate com clique sem
+  geometria aceito para não acender a peça errada sob o mouse; caixa de faces de postiços
+  diferentes levada ao espaço da ocorrência de referência (`OccurrenceTransform.MapBoxMm`;
+  o eletrodo tinha saído 12 mm deslocado); leitura da cena guardada entre cliques
+  (~0,35 s → 11–20 ms). 393 testes, 0 falhas.
 - **2026-09-21** — **Alojamento de O'ring associativo, validado no SE.** Pedidos do
   Carlos: janela no lado direito da tela; feature com o nome do anel
   (`O'ring 2-214 - d2 3,53 x d1 24,99 - 1`, número por anel); canal pintado com o
@@ -388,6 +407,9 @@ As 7 falhas registradas em `701725f` (testes escritos contra uma especificação
 alojamento foi validado no SE em 2026-09-21. Vale a tabela de catálogo.
 
 ## Próxima ação
+
+A janela do "Criar eletrodo (manual)" foi validada no SE em 2026-09-24. Próximo passo do
+[plano de molde](docs/PLANO_MOLDE.md): a Fase 1 (Nova peça).
 
 **Nível 2 da análise de usinabilidade** — a varredura do vazio da cavidade
 (malha por `Body.GetFacetData` → rasterização por fatia → transformada de

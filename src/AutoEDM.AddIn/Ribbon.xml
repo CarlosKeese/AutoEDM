@@ -21,8 +21,8 @@
               supertip="Cria uma peça por eletrodo com o BLOCO da base (holder) modelado e posicionado na montagem (você copia as faces de queima por baixo). Não salva a montagem."
               imageId="1" showLabel="true" />
       <button id="10" size="large" label="Criar eletrodo (manual)"
-              screentip="Criar 1 eletrodo a partir das faces selecionadas"
-              supertip="Versão MANUAL do 'Criar eletrodos': selecione, na montagem, a(s) FACE(s) do fundo do bolsão a erodir (clique na peça e clique DE NOVO no mesmo ponto, ou segure Alt, para pegar a FACE em vez da ocorrência inteira) e clique aqui. Cria e posiciona UMA peça com o bloco/base no centro XY e no Z mais fundo das faces escolhidas — mesmo pipeline do 'Criar eletrodos', um clique por eletrodo. Tenta identificar o Ra pela cor das faces selecionadas e grava numa variável da peça (orienta o 'Aplicar GAP' depois). Não salva a montagem."
+              screentip="Criar 1 eletrodo clicando nas faces do bolsão"
+              supertip="Versão MANUAL do 'Criar eletrodos': clique aqui (sem precisar selecionar nada antes) e uma janela assume o mouse do Solid Edge — clique direto no modelo nas FACES do fundo do bolsão a erodir, uma por clique (clicar de novo na mesma face a retira). 'Criar eletrodo' cria e posiciona UMA peça vazia no centro XY e no Z mais fundo das faces escolhidas, e a janela continua aberta para o próximo. Faces que já estavam selecionadas entram na lista. Tenta identificar o Ra pela cor das faces e grava numa variável da peça (orienta o 'Aplicar GAP' depois). Não salva a montagem."
               imageId="1" showLabel="true" />
       <button id="12" size="large" label="Duplicar eletrodo"
               screentip="Duplicar p/ o próximo Ra da tabela (desbaste/acabamento)"
@@ -60,6 +60,8 @@
               screentip="GAP + cor + nome no corpo já unido (PEÇA, modelagem ORDENADA)"
               supertip="Exige a peça em modelagem ORDENADA — o GAP (Model.FaceOffsets, editável na árvore) não existe em síncrono, e o AutoEDM não troca o ambiente sozinho (a troca invalida as faces já selecionadas). Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
               imageId="1" showLabel="true" />
+    </group>
+    <group name="Molde">
       <button id="14" size="large" label="Alojamento de O’ring"
               screentip="Canal de anel O’ring pela ISO 3601 (PEÇA, modelagem ORDENADA)"
               supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."

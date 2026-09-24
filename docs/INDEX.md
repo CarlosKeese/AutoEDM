@@ -46,6 +46,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 |---|---|
 | [`docs/MAPEAMENTO_INTEGRACAO_COM.md`](./MAPEAMENTO_INTEGRACAO_COM.md) | Fluxo completo de extração de eletrodos: seleção → planejamento → Inter-Part Copy → offset → stitch → blank → furos → relatório. |
 | [`docs/PLANO_TESTE_SE.md`](./PLANO_TESTE_SE.md) | Procedimentos de teste manual no Solid Edge. |
+| [`docs/PLANO_MOLDE.md`](./PLANO_MOLDE.md) | **Plano do grupo "Molde"** (2026-09-24): Nova peça, Refrigeração, Canais de alimentação, Pontos de injeção, Extratores e Gavetas — sequência de desenvolvimento, sondas de API e perguntas pendentes por fase. Só a Fase 0 está feita. |
 
 ## Arquitetura e decisões
 

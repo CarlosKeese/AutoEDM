@@ -493,7 +493,7 @@ A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `S
 | 5 | Criar Base | Peça | peça | **SÍNCRONO** |
 | 7 | Unir superfícies | Peça | peça | **SÍNCRONO** |
 | 11 | Aplicar GAP | Peça | peça | **ORDENADO** |
-| 14 | Alojamento de anel | Peça | peça | **ORDENADO** |
+| 14 | Alojamento de anel | Molde | peça | **ORDENADO** |
 | 18 | Curvas das superfícies | WEDM | peça | **SÍNCRONO** |
 | 17 | Exportar perfis (IGES) | WEDM | peça | **SÍNCRONO** |
 | 24 | Sonda de malha | Eng. Reversa | peça | qualquer |
@@ -534,7 +534,9 @@ Cria uma peça `.par` por eletrodo proposto e a posiciona na montagem. Exige **c
 | Margem do blank por lado | **0,0 mm** — o blank não leva sobremetal | `ElectrodeParams.cs:73` |
 
 ### Criar eletrodo (manual) — id 10
-Mesmo pipeline, mas o candidato vem do bounding box das **faces selecionadas à mão**. Tenta identificar o Ra pela cor e grava na peça.
+Mesmo pipeline, mas o candidato vem do bounding box das **faces escolhidas à mão**. Tenta identificar o Ra pela cor e grava na peça.
+
+Desde 2026-09-24 o botão **não exige pré-seleção**: abre a janela modeless `ManualElectrodeForm`, que assume o mouse da SE (`SePicker`, filtro de FACE). Cada clique no modelo soma uma face; clicar de novo na mesma face a retira (identidade = ocorrência + `Face.ID`). "Criar eletrodo" chama `ElectrodeBuilder.CreateElectrodeFromFaces`, limpa a lista e recomeça a coleta para o próximo eletrodo. O que já estava selecionado ao abrir entra na lista, e "Usar seleção" é o modo reserva quando a SE não deixa assumir o mouse. **A face escolhida é a primeira À VISTA, decidida pelo AutoEDM**: a localização da SE dentro do comando não respeita profundidade (peça de trás ganhava) e o SmartLocate não entrega geometria. Por isso cada clique monta o raio de visão (câmera da janela + ponto sob o cursor, convertido do PIXEL pela vista — `DrawHwnd` + `View.TransformDCToModel`; o (x, y, z) do evento `MouseClick` não está sob o cursor) e `VisibleFacePicker` acha o primeiro impacto entre as ocorrências de peça visíveis do 1º nível (`Body.FacesByRay` + malha da face); a face que a SE localizou só vale se o raio falhar (submontagem, por exemplo). A ferramenta MCP `se_criar_eletrodo_manual` continua lendo o `SelectSet` (`CreateElectrodeFromSelection`, casca sobre o mesmo método).
 
 O Ra é gravado como **`Variable.Formula` (string), nunca `Variable.Value`** — `Value` é escalado pela unidade do documento. Nome da variável: **`AutoEDM_Ra`**.
 
