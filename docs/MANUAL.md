@@ -1,6 +1,6 @@
 # AutoEDM — Manual de funcionamento
 
-> **O que é:** o manual único do projeto — a camada COM, as duas APIs (Core e MCP), a skill `solid-edge-com` e as 25 funcionalidades entregues, com as regras de negócio e seus valores exatos.
+> **O que é:** o manual único do projeto — a camada COM, as duas APIs (Core e MCP), a skill `solid-edge-com` e as 26 funcionalidades entregues, com as regras de negócio e seus valores exatos.
 > **Para quem:** quem vai manter ou estender o AutoEDM (pessoa ou agente), e quem precisa saber *por que* um número é aquele antes de mudá-lo.
 > **Como ler:** cada afirmação traz `arquivo:linha`. O código é a fonte da verdade; quando este manual divergir dele, o código vence e o manual é que está errado.
 > **Levantado em:** 2026-09-21, contra o commit `20c58ee`. Conferido nesta data: 25 botões na ribbon, 12 ferramentas MCP (3 de escrita), 369 casos de teste, `GuiVersion = 16`.
@@ -15,7 +15,7 @@
 | [1](#parte-1--com-a-camada-solid-edge) | **COM** — conexão, registro, ciclo de vida, geometria, escopos, armadilhas |
 | [2](#parte-2--api-o-core-e-a-ponte-mcp) | **API** — o Core em C# e as 12 ferramentas MCP |
 | [3](#parte-3--a-skill-solid-edge-com) | **SKILL** — `solid-edge-com`: o que impõe e quando carrega o quê |
-| [4](#parte-4--funcionalidades) | **Funcionalidades** — os 25 comandos e suas regras de negócio |
+| [4](#parte-4--funcionalidades) | **Funcionalidades** — os 26 comandos e suas regras de negócio |
 | [5](#parte-5--operação) | Operação — build, registro, deploy, o ciclo com a SE aberta |
 | [A](#apêndice-a--estado-da-documentação-2026-09-21) | Apêndice — estado da documentação |
 
@@ -476,7 +476,7 @@ Na prática: quando uma sessão descobre algo no CAD, o achado entra em `api-sig
 
 # Parte 4 — Funcionalidades
 
-## 4.1 Os 25 comandos
+## 4.1 Os 26 comandos
 
 A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `Specs` (`ElectrodeRibbon.cs:982-1032`) define o pré-requisito. **No ambiente errado o botão fica cinza** (relógio de 750 ms) e, se clicado, explica.
 
@@ -490,9 +490,10 @@ A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `S
 | 16 | Lista de corte | Relatórios | montagem | qualquer |
 | 25 | Lista de modificações | Relatórios | montagem | qualquer |
 | 4 | Ficha (spec-sheet) | Relatórios | montagem | qualquer |
-| 5 | Criar Base | Peça | peça | **SÍNCRONO** |
-| 7 | Unir superfícies | Peça | peça | **SÍNCRONO** |
-| 11 | Aplicar GAP | Peça | peça | **ORDENADO** |
+| 5 | Criar Base | Eletrodos | peça | **SÍNCRONO** |
+| 7 | Unir superfícies | Eletrodos | peça | **SÍNCRONO** |
+| 11 | Aplicar GAP | Eletrodos | peça | **ORDENADO** |
+| 26 | Nova peça | Molde | montagem | qualquer |
 | 14 | Alojamento de anel | Molde | peça | **ORDENADO** |
 | 18 | Curvas das superfícies | WEDM | peça | **SÍNCRONO** |
 | 17 | Exportar perfis (IGES) | WEDM | peça | **SÍNCRONO** |
@@ -676,6 +677,24 @@ Lê as curvas de construção **visíveis** (o sólido é ignorado), agrupa por 
 - Exige a peça **salva**: os `.igs` vão na pasta dela, com o nome dela.
 
 Cadeia validada ponta a ponta até o Pitágoras em 2026-09-16.
+
+## 4.5b Nova peça (molde) — id 26 (montagem)
+
+Cria uma peça **vazia** do molde, codificada e posicionada a partir de faces clicadas na montagem. Usa a mesma janela de seleção do "Criar eletrodo (manual)" (`FacePickForm`: face à vista pelo raio do cursor, lista, realce), com o painel `NewPartOptionsPanel`. Core: `AutoEDM.Mold` (`MoldPartNaming`, `NewPartPlacement`, `MoldProjectSettings`, `NewPartBuilder`). MCP: `se_nova_peca`.
+
+| Regra | Valor | Onde |
+|---|---|---|
+| Nome | `{código do molde}.{NNN}.par` | `MoldPartNaming.FileName` |
+| Séries | fixa **100–199**, móvel **200–299**, extração **300–399** | `MoldSection` |
+| Próximo número | maior número **em uso na série + 1**; série vazia começa no próprio 100/200/300. Contam os arquivos da pasta da montagem (qualquer extensão — um `.dft` ocupa o número) **e** as ocorrências da montagem | `MoldPartNaming.NextNumber`, `NewPartBuilder.PlanName` |
+| Código do molde | o prefixo mais frequente entre os arquivos codificados; sem nenhum, o `MD-XXXXX` do nome da pasta | `MoldPartNaming.GuessPrefix` |
+| Pasta | a da montagem (recusa se a montagem não estiver salva) | `NewPartBuilder.PlanName` |
+| Orientação | **a da montagem** (matriz identidade) — diferente do eletrodo, que herda a da cavidade | `NewPartBuilder.Create` |
+| Origem | caixa das faces **nas coordenadas da montagem** (cada face pela pose da sua ocorrência); centro nos dois eixos de planta, ponto mais **baixo** ou mais **alto** no eixo de altura | `NewPartPlacement.OriginMm` |
+| Eixo de altura | X, Y ou Z da montagem, escolhido por projeto | `MoldProjectSettings` |
+| Preferências | eixo, lado da origem e última parte, por montagem, em `%LOCALAPPDATA%\AutoEDM\mold-projects.json` | `MoldProjectSettings` |
+
+O nome é recalculado no momento de criar (outra peça pode ter nascido desde a prévia) e a criação recusa se o arquivo já existir. A montagem não é salva.
 
 ## 4.6 Alojamento de anel de vedação — id 14 (peça, **ordenada**)
 

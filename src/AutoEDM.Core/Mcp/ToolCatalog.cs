@@ -269,6 +269,24 @@ namespace AutoEDM.Mcp
             },
             new ToolSpec
             {
+                Name = "se_nova_peca",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"parte\":{\"type\":\"string\",\"enum\":[\"fixa\",\"movel\",\"extracao\"],\"description\":\"Série do código: fixa = .100, movel = .200, extracao = .300. Padrão: a última usada no projeto.\"}," +
+                    "\"eixoAltura\":{\"type\":\"string\",\"enum\":[\"X\",\"Y\",\"Z\"],\"description\":\"Eixo da MONTAGEM que é a altura do molde. Padrão: o gravado para o projeto (Z se nunca escolhido).\"}," +
+                    "\"origem\":{\"type\":\"string\",\"enum\":[\"baixo\",\"alto\"],\"description\":\"Origem no ponto mais baixo ou mais alto das faces, no eixo de altura. Padrão: o gravado para o projeto.\"}," +
+                    "\"apenasPlanejar\":{\"type\":\"boolean\",\"description\":\"true = só diz o nome e a origem que sairiam, sem criar.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "Botão 'Nova peça' (grupo Molde). MONTAGEM ativa com a(s) FACE(s) de referência SELECIONADA(s). Cria uma " +
+                    "peça VAZIA codificada '<código do molde>.<NNN>.par' no próximo número livre da série da parte (fixa .100, " +
+                    "móvel .200, extração .300), na pasta da montagem, e a insere com a ORIENTAÇÃO DA MONTAGEM, com a origem " +
+                    "no centro das faces nos dois eixos de planta e no ponto mais baixo/alto no eixo de altura. As escolhas " +
+                    "ficam gravadas para o projeto. Não salva a montagem."
+            },
+            new ToolSpec
+            {
                 Name = "se_duplicar_eletrodo",
                 Writes = true,
                 InputSchemaJson = NoArgs,

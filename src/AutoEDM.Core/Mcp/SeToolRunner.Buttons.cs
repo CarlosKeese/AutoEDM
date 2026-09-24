@@ -9,6 +9,7 @@ using AutoEDM.Config;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Model;
+using AutoEDM.Mold;
 using AutoEDM.Reporting;
 using AutoEDM.Reverse;
 using AutoEDM.Revisions;
@@ -42,6 +43,7 @@ namespace AutoEDM.Mcp
                 case "se_trocar_ambiente": return SwitchEnvironment(app, doc, argsJson);
                 case "se_criar_eletrodos": return CreateElectrodes(app, doc, argsJson);
                 case "se_criar_eletrodo_manual": return CreateElectrodeManual(app, doc);
+                case "se_nova_peca": return NewMoldPart(app, doc, argsJson);
                 case "se_duplicar_eletrodo": return DuplicateElectrode(app, doc);
                 case "se_lista_corte": return SawCutList(app, doc);
                 case "se_lista_modificacoes": return ChangeList(doc);
@@ -171,6 +173,50 @@ namespace AutoEDM.Mcp
             AutoEdmConfig cfg = AutoEdmConfig.LoadOrCreateDefault();
             ManualElectrodeResult res = NewBuilder(app, cfg).CreateElectrodeFromSelection(doc, cfg.ToElectrodeParams());
             return (res.Created ? "CRIADO. " : "NÃO criado. ") + res.Message;
+        }
+
+        /// <summary>Botão "Nova peça": faces da seleção; o que a janela pergunta vira argumento, e o
+        /// que não vier sai das preferências gravadas para o projeto (as mesmas da janela).</summary>
+        private static string NewMoldPart(dynamic app, dynamic doc, string argsJson)
+        {
+            string asmPath = null;
+            try { asmPath = (string)doc.FullName; } catch { }
+            MoldProjectSettings prefs = MoldProjectSettings.Load(asmPath);
+
+            switch ((ReadString(argsJson, "parte") ?? "").ToLowerInvariant())
+            {
+                case "fixa": prefs.LastSection = MoldSection.Fixed; break;
+                case "movel": case "móvel": prefs.LastSection = MoldSection.Moving; break;
+                case "extracao": case "extração": prefs.LastSection = MoldSection.Ejection; break;
+            }
+            switch ((ReadString(argsJson, "eixoAltura") ?? "").ToUpperInvariant())
+            {
+                case "X": prefs.HeightAxis = HeightAxis.X; break;
+                case "Y": prefs.HeightAxis = HeightAxis.Y; break;
+                case "Z": prefs.HeightAxis = HeightAxis.Z; break;
+            }
+            string side = (ReadString(argsJson, "origem") ?? "").ToLowerInvariant();
+            if (side == "alto") prefs.OriginAtTop = true; else if (side == "baixo") prefs.OriginAtTop = false;
+
+            NewPartNamePlan plan = NewPartBuilder.PlanName(doc, prefs.LastSection);
+            string head = $"{MoldPartNaming.SectionLabel(prefs.LastSection)}, altura em {prefs.HeightAxis}, " +
+                          $"origem no ponto mais {(prefs.OriginAtTop ? "alto" : "baixo")}.";
+            if (plan.Problem != null) return "NÃO criado. " + plan.Problem;
+            if (ReadBool(argsJson, "apenasPlanejar", false))
+                return $"PLANO — nada foi criado. Sairia '{plan.FileName}' em '{plan.Folder}'. {head}";
+
+            List<PickedFace> faces = ElectrodeBuilder.ReadSelectedFaces(doc, out int skipped);
+            if (faces.Count == 0)
+                return "NÃO criado. Nenhuma FACE selecionada: selecione na montagem as faces de referência (clique na peça e " +
+                       "clique de novo no mesmo ponto, ou Alt+clique) e chame de novo.";
+
+            NewPartResult res = NewPartBuilder.Create(app, doc, faces, new NewPartOptions
+            {
+                Section = prefs.LastSection, HeightAxis = prefs.HeightAxis, OriginAtTop = prefs.OriginAtTop
+            });
+            if (res.Created) prefs.Save(asmPath);
+            return (res.Created ? "CRIADO. " : "NÃO criado. ") + res.Message +
+                   (skipped > 0 ? $" ({skipped} item(ns) da seleção não eram faces e ficaram de fora.)" : "");
         }
 
         private static string DuplicateElectrode(dynamic app, dynamic doc)

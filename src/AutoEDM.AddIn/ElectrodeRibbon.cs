@@ -8,6 +8,7 @@ using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Mcp;
 using AutoEDM.Model;
+using AutoEDM.Mold;
 using AutoEDM.Reporting;
 using AutoEDM.Revisions;
 using AutoEDM.Reverse;
@@ -48,6 +49,7 @@ namespace AutoEDM.AddIn
         private const int CmdMcpSomenteLeitura = 23; // MCP: volta a ponte para somente-leitura
         private const int CmdSondaMalha = 24;       // ENG. REVERSA: sonda de diagnóstico sobre a malha (SÓ LEITURA)
         private const int CmdListaModificacoes = 25; // Folha de revisões: peças com grupo "Rev.N" na árvore ordenada
+        private const int CmdNovaPeca = 26;         // MOLDE: peça vazia codificada (.100/.200/.300) na origem das faces escolhidas
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -69,6 +71,7 @@ namespace AutoEDM.AddIn
             {
                 case CmdCriarEletrodos: CriarEletrodos(); break;
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
+                case CmdNovaPeca: NovaPeca(); break;
                 case CmdCoordenadas: AbrirCoordenadas(); break;
                 case CmdListaCorte: AbrirListaCorte(); break;
                 case CmdListaModificacoes: AbrirListaModificacoes(); break;
@@ -186,32 +189,101 @@ namespace AutoEDM.AddIn
         /// UMA peça VAZIA no centro XY + Z mais fundo das faces — mesmo pipeline do automático
         /// — e a janela segue aberta para o próximo. ESCREVE na montagem (não salva).
         /// </summary>
-        private static ManualElectrodeForm _manualForm;
-
         private void CriarEletrodoManual()
         {
-            if (!AllowedHere(CmdCriarEletrodoManual, explain: true)) return;
+            OpenFacePick(CmdCriarEletrodoManual, "CRIAR ELETRODO (MANUAL)", appObj => new FacePickSpec
+            {
+                Title = "AutoEDM — Criar eletrodo (manual)",
+                Instructions = "Clique direto no modelo, na(s) FACE(s) do fundo do bolsão a erodir — uma por clique. " +
+                               "Clicar de novo numa face já escolhida a retira. O eletrodo nasce no centro XY e no Z " +
+                               "mais fundo das faces escolhidas.",
+                CreateCaption = "Criar eletrodo",
+                LogTag = "Criar eletrodo manual",
+                NextHint = "Pronto para o próximo: clique nas faces dele.",
+                MultiOwnerNote = "o centro sai de todas, a orientação da 1ª.",
+                // `object`, não `dynamic`: com argumento dynamic a chamada inteira vira dinâmica
+                // (a regra do "Duplicar eletrodo"), e aqui o tipo de retorno importa.
+                Create = (doc, faces) =>
+                {
+                    ManualElectrodeResult r = NewBuilder(SolidEdgeConnector.Attach(appObj)).CreateElectrodeFromFaces(doc, LoadParams(), faces);
+                    return new FacePickResult { Created = r.Created, Message = r.Message };
+                },
+            });
+        }
+
+        /// <summary>
+        /// Botão "Nova peça" do grupo Molde (Carlos, 2026-09-24): mesma janela de seleção do eletrodo
+        /// manual, com o painel da peça do molde — parte (série .100/.200/.300 do código), eixo da
+        /// altura e origem no ponto mais baixo/alto. Cria a peça vazia com o próximo número livre e a
+        /// posiciona com a ORIENTAÇÃO DA MONTAGEM (<see cref="NewPartBuilder"/>). Não salva a montagem.
+        /// </summary>
+        private void NovaPeca()
+        {
+            OpenFacePick(CmdNovaPeca, "NOVA PEÇA (MOLDE)", appObj =>
+            {
+                dynamic app = appObj;
+                string asmPath = null;
+                try { asmPath = (string)app.ActiveDocument.FullName; } catch { }
+                var panel = new NewPartOptionsPanel(() => { try { return (object)app.ActiveDocument; } catch { return null; } }, asmPath);
+                return new FacePickSpec
+                {
+                    Title = "AutoEDM — Nova peça (molde)",
+                    Instructions = "Clique direto no modelo nas FACES de referência da peça nova — uma por clique; clicar de " +
+                                   "novo tira. A origem fica no centro delas e, no eixo da altura, no ponto mais baixo ou " +
+                                   "mais alto; os eixos da peça são os da montagem.",
+                    CreateCaption = "Criar peça",
+                    LogTag = "Nova peça",
+                    NextHint = "Pronto para a próxima: clique nas faces dela.",
+                    MultiOwnerNote = "a origem sai do conjunto delas.",
+                    Options = panel,
+                    Create = (doc, faces) =>
+                    {
+                        NewPartResult r = NewPartBuilder.Create(appObj, doc, faces, panel.Options);
+                        panel.RefreshName();          // o número andou
+                        return new FacePickResult { Created = r.Created, Message = r.Message };
+                    },
+                };
+            });
+        }
+
+        /// <summary>
+        /// A janela de seleção de faces aberta agora (só UMA por vez: cada uma assume o mouse da SE,
+        /// e duas brigariam pelo clique) e o comando dono dela.
+        /// </summary>
+        private static FacePickForm _pickForm;
+        private static int _pickFormCommand;
+
+        private void OpenFacePick(int commandId, string logTitle, Func<object, FacePickSpec> buildSpec)
+        {
+            if (!AllowedHere(commandId, explain: true)) return;
             dynamic app = ElectrodeAddIn.Current?.App;
             if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
             try
             {
-                if (_manualForm != null && !_manualForm.IsDisposed)
+                if (_pickForm != null && !_pickForm.IsDisposed)
                 {
-                    _manualForm.BringToFront();
-                    _manualForm.Activate();
-                    return;
+                    if (_pickFormCommand == commandId)
+                    {
+                        _pickForm.BringToFront();
+                        _pickForm.Activate();
+                        return;
+                    }
+                    _pickForm.Close();            // a outra janela devolve o mouse antes desta assumir
                 }
 
-                Log.Info("===== CRIAR ELETRODO (MANUAL) — janela aberta =====");
-                // `object`, não `dynamic`: com argumento dynamic a chamada inteira vira dinâmica
-                // (a regra do "Duplicar eletrodo"), e aqui o tipo de retorno importa.
+                Log.Info($"===== {logTitle} — janela aberta =====");
                 object appObj = app;
-                _manualForm = new ManualElectrodeForm(appObj, (doc, faces) =>
-                    NewBuilder(SolidEdgeConnector.Attach(appObj)).CreateElectrodeFromFaces(doc, LoadParams(), faces));
-                _manualForm.FormClosed += (s, e) => { _manualForm = null; Log.Info("===== FIM (CRIAR ELETRODO MANUAL) ====="); };
-                _manualForm.Show();
+                var form = new FacePickForm(appObj, buildSpec(appObj));
+                form.FormClosed += (s, e) =>
+                {
+                    if (ReferenceEquals(_pickForm, form)) _pickForm = null;
+                    Log.Info($"===== FIM ({logTitle}) =====");
+                };
+                _pickForm = form;
+                _pickFormCommand = commandId;
+                form.Show();
             }
-            catch (Exception ex) { Fail("abrir o criar eletrodo (manual)", ex); }
+            catch (Exception ex) { Fail("abrir a janela de " + logTitle.ToLowerInvariant(), ex); }
         }
 
         /// <summary>
@@ -1003,6 +1075,7 @@ namespace AutoEDM.AddIn
                 { CmdAnalisarZ,           new CommandSpec("ANALISAR ELETRODOS (Z)",               DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCriarEletrodos,      new CommandSpec("CRIAR ELETRODOS",                      DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCriarEletrodoManual, new CommandSpec("CRIAR ELETRODO (MANUAL, da seleção)",  DocKind.Assembly, ModelingEnv.Any) },
+                { CmdNovaPeca,            new CommandSpec("NOVA PEÇA (MOLDE)",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdDuplicarEletrodo,    new CommandSpec("DUPLICAR ELETRODO",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCoordenadas,         new CommandSpec("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdListaCorte,          new CommandSpec("LISTA DE CORTE (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },

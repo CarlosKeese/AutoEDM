@@ -28,7 +28,7 @@ As mesmas do resto do add-in (ver `PROJECT_STATE.md` e a skill `solid-edge-com`)
 | Fase | Botão | Depende de | Por que nesta posição |
 |---|---|---|---|
 | 0 ✅ | Grupo "Molde" + O'ring movido; **Criar eletrodo (manual)** por seleção na janela | — | Feito em 2026-09-24. A janela do eletrodo manual valida `SePicker` **em montagem**, que as fases 1–5 também usam. |
-| 1 | **Nova peça** | Fase 0 | Extrai a "fábrica de peça" do `CreateAndPlaceElectrode` — base de tudo que cria peça na montagem (inclusive as gavetas). |
+| 1 ✅ | **Nova peça** | Fase 0 | Extrai a "fábrica de peça" do `CreateAndPlaceElectrode` — base de tudo que cria peça na montagem (inclusive as gavetas). |
 | 2 | **Refrigeração** | — | Cria o motor "curva do esboço 3D → cilindro + furos nas pontas", reaproveitado pelas fases 3 e 5. |
 | 3 | **Canais de alimentação** | Fase 2 | Mesmo motor, com mais seções (trapezoidal, meia-cana) e o plano de partição. |
 | 4 | **Pontos de injeção** | Fase 3 | O ponto de injeção normalmente nasce na ponta de um canal; com a fase 3 pronta, o ponto e a direção já vêm do canal. |
@@ -60,7 +60,16 @@ ponto clicado — só perde a ligação automática com o canal.
   cavidade repetida — e o próximo passo é passar o ponto clicado (x, y, z da montagem) do
   `SePicker` para desempatar pela caixa da ocorrência.
 
-## Fase 1 — Nova peça
+## Fase 1 — Nova peça (construída em 2026-09-24, aguardando validação no SE)
+
+**Como ficou** (detalhe no MANUAL, seção 4.5b): código `{molde}.{NNN}.par` no próximo número
+livre da série da parte escolhida (fixa .100, móvel .200, extração .300 — a série começa no
+próprio 100/200/300, como no MD-15335, que tem 15335.200); pasta da montagem; orientação da
+MONTAGEM; origem no centro das faces nos eixos de planta e no ponto mais baixo/alto no eixo de
+altura, que é escolhido por projeto (X, Y ou Z). Ficaram para depois: template escolhido,
+"editar em contexto depois de criar" e propriedades preenchidas.
+
+**Plano original:**
 
 **O que faz.** Na montagem, cria uma peça nova vazia, salva na pasta do projeto e
 posicionada — o equivalente do "Criar eletrodo (manual)" para qualquer componente do molde

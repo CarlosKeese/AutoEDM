@@ -55,6 +55,7 @@ namespace AutoEDM.Mcp
                 { "se_trocar_ambiente",       new Requirement(DocKind.Part,     ModelingEnv.Any) },
                 { "se_criar_eletrodos",       new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_criar_eletrodo_manual", new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_nova_peca",             new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_duplicar_eletrodo",     new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_lista_corte",           new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_lista_modificacoes",    new Requirement(DocKind.Assembly, ModelingEnv.Any) },

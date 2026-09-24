@@ -10,8 +10,36 @@ using AutoEDM.Selection;
 
 namespace AutoEDM.AddIn.UI
 {
+    /// <summary>O que o botão devolve ao criar: a janela só precisa saber se deu certo e o que dizer.</summary>
+    public sealed class FacePickResult
+    {
+        public bool Created { get; set; }
+        public string Message { get; set; }
+    }
+
     /// <summary>
-    /// Janela do botão "Criar eletrodo (manual)" (ambiente de MONTAGEM, Carlos, 2026-09-24).
+    /// O que muda de um botão para outro numa janela de seleção de faces: textos, o painel de
+    /// opções (opcional) e a ação de criar. O resto — assumir o mouse, a face à vista pelo
+    /// raio, a lista, o realce — é o mesmo para todos.
+    /// </summary>
+    public sealed class FacePickSpec
+    {
+        public string Title;               // barra da janela
+        public string Instructions;        // texto do topo (até 3 linhas)
+        public string CreateCaption;       // botão de criar
+        public string LogTag;              // prefixo das linhas de log
+        public string NextHint;            // anexado à mensagem depois de criar
+        public string MultiOwnerNote;      // aviso quando as faces vêm de mais de uma peça
+        /// <summary>Painel de opções, entre a lista e o relatório. Largura 456; altura livre.</summary>
+        public Control Options;
+        /// <summary>Chamado a cada mudança na lista (para o painel mostrar prévia).</summary>
+        public Action<IList<PickedFace>> SelectionChanged;
+        public Func<object, IList<PickedFace>, FacePickResult> Create;
+    }
+
+    /// <summary>
+    /// Janela de seleção de faces na MONTAGEM, clique a clique, compartilhada por "Criar
+    /// eletrodo (manual)" e "Nova peça" (Carlos, 2026-09-24). Nasceu como a janela do eletrodo.
     ///
     /// Antes o botão exigia as faces PRÉ-SELECIONADAS — e, na montagem, pegar a face em vez
     /// da ocorrência inteira pede o clique duplo ou o Alt, que ninguém lembra. Agora o botão
@@ -25,7 +53,7 @@ namespace AutoEDM.AddIn.UI
     /// <see cref="ElectrodeBuilder.TryUnwrapFace"/> e quem cria é o delegate que a ribbon passa
     /// (<see cref="ElectrodeBuilder.CreateElectrodeFromFaces"/> com a configuração da sessão).
     /// </summary>
-    public sealed class ManualElectrodeForm : Form
+    public sealed class FacePickForm : Form
     {
         /// <summary>Uma face escolhida: o objeto clicado (para o realce, que na montagem precisa
         /// do embrulho com a ocorrência) e a face já desembrulhada (para o núcleo).</summary>
@@ -38,7 +66,7 @@ namespace AutoEDM.AddIn.UI
         }
 
         private readonly dynamic _app;      // Application do add-in — NUNCA desconecta
-        private readonly Func<object, IList<PickedFace>, ManualElectrodeResult> _create;
+        private readonly FacePickSpec _spec;
         private readonly List<Pick> _picks = new List<Pick>();
 
         private SePicker _picker;           // null = a SE não deixou; cai no plano B (SelectSet)
@@ -57,12 +85,15 @@ namespace AutoEDM.AddIn.UI
         private TextBox _txtReport;
         private readonly ToolTip _tips = new ToolTip();
 
-        public ManualElectrodeForm(object app, Func<object, IList<PickedFace>, ManualElectrodeResult> create)
+        public FacePickForm(object app, FacePickSpec spec)
         {
             _app = app;
-            _create = create ?? throw new ArgumentNullException(nameof(create));
+            _spec = spec ?? throw new ArgumentNullException(nameof(spec));
+            if (spec.Create == null) throw new ArgumentException("FacePickSpec.Create é obrigatório.", nameof(spec));
             BuildUi();
         }
+
+        private string Tag => _spec.LogTag ?? "Seleção de faces";
 
         /// <summary>Documento FRESCO a cada operação — o Application é o único proxy que
         /// sobrevive a tudo (ver a regra de RPC_E_DISCONNECTED do projeto).</summary>
@@ -75,7 +106,7 @@ namespace AutoEDM.AddIn.UI
 
         private void BuildUi()
         {
-            Text = "AutoEDM — Criar eletrodo (manual)";
+            Text = _spec.Title ?? "AutoEDM — Seleção de faces";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             ShowInTaskbar = false;
@@ -87,9 +118,8 @@ namespace AutoEDM.AddIn.UI
             Add(new Label
             {
                 Left = 12, Top = y, Width = 456, Height = 48,
-                Text = "Clique direto no modelo, na(s) FACE(s) do fundo do bolsão a erodir — uma por clique. " +
-                       "Clicar de novo numa face já escolhida a retira. O eletrodo nasce no centro XY e no Z " +
-                       "mais fundo das faces escolhidas."
+                Text = _spec.Instructions ?? "Clique direto no modelo, nas FACES — uma por clique. " +
+                       "Clicar de novo numa face já escolhida a retira."
             });
             y += 54;
 
@@ -114,6 +144,13 @@ namespace AutoEDM.AddIn.UI
             _lblSummary = Add(new Label { Left = 12, Top = y, Width = 456, Height = 36, ForeColor = Color.Firebrick });
             y += 40;
 
+            if (_spec.Options != null)
+            {
+                _spec.Options.Left = 12; _spec.Options.Top = y; _spec.Options.Width = 456;
+                Add(_spec.Options);
+                y += _spec.Options.Height + 6;
+            }
+
             _txtReport = Add(new TextBox
             {
                 Left = 12, Top = y, Width = 456, Height = 96,
@@ -129,7 +166,7 @@ namespace AutoEDM.AddIn.UI
             });
             _tips.SetToolTip(_btnRefresh, "A janela guarda quais peças estão visíveis e onde estão, para o clique ser rápido. " +
                                           "Moveu, escondeu ou mostrou alguma peça com a janela aberta? Clique aqui.");
-            _btnCreate = Button("Criar eletrodo", 250, y, 120, (s, e) => Create());
+            _btnCreate = Button(_spec.CreateCaption ?? "Criar", 250, y, 120, (s, e) => Create());
             _btnClose = Button("Fechar", 378, y, 90, (s, e) => Close());
             AcceptButton = _btnCreate;
 
@@ -253,7 +290,7 @@ namespace AutoEDM.AddIn.UI
             }
             catch (Exception e)
             {
-                Log.Warn("Criar eletrodo manual: seleção por etapas indisponível — " + e.GetBaseException().Message);
+                Log.Warn($"{Tag}: seleção por etapas indisponível — " + e.GetBaseException().Message);
                 _picker = null;
             }
             return _picker;
@@ -270,7 +307,7 @@ namespace AutoEDM.AddIn.UI
             object window = _picker?.LastWindow;
             System.Drawing.Point screen = _picker?.LastScreenPoint ?? System.Drawing.Point.Empty;
             try { BeginInvoke(new Action(() => Accept(graphic, point, window, screen))); }
-            catch (Exception e) { Log.Error("Criar eletrodo manual: seleção não pôde ser processada.", e); }
+            catch (Exception e) { Log.Error($"{Tag}: seleção não pôde ser processada.", e); }
         }
 
         private void OnPickMissed()
@@ -293,7 +330,7 @@ namespace AutoEDM.AddIn.UI
                 {
                     _picking = false;
                     UpdatePickButton();
-                    Report("Coleta encerrada. \"Selecionar faces\" retoma; \"Criar eletrodo\" cria com as faces da lista.");
+                    Report($"Coleta encerrada. \"Selecionar faces\" retoma; \"{_spec.CreateCaption}\" cria com as faces da lista.");
                 }));
             }
             catch { /* janela já fechando */ }
@@ -305,7 +342,7 @@ namespace AutoEDM.AddIn.UI
             StopPicking();
             try
             {
-                if (_picks.Count == 0 && graphic != null) Log.Info("Criar eletrodo manual: 1º clique — tipo do objeto: " + ComTypeName(graphic));
+                if (_picks.Count == 0 && graphic != null) Log.Info($"{Tag}: 1º clique — tipo do objeto: " + ComTypeName(graphic));
 
                 // A face que a SE localizou não respeita a profundidade (peça de trás ganhava da
                 // da frente). Quem decide é o raio de visão; a da SE só vale se o raio falhar.
@@ -317,7 +354,7 @@ namespace AutoEDM.AddIn.UI
                         Report("Nenhuma face à vista sob o cursor (o log diz por quê). Clique sobre uma face do modelo.");
                     else
                     {
-                        Log.Warn("Criar eletrodo manual: raio de visão sem resultado — usando a face que a SE localizou.");
+                        Log.Warn($"{Tag}: raio de visão sem resultado — usando a face que a SE localizou.");
                         Toggle(graphic, "clique");
                     }
                 }
@@ -353,14 +390,14 @@ namespace AutoEDM.AddIn.UI
                 catch (Exception e)
                 {
                     // Proxy guardado morreu (peça recarregada, documento mexido): relê e tenta 1 vez.
-                    Log.Warn("Criar eletrodo manual: cena guardada inválida, relendo — " + e.GetBaseException().Message);
+                    Log.Warn($"{Tag}: cena guardada inválida, relendo — " + e.GetBaseException().Message);
                     _scene = VisibleScene.Build((object)doc);
                     return VisibleFacePicker.PickNearest(doc, origin, dir, _scene);
                 }
             }
             catch (Exception e)
             {
-                Log.Warn("Criar eletrodo manual: raio de visão falhou — " + e.GetBaseException().Message);
+                Log.Warn($"{Tag}: raio de visão falhou — " + e.GetBaseException().Message);
                 return null;
             }
             finally { Cursor = Cursors.Default; }
@@ -382,7 +419,7 @@ namespace AutoEDM.AddIn.UI
                     Toggle(item, $"SelectSet[{i}]", addOnly: true);
                 }
             }
-            catch (Exception e) { Log.Warn("Criar eletrodo manual: SelectSet ilegível — " + e.GetBaseException().Message); }
+            catch (Exception e) { Log.Warn($"{Tag}: SelectSet ilegível — " + e.GetBaseException().Message); }
 
             int added = _picks.Count - before;
             if (explain)
@@ -417,7 +454,7 @@ namespace AutoEDM.AddIn.UI
 
             var pick = new Pick { Graphic = graphic, Face = face, Key = key };
             if (FaceGeometry.TryGetRangeMm(face.Face, out double[] mn, out double[] mx)) { pick.Min = mn; pick.Max = mx; }
-            Log.Info($"Criar eletrodo manual: +face {key ?? "(sem ID)"} de '{face.OccurrenceName ?? "?"}'" +
+            Log.Info($"{Tag}: +face {key ?? "(sem ID)"} de '{face.OccurrenceName ?? "?"}'" +
                      (pick.Min == null ? ", sem caixa." :
                       $", caixa na peça X {pick.Min[0]:0.0}…{pick.Max[0]:0.0}  Y {pick.Min[1]:0.0}…{pick.Max[1]:0.0}  Z {pick.Min[2]:0.0}…{pick.Max[2]:0.0} mm."));
             _picks.Add(pick);
@@ -491,12 +528,15 @@ namespace AutoEDM.AddIn.UI
                 if (owners > 1)
                 {
                     _lblSummary.ForeColor = Color.DarkOrange;
-                    summary += $"\r\nATENÇÃO: faces de {owners} peças — o centro sai de todas, a orientação da 1ª.";
+                    summary += $"\r\nATENÇÃO: faces de {owners} peças — " + (_spec.MultiOwnerNote ?? "o centro sai de todas.");
                 }
                 _lblSummary.Text = summary;
             }
             _btnCreate.Enabled = _picks.Count > 0;
             _btnUndo.Enabled = _btnClear.Enabled = _picks.Count > 0;
+
+            try { _spec.SelectionChanged?.Invoke(_picks.Select(k => k.Face).ToList()); }
+            catch (Exception e) { Log.Warn($"{Tag}: prévia do painel falhou — " + e.GetBaseException().Message); }
         }
 
         private void Report(string text) { _txtReport.Text = text; }
@@ -512,22 +552,22 @@ namespace AutoEDM.AddIn.UI
             int type = -1; try { type = (int)doc.Type; } catch { }
             if (doc == null || type != 3)   // igAssemblyDocument
             {
-                Report("O documento ativo não é mais a MONTAGEM. Volte para a janela da montagem e clique em \"Criar eletrodo\" de novo.");
+                Report($"O documento ativo não é mais a MONTAGEM. Volte para a janela da montagem e clique em \"{_spec.CreateCaption}\" de novo.");
                 return;
             }
 
-            ManualElectrodeResult res;
+            FacePickResult res;
             Cursor = Cursors.WaitCursor;
             try
             {
-                Log.Info($"Criar eletrodo manual (janela): {_picks.Count} face(s).");
-                res = _create((object)doc, _picks.Select(k => k.Face).ToList());
+                Log.Info($"{Tag} (janela): {_picks.Count} face(s).");
+                res = _spec.Create((object)doc, _picks.Select(k => k.Face).ToList());
             }
             catch (Exception e)
             {
-                Log.Error("Falha ao criar o eletrodo (manual).", e);
+                Log.Error($"{Tag}: falha ao criar.", e);
                 string logPath = ElectrodeAddIn.Current?.LogPath;
-                Report("Não foi possível criar o eletrodo. " +
+                Report("Não foi possível criar. " +
                        (string.IsNullOrEmpty(logPath) ? "Detalhes no log." : "Detalhes no log:\r\n" + logPath));
                 StartPicking();
                 return;
@@ -536,11 +576,11 @@ namespace AutoEDM.AddIn.UI
 
             if (res.Created)
             {
-                // O que foi usado sai da lista: a próxima coleta é o próximo eletrodo. A montagem
+                // O que foi usado sai da lista: a próxima coleta é a próxima peça. A montagem
                 // ganhou uma ocorrência: a cena é relida no próximo clique.
                 _scene = null;
                 ClearPicks();
-                Report(res.Message + "\r\n\r\nPronto para o próximo: clique nas faces dele. A montagem NÃO foi salva.");
+                Report(res.Message + "\r\n\r\n" + (_spec.NextHint ?? "Pronto para a próxima: clique nas faces dela.") + " A montagem NÃO foi salva.");
             }
             else Report(res.Message);
             StartPicking();
@@ -563,7 +603,7 @@ namespace AutoEDM.AddIn.UI
                 hs.AddItem(item);
                 hs.Draw();
             }
-            catch (Exception e) { Log.Warn("Criar eletrodo manual: realce não aplicado — " + e.GetBaseException().Message); }
+            catch (Exception e) { Log.Warn($"{Tag}: realce não aplicado — " + e.GetBaseException().Message); }
         }
 
         private void RebuildHighlight()

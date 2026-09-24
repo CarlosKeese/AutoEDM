@@ -11,6 +11,16 @@
 -->
 <ribbon xmlns="http://github.com/SolidEdgeCommunity/SolidEdge/Ribbon">
   <tab name="AutoEDM">
+    <group name="Molde">
+      <button id="26" size="large" label="Nova peça"
+              screentip="Peça nova do molde, codificada e posicionada pelas faces que você clicar"
+              supertip="Na MONTAGEM do molde: clique aqui e depois nas faces de referência da peça nova, direto no modelo (clicar de novo numa face a retira). Escolha de que parte do molde a peça é — fixa (XXXXX.100 em diante), móvel (.200) ou extração (.300) — e o AutoEDM usa o próximo número livre da série na pasta da montagem. Escolha também qual eixo da montagem é a altura do molde e se a origem fica no ponto mais baixo ou mais alto das faces: a origem vai no centro delas nos outros dois eixos, e os eixos da peça são os da montagem. As escolhas ficam gravadas para o projeto. Não salva a montagem."
+              imageId="1" showLabel="true" />
+      <button id="14" size="large" label="Alojamento de O’ring"
+              screentip="Canal de anel O’ring pela ISO 3601 (PEÇA, modelagem ORDENADA)"
+              supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
+              imageId="1" showLabel="true" />
+    </group>
     <group name="Eletrodos">
       <button id="3" size="large" label="Analisar (Z)"
               screentip="Analisar eletrodos por níveis de Z"
@@ -27,6 +37,18 @@
       <button id="12" size="large" label="Duplicar eletrodo"
               screentip="Duplicar p/ o próximo Ra da tabela (desbaste/acabamento)"
               supertip="Selecione a ocorrência de UM eletrodo já com GAP aplicado (tem Ra gravado) e clique. Cria uma cópia da peça com o GAP no PRÓXIMO Ra da escada (mais grosso) e posiciona a cópia em TODAS as posições onde esse eletrodo aparece na montagem — 1 clique gera o par desbaste/acabamento em cada posição repetida. Não salva a montagem."
+              imageId="1" showLabel="true" />
+      <button id="5" size="large" label="Criar Base"
+              screentip="Criar Base (PEÇA, modelagem SÍNCRONA)"
+              supertip="Exige a peça em modelagem SÍNCRONA (o botão fica cinza em ordenado). Na PEÇA aberta: cria a BASE (bloco no material mais próximo) com a FAIXA de medição (chanfro X+ Y− p/ QUAD/RET, ou flat em Y− p/ REDONDO) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. SEM gap/offset por cor aqui — a superfície copiada não carrega a cor original; isso e o trabalho de superfície entram no botão 'Unir superfícies'."
+              imageId="1" showLabel="true" />
+      <button id="7" size="large" label="Unir superfícies"
+              screentip="Unir a queima ao bloco, SÓ a união (PEÇA, modelagem SÍNCRONA)"
+              supertip="Exige a peça em modelagem SÍNCRONA — Limite/Costurar/Anexar/booleana não funcionam em ordenado (o botão fica cinza lá). ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — une a superfície de queima ao bloco num sólido único. SÓ une (sem GAP/cor) — se falhar, uma NA MÃO no SE e siga para 'Aplicar GAP'. Separado do bloco para não interferir na fixação."
+              imageId="1" showLabel="true" />
+      <button id="11" size="large" label="Aplicar GAP"
+              screentip="GAP + cor + nome no corpo já unido (PEÇA, modelagem ORDENADA)"
+              supertip="Exige a peça em modelagem ORDENADA — o GAP (Model.FaceOffsets, editável na árvore) não existe em síncrono, e o AutoEDM não troca o ambiente sozinho (a troca invalida as faces já selecionadas). Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
               imageId="1" showLabel="true" />
     </group>
     <group name="Relatórios">
@@ -46,26 +68,6 @@
               screentip="Folha de dados dos eletrodos"
               supertip="Gera a ficha por eletrodo (Ra, pegada, blank, offset por Ra, fixação) em .txt e .csv. Não altera a montagem."
               imageId="4" showLabel="true" />
-    </group>
-    <group name="Peça">
-      <button id="5" size="large" label="Criar Base"
-              screentip="Criar Base (PEÇA, modelagem SÍNCRONA)"
-              supertip="Exige a peça em modelagem SÍNCRONA (o botão fica cinza em ordenado). Na PEÇA aberta: cria a BASE (bloco no material mais próximo) com a FAIXA de medição (chanfro X+ Y− p/ QUAD/RET, ou flat em Y− p/ REDONDO) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. SEM gap/offset por cor aqui — a superfície copiada não carrega a cor original; isso e o trabalho de superfície entram no botão 'Unir superfícies'."
-              imageId="1" showLabel="true" />
-      <button id="7" size="large" label="Unir superfícies"
-              screentip="Unir a queima ao bloco, SÓ a união (PEÇA, modelagem SÍNCRONA)"
-              supertip="Exige a peça em modelagem SÍNCRONA — Limite/Costurar/Anexar/booleana não funcionam em ordenado (o botão fica cinza lá). ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — une a superfície de queima ao bloco num sólido único. SÓ une (sem GAP/cor) — se falhar, uma NA MÃO no SE e siga para 'Aplicar GAP'. Separado do bloco para não interferir na fixação."
-              imageId="1" showLabel="true" />
-      <button id="11" size="large" label="Aplicar GAP"
-              screentip="GAP + cor + nome no corpo já unido (PEÇA, modelagem ORDENADA)"
-              supertip="Exige a peça em modelagem ORDENADA — o GAP (Model.FaceOffsets, editável na árvore) não existe em síncrono, e o AutoEDM não troca o ambiente sozinho (a troca invalida as faces já selecionadas). Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
-              imageId="1" showLabel="true" />
-    </group>
-    <group name="Molde">
-      <button id="14" size="large" label="Alojamento de O’ring"
-              screentip="Canal de anel O’ring pela ISO 3601 (PEÇA, modelagem ORDENADA)"
-              supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
-              imageId="1" showLabel="true" />
     </group>
     <group name="WEDM">
       <button id="18" size="large" label="Curvas das superfícies"

@@ -103,7 +103,8 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Copiar superfícies (Inter-Part Copy) | 🚧 só em edição em contexto (in-place) |
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
 | Orquestrador "gerar todos os eletrodos" | 📋 planejado |
-| Grupo **Molde** (Nova peça, Refrigeração, Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
+| Nova peça (molde) | 🚧 construída (2026-09-24), coberta por teste, **aguardando validação no SE** |
+| Grupo **Molde** (Refrigeração, Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
 
 ## Regra de ouro
 
@@ -277,6 +278,11 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-09-24** — **Nova peça (molde), Fase 1 do plano.** Botão id 26 no grupo Molde. A
+  janela de seleção do eletrodo virou genérica (`FacePickForm` + `FacePickSpec`) e serve os
+  dois botões. Peça vazia `{molde}.{NNN}.par` no próximo número da série (fixa .100, móvel
+  .200, extração .300), orientação da montagem, origem no centro das faces e no ponto mais
+  baixo/alto do eixo de altura escolhido por projeto. MCP `se_nova_peca`. 406 testes, 0 falhas.
 - **2026-09-24** — **Grupo "Molde" na ribbon e eletrodo manual por clique.** O
   Alojamento de O'ring saiu do grupo "Peça" para o novo grupo "Molde". O "Criar eletrodo
   (manual)" deixou de exigir faces pré-selecionadas: abre uma janela modeless que assume o
@@ -408,8 +414,9 @@ alojamento foi validado no SE em 2026-09-21. Vale a tabela de catálogo.
 
 ## Próxima ação
 
-A janela do "Criar eletrodo (manual)" foi validada no SE em 2026-09-24. Próximo passo do
-[plano de molde](docs/PLANO_MOLDE.md): a Fase 1 (Nova peça).
+**Validar no SE a "Nova peça"** (grupo Molde): nome no próximo número da série, pasta, origem
+no ponto certo do eixo de altura e orientação da montagem. Depois, a Fase 2 do
+[plano de molde](docs/PLANO_MOLDE.md) (Refrigeração).
 
 **Nível 2 da análise de usinabilidade** — a varredura do vazio da cavidade
 (malha por `Body.GetFacetData` → rasterização por fatia → transformada de
