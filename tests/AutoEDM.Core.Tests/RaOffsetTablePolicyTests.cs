@@ -4,13 +4,14 @@ using Xunit;
 
 namespace AutoEDM.Core.Tests
 {
-    /// <summary>Tabela confirmada pelo Carlos (ver [[autoedm-decisions]]): 0,2-0,8um->0,05mm;
+    /// <summary>Tabela confirmada pelo Carlos (ver [[autoedm-decisions]]): 0,1um->0,01mm; 0,2-0,8um->0,05mm;
     /// 1,6->0,10; 3,2->0,20; 6,3->0,30. Trava a tabela real do fluxo contra regressão.</summary>
     public class RaOffsetTablePolicyTests
     {
         private readonly RaOffsetTablePolicy _policy = new RaOffsetTablePolicy();
 
         [Theory]
+        [InlineData(0.1, 0.01)]
         [InlineData(0.2, 0.05)]
         [InlineData(0.8, 0.05)]
         [InlineData(1.6, 0.10)]
