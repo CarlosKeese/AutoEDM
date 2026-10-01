@@ -236,8 +236,7 @@ namespace AutoEDM.Reporting
             }
 
             Bitmap bmp = Downsample(rgb, s, sizePx);
-            DrawCallouts(bmp, gbuf, s, highlights);
-            return bmp;
+            return WithCallouts(bmp, gbuf, s, highlights);
         }
 
         /// <summary>Índice do grupo de cada malha (-1 = peça comum), a partir dos destaques.</summary>
@@ -261,11 +260,17 @@ namespace AutoEDM.Reporting
         /// do que se VÊ daquela feature. O centro e a própria existência da chamada saem dos pixels
         /// que sobreviveram ao z-buffer — feature escondida atrás da peça (o caso normal na vista
         /// oposta) simplesmente não ganha chamada, em vez de apontar para o nada (Carlos, 2026-09-18).
+        ///
+        /// Os balões ficam em FAIXAS LATERAIS acrescentadas à imagem, fora da peça: à esquerda os
+        /// que apontam para a metade esquerda, à direita os outros, cada um na altura do que aponta.
+        /// O anel em volta da peça (versão de 2026-09-18) ainda caía em cima dos cantos e das bordas
+        /// dela — "os balões estão muito em cima do detalhe" (Carlos, 2026-10-01). Com destaques a
+        /// imagem fica mais LARGA que alta; sem eles, volta como veio.
         /// Desenhada com GDI+ depois da redução de escala: texto rasterizado à mão sairia serrilhado.
         /// </summary>
-        private static void DrawCallouts(Bitmap bmp, int[] gbuf, int s, IReadOnlyList<HighlightGroup> highlights)
+        private static Bitmap WithCallouts(Bitmap part, int[] gbuf, int s, IReadOnlyList<HighlightGroup> highlights)
         {
-            if (bmp == null || highlights == null || highlights.Count == 0) return;
+            if (part == null || highlights == null || highlights.Count == 0) return part;
 
             // Menos que isto é respingo de faceta: a feature está praticamente escondida.
             int minPixels = Math.Max(8, s * s / 20000);
@@ -275,61 +280,78 @@ namespace AutoEDM.Reporting
             // MEIO, e a linha terminava no vazio, no centro (Carlos, 2026-09-18).
             PointF[] tip = LargestBlobCenters(gbuf, s, highlights.Count, minPixels);
 
-            // Balões NA BORDA, não em cima do detalhe: cada um vai para um anel em volta da peça,
-            // na direção do que aponta, e uma linha faz a ligação. Foi o que a 1ª versão errou —
-            // o balão caía sobre o próprio detalhe que deveria mostrar (Carlos, 2026-09-18).
-            float radius = Math.Max(9f, bmp.Width / 18f);
-            float ring = bmp.Width / 2f - radius - 2f;
-            float centerX = bmp.Width / 2f, centerY = bmp.Height / 2f;
+            float radius = Math.Max(9f, part.Height / 18f);
+            int gutter = (int)Math.Ceiling(3 * radius);   // o balão e meio raio de folga de cada lado
+            int width = part.Width + 2 * gutter, height = part.Height;
 
-            var visible = new List<int>();
-            var angle = new List<double>();
-            var target = new List<PointF>();
+            // Mesma largura nas duas vistas, com ou sem chamada visível: na planilha elas ficam lado
+            // a lado e têm de sair na mesma escala.
+            var bmp = new Bitmap(width, height);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.White);
+                g.DrawImageUnscaled(part, gutter, 0);
+            }
+            part.Dispose();
+
+            // Cada chamada visível vai para o lado mais perto do que aponta.
+            var left = new List<int>();
+            var right = new List<int>();
+            var target = new PointF[highlights.Count];
             for (int group = 0; group < highlights.Count; group++)
             {
                 if (float.IsNaN(tip[group].X)) continue;   // feature escondida nesta vista
-                float px = tip[group].X / Supersample;
-                float py = tip[group].Y / Supersample;
-                visible.Add(group);
-                target.Add(new PointF(px, py));
-                angle.Add(Math.Atan2(py - centerY, px - centerX));
+                target[group] = new PointF(gutter + tip[group].X / Supersample, tip[group].Y / Supersample);
+                (target[group].X < width / 2f ? left : right).Add(group);
             }
-            if (visible.Count == 0) return;
-
-            SeparateAngles(angle, Math.Min(Math.PI / 2, 2.3 * radius / Math.Max(ring, 1f)));
+            if (left.Count + right.Count == 0) return bmp;
 
             using (var g = Graphics.FromImage(bmp))
-            using (var font = new Font("Arial", Math.Max(7f, bmp.Width / 26f), FontStyle.Bold))
-            using (var pen = new Pen(CalloutColor, Math.Max(1f, bmp.Width / 220f)))
+            using (var font = new Font("Arial", Math.Max(7f, height / 26f), FontStyle.Bold))
+            using (var pen = new Pen(CalloutColor, Math.Max(1f, height / 220f)))
             using (var fill = new SolidBrush(Color.White))
             using (var ink = new SolidBrush(CalloutColor))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
-                for (int i = 0; i < visible.Count; i++)
+                DrawSide(g, left, gutter / 2f);
+                DrawSide(g, right, width - gutter / 2f);
+
+                void DrawSide(Graphics gr, List<int> groups, float bx)
                 {
-                    float bx = centerX + (float)(Math.Cos(angle[i]) * ring);
-                    float by = centerY + (float)(Math.Sin(angle[i]) * ring);
-                    PointF to = target[i];
+                    if (groups.Count == 0) return;
+                    // Na altura do que aponta, afastados o bastante para não encostar um no outro.
+                    List<double> ys = groups.Select(i => (double)target[i].Y).ToList();
+                    SpreadAlong(ys, 2.3 * radius, radius + 2, height - radius - 2);
 
-                    // A linha para na BORDA do balão, senão ela atravessa o número.
-                    double dx = to.X - bx, dy = to.Y - by;
-                    double len = Math.Max(Math.Sqrt(dx * dx + dy * dy), 1e-6);
-                    if (len > radius + 2)
-                        g.DrawLine(pen, bx + (float)(dx / len * radius), by + (float)(dy / len * radius), to.X, to.Y);
+                    for (int i = 0; i < groups.Count; i++)
+                    {
+                        int group = groups[i];
+                        float by = (float)ys[i];
+                        PointF to = target[group];
 
-                    g.FillEllipse(fill, bx - radius, by - radius, radius * 2, radius * 2);
-                    g.DrawEllipse(pen, bx - radius, by - radius, radius * 2, radius * 2);
+                        // A linha sai da BORDA do balão (senão atravessa o número) e termina num
+                        // ponto cheio em cima da feature, que é o que diz "é isto aqui".
+                        double dx = to.X - bx, dy = to.Y - by;
+                        double len = Math.Max(Math.Sqrt(dx * dx + dy * dy), 1e-6);
+                        if (len > radius + 2)
+                            gr.DrawLine(pen, bx + (float)(dx / len * radius), by + (float)(dy / len * radius), to.X, to.Y);
+                        float dot = Math.Max(2f, radius / 5f);
+                        gr.FillEllipse(ink, to.X - dot, to.Y - dot, dot * 2, dot * 2);
 
-                    int group = visible[i];
-                    string label = string.IsNullOrWhiteSpace(highlights[group].Label)
-                        ? (group + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
-                        : highlights[group].Label;
-                    SizeF size = g.MeasureString(label, font);
-                    g.DrawString(label, font, ink, bx - size.Width / 2, by - size.Height / 2);
+                        gr.FillEllipse(fill, bx - radius, by - radius, radius * 2, radius * 2);
+                        gr.DrawEllipse(pen, bx - radius, by - radius, radius * 2, radius * 2);
+
+                        string label = string.IsNullOrWhiteSpace(highlights[group].Label)
+                            ? (group + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                            : highlights[group].Label;
+                        SizeF size = gr.MeasureString(label, font);
+                        gr.DrawString(label, font, ink, bx - size.Width / 2, by - size.Height / 2);
+                    }
                 }
             }
+            return bmp;
         }
 
         /// <summary>
@@ -400,51 +422,40 @@ namespace AutoEDM.Reporting
         }
 
         /// <summary>
-        /// Afasta os ângulos dos balões até nenhum par vizinho ficar a menos de
-        /// <paramref name="minGap"/>, PRESERVANDO a ordem em volta da peça — sem isso dois balões
-        /// de features vizinhas caem um em cima do outro.
+        /// Afasta as posições dos balões de uma faixa lateral até nenhum par vizinho ficar a menos
+        /// de <paramref name="minGap"/>, sem sair de [<paramref name="lo"/>, <paramref name="hi"/>] e
+        /// PRESERVANDO a ordem — quem aponta mais para cima continua em cima, então as linhas não se
+        /// cruzam. Sem isso, dois balões de features vizinhas caem um em cima do outro.
         ///
-        /// Colocação determinística, não empurra-empurra: ordena, varre uma vez empurrando cada um
-        /// para depois do anterior, e recentra no ângulo médio original. A primeira versão iterava
-        /// empurrando os dois lados e OSCILAVA — quatro balões terminavam com dois pares exatamente
-        /// sobrepostos e vãos pela metade (medido em teste, 2026-09-18). Se nem espaçados cabem na
-        /// volta, distribui em partes iguais: apertado é melhor que sobreposto.
+        /// Colocação determinística (a lição do anel de 2026-09-18: empurra-empurra iterativo
+        /// oscilava e deixava pares sobrepostos): ordena, varre para baixo empurrando cada um para
+        /// depois do anterior, e se o último passou do fim varre de volta para cima. Se nem assim
+        /// cabem, distribui em partes iguais: apertado é melhor que sobreposto.
         /// </summary>
-        public static void SeparateAngles(List<double> angles, double minGap)
+        public static void SpreadAlong(List<double> values, double minGap, double lo, double hi)
         {
-            int n = angles.Count;
-            if (n < 2 || minGap <= 0) return;
+            int n = values.Count;
+            if (n == 0) return;
+            if (hi < lo) hi = lo;
+            List<int> order = Enumerable.Range(0, n).OrderBy(i => values[i]).ToList();
 
-            List<int> order = Enumerable.Range(0, n).OrderBy(i => angles[i]).ToList();
-            double mean = Math.Atan2(angles.Sum(Math.Sin) / n, angles.Sum(Math.Cos) / n);
-
-            if (minGap * n >= 2 * Math.PI)
+            if (n > 1 && minGap * (n - 1) > hi - lo)
             {
-                // Não cabe: partes iguais na volta inteira, mantendo a ordem.
-                double step = 2 * Math.PI / n;
-                for (int k = 0; k < n; k++) angles[order[k]] = mean + (k - (n - 1) / 2.0) * step;
+                double step = (hi - lo) / (n - 1);
+                for (int k = 0; k < n; k++) values[order[k]] = lo + k * step;
                 return;
             }
 
-            for (int k = 1; k < n; k++)
+            for (int k = 0; k < n; k++)
             {
-                double previous = angles[order[k - 1]];
-                if (angles[order[k]] < previous + minGap) angles[order[k]] = previous + minGap;
+                double floor = k == 0 ? lo : values[order[k - 1]] + minGap;
+                values[order[k]] = Math.Min(Math.Max(values[order[k]], floor), hi);
             }
-
-            // A varredura empurra tudo para um lado; recentrar devolve os balões para perto de onde
-            // eles realmente apontam. Se o conjunto passou a dar a volta, espaça por igual.
-            double span = angles[order[n - 1]] - angles[order[0]];
-            if (span > 2 * Math.PI - minGap)
+            for (int k = n - 1; k >= 0; k--)
             {
-                double step = 2 * Math.PI / n;
-                for (int k = 0; k < n; k++) angles[order[k]] = mean + (k - (n - 1) / 2.0) * step;
-                return;
+                double ceiling = k == n - 1 ? hi : values[order[k + 1]] - minGap;
+                if (values[order[k]] > ceiling) values[order[k]] = ceiling;
             }
-
-            double middle = (angles[order[0]] + angles[order[n - 1]]) / 2;
-            double shift = mean - middle;
-            for (int i = 0; i < n; i++) angles[i] += shift;
         }
 
         private static void FillTriangle(double[] zbuf, int[] rgb, int[] gbuf, int s,

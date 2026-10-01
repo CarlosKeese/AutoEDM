@@ -295,7 +295,7 @@ namespace AutoEDM.Reporting.Xlsx
                 // A imagem FLUTUA sobre a grade — é assim que a folha MD é montada hoje.
                 sb.Append("<xdr:oneCellAnchor>")
                   .Append("<xdr:from>")
-                  .Append($"<xdr:col>{img.Column - 1}</xdr:col><xdr:colOff>0</xdr:colOff>")
+                  .Append($"<xdr:col>{img.Column - 1}</xdr:col><xdr:colOff>{(long)Math.Max(0, img.OffsetXPx) * EmuPerPixel}</xdr:colOff>")
                   .Append($"<xdr:row>{img.Row - 1}</xdr:row><xdr:rowOff>0</xdr:rowOff>")
                   .Append("</xdr:from>")
                   .Append($"<xdr:ext cx=\"{cx}\" cy=\"{cy}\"/>")

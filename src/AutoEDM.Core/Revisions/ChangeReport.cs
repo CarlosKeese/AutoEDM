@@ -155,14 +155,14 @@ namespace AutoEDM.Revisions
             IsNew = true;
             Positions = positions > 0 ? positions : 1;
 
-            ChangeTask fabricar = Task("FABRICAR");
+            ChangeTask fabricar = FindTask("FABRICAR");
             if (fabricar != null)
             {
                 fabricar.Checked = true;
                 fabricar.Detail = Positions.ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
             // Quem fabrica precisa do material antes (Carlos, 2026-09-18).
-            ChangeTask material = Task("VERIF. MATERIAL");
+            ChangeTask material = FindTask("VERIF. MATERIAL");
             if (material != null) material.Checked = true;
         }
 
@@ -174,11 +174,12 @@ namespace AutoEDM.Revisions
         public void MarkAsChangedPart()
         {
             IsNew = false;
-            ChangeTask recuperar = Task("RECUPERAR");
+            ChangeTask recuperar = FindTask("RECUPERAR");
             if (recuperar != null) recuperar.Checked = true;
         }
 
-        private ChangeTask Task(string labelStart) => (Tasks ?? new List<ChangeTask>())
+        /// <summary>A caixa cujo rótulo começa com <paramref name="labelStart"/> ("FABRICAR"). Null = não tem.</summary>
+        public ChangeTask FindTask(string labelStart) => (Tasks ?? new List<ChangeTask>())
             .FirstOrDefault(t => t.Label != null &&
                                  t.Label.StartsWith(labelStart, StringComparison.OrdinalIgnoreCase));
     }

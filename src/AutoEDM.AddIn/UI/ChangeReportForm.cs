@@ -29,6 +29,7 @@ namespace AutoEDM.AddIn.UI
         private readonly Dictionary<string, CheckedListBox> _taskLists = new Dictionary<string, CheckedListBox>();
         private readonly Dictionary<string, TextBox> _header = new Dictionary<string, TextBox>();
         private readonly Label _status;
+        private NumericUpDown _quantity;
         private PartChange _current;
         private bool _filling;
 
@@ -189,9 +190,10 @@ namespace AutoEDM.AddIn.UI
 
         private void BuildTaskLists(Control host)
         {
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2 };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3 };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             foreach (string group in ChangeTaskCatalog.Groups)
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / ChangeTaskCatalog.Groups.Count));
 
@@ -209,14 +211,62 @@ namespace AutoEDM.AddIn.UI
                 list.ItemCheck += (s, e) =>
                 {
                     if (_filling || e.Index < 0 || e.Index >= list.Items.Count) return;
-                    ((TaskItem)list.Items[e.Index]).Task.Checked = e.NewValue == CheckState.Checked;
+                    ChangeTask task = ((TaskItem)list.Items[e.Index]).Task;
+                    task.Checked = e.NewValue == CheckState.Checked;
+                    if (IsFabricar(task)) OnFabricarChecked(task);
                     RefreshCurrentRow();
                 };
                 _taskLists[group] = list;
                 layout.Controls.Add(list, column, 1);
                 column++;
             }
+
+            // A quantidade do "FABRICAR, QUANTIDADE:" — sem ela a caixa marcada não diz quantas
+            // peças fazer (Carlos, 2026-10-01). Só fica ativa com a caixa marcada.
+            var quantityRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0) };
+            quantityRow.Controls.Add(new Label { Text = "Quantidade a fabricar:", AutoSize = true, Margin = new Padding(3, 7, 3, 0) });
+            _quantity = new NumericUpDown { Minimum = 1, Maximum = 9999, Width = 70, Enabled = false };
+            _quantity.ValueChanged += (s, e) =>
+            {
+                if (_filling || _current == null) return;
+                ChangeTask fabricar = _current.FindTask("FABRICAR");
+                if (fabricar == null || !fabricar.Checked) return;
+                fabricar.Detail = ((int)_quantity.Value).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                RefreshCurrentRow();
+            };
+            quantityRow.Controls.Add(_quantity);
+            layout.Controls.Add(quantityRow, 0, 2);
+
             host.Controls.Add(layout);
+        }
+
+        private static bool IsFabricar(ChangeTask t) =>
+            t?.Label != null && t.Label.StartsWith("FABRICAR", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Marcou "FABRICAR": a quantidade nasce com as posições da peça na montagem (o que ela
+        /// já tem digitado manda). Desmarcou: a quantidade some — sairia na folha como se valesse.
+        /// </summary>
+        private void OnFabricarChecked(ChangeTask fabricar)
+        {
+            if (fabricar.Checked && string.IsNullOrWhiteSpace(fabricar.Detail))
+                fabricar.Detail = Math.Max(1, _current?.Positions ?? 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            else if (!fabricar.Checked)
+                fabricar.Detail = null;
+            ShowQuantity(fabricar);
+        }
+
+        /// <summary>Põe a quantidade da caixa no campo, sem disparar a gravação de volta.</summary>
+        private void ShowQuantity(ChangeTask fabricar)
+        {
+            bool previous = _filling;
+            _filling = true;
+            bool on = fabricar != null && fabricar.Checked;
+            int n;
+            if (!on || !int.TryParse(fabricar.Detail, out n)) n = Math.Max(1, _current?.Positions ?? 1);
+            _quantity.Value = Math.Min(_quantity.Maximum, Math.Max(_quantity.Minimum, n));
+            _quantity.Enabled = on;
+            _filling = previous;
         }
 
         // ------------------------------------------------------------------ dados
@@ -286,6 +336,7 @@ namespace AutoEDM.AddIn.UI
                 foreach (ChangeTask t in part.Tasks.Where(t => t.Group == pair.Key))
                     list.Items.Add(new TaskItem(t), t.Checked);
             }
+            ShowQuantity(part?.FindTask("FABRICAR"));
 
             _filling = false;
         }
@@ -431,8 +482,9 @@ namespace AutoEDM.AddIn.UI
         {
             public readonly ChangeTask Task;
             public TaskItem(ChangeTask task) { Task = task; }
-            public override string ToString() =>
-                Task.Label + (string.IsNullOrWhiteSpace(Task.Detail) ? "" : " " + Task.Detail);
+            // Só o rótulo: a quantidade está no campo logo abaixo, e a lista não se redesenha
+            // sozinha quando ela muda.
+            public override string ToString() => Task.Label;
         }
     }
 }

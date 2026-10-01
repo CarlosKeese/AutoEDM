@@ -209,6 +209,64 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
+        public void CheckedBoxes_AreHighlighted_UncheckedAreNot()
+        {
+            // "Grifar as caixas selecionadas para facilitar a leitura" (Carlos, 2026-10-01).
+            XlsxSheet sheet = ChangeReportXlsx.Build(Sample());
+            XlsxCell marcada = sheet.Cells.First(c => c.Text == ChangeReportFormatter.Checked + " EROSÃO / FURO RÁPIDO / FIO");
+            XlsxCell vazia = sheet.Cells.First(c => c.Text == ChangeReportFormatter.Unchecked + " SOLDA TIG / LASER");
+
+            Assert.Equal("FFFF00", marcada.Style.Fill);
+            Assert.True(marcada.Style.Bold);
+            Assert.True(marcada.Style.Border);
+            Assert.Null(vazia.Style.Fill);
+        }
+
+        [Fact]
+        public void Quantity_GoesOnTheFabricarLine_OnlyWhenChecked()
+        {
+            ChangeReport r = Sample();
+            ChangeTask fabricar = r.Parts[0].FindTask("FABRICAR");
+            fabricar.Detail = "4";
+
+            Assert.Contains(ChangeReportXlsx.Build(r).Cells, c => c.Text == ChangeReportFormatter.Unchecked + " FABRICAR, QUANTIDADE:");
+            fabricar.Checked = true;
+            Assert.Contains(ChangeReportXlsx.Build(r).Cells, c => c.Text == ChangeReportFormatter.Checked + " FABRICAR, QUANTIDADE: 4");
+        }
+
+        [Fact]
+        public void Images_AreCenteredInTheirColumns_AtTheSameScale()
+        {
+            // "A imagem poderia ficar centralizada com a coluna" (Carlos, 2026-10-01).
+            ChangeReport r = Sample();
+            r.Parts[0].Thumbnails.Clear();
+            r.Parts[0].Thumbnails.Add(FakePng(500, 360));   // mais larga que a coluna: reduz
+            r.Parts[0].Thumbnails.Add(FakePng(500, 360));
+            XlsxSheet sheet = ChangeReportXlsx.Build(r);
+
+            foreach (XlsxImage img in sheet.Images)
+            {
+                int column = sheet.ColumnWidthPx(img.Column);
+                Assert.True(img.WidthPx < column, $"imagem {img.WidthPx} px numa coluna de {column} px");
+                Assert.InRange(img.OffsetXPx * 2 + img.WidthPx, column - 1, column);   // folga igual dos dois lados
+                Assert.Equal(360.0 / 500, (double)img.HeightPx / img.WidthPx, 2);     // proporção mantida
+            }
+            Assert.Single(sheet.Images.Select(i => i.WidthPx).Distinct());
+
+            using (ZipArchive zip = Open(sheet))
+                Assert.Contains($"<xdr:colOff>{sheet.Images[0].OffsetXPx * 9525}</xdr:colOff>", Read(zip, "xl/drawings/drawing1.xml"));
+        }
+
+        [Fact]
+        public void SmallImage_IsCenteredButNotEnlarged()
+        {
+            int w = 100, h = 80;
+            ChangeReportXlsx.Fit(330, ref w, ref h);
+            Assert.Equal(100, w);
+            Assert.Equal(80, h);
+        }
+
+        [Fact]
         public void ChangeReport_SavesAFileThatOpensAsAZip()
         {
             string path = Path.Combine(Path.GetTempPath(), "autoedm_test_" + Guid.NewGuid().ToString("N") + ".xlsx");
