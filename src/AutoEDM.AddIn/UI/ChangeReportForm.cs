@@ -344,6 +344,7 @@ namespace AutoEDM.AddIn.UI
         private void CaptureActions()
         {
             if (_current == null) return;
+            _current.ActionsEdited = true;   // daqui em diante o texto dele manda sobre a árvore
             _current.Actions.Clear();
             _current.Actions.AddRange(_actions.Lines.Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l.Trim()));
             RefreshCurrentRow();

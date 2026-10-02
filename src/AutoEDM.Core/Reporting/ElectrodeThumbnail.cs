@@ -41,6 +41,20 @@ namespace AutoEDM.Reporting
         private static readonly Color CalloutColor = Color.FromArgb(200, 0, 0);
 
         /// <summary>
+        /// Com destaques, quanto a peça SEM modificação é puxada para o branco (0 = cor cheia,
+        /// 1 = some). Ela vira fundo e as faces alteradas saltam (Carlos, 2026-10-02: "um pouco
+        /// mais transparentes nas faces sem modificação").
+        /// </summary>
+        private const double PlainWash = 0.6;
+
+        /// <summary>
+        /// Opacidade da face alterada que fica ATRÁS da peça, vista através dela: a peça é
+        /// "transparente", então a alteração do lado escondido também aparece, mais apagada que a
+        /// da frente para não confundir os lados.
+        /// </summary>
+        private const double HiddenHighlightAlpha = 0.55;
+
+        /// <summary>
         /// Uma FEATURE da revisão a destacar: as faces dela saem em roxo e ganham uma chamada
         /// numerada apontando para o meio delas — é o que o Carlos desenha à mão hoje (2026-09-18).
         /// </summary>
@@ -221,6 +235,25 @@ namespace AutoEDM.Reporting
                     f.C.X * scale + offX, f.C.Y * scale + offY, f.DepthC,
                     ShadedRgb(f.Shade, f.Group >= 0 ? HighlightColor : Copper), f.Group);
 
+            // Raio-X das faces alteradas: um z-buffer SÓ delas, sem a peça na frente. É o que
+            // mostra a alteração do lado escondido através da peça esmaecida.
+            bool xray = facets.Any(f => f.Group >= 0);
+            double[] zbufH = null;
+            int[] rgbH = null, gbufH = null;
+            if (xray)
+            {
+                zbufH = new double[s * s];
+                rgbH = new int[s * s];
+                gbufH = new int[s * s];
+                for (int i = 0; i < zbufH.Length; i++) { zbufH[i] = double.NegativeInfinity; gbufH[i] = -1; }
+                foreach (Facet f in facets.Where(f => f.Group >= 0))
+                    FillTriangle(zbufH, rgbH, gbufH, s,
+                        f.A.X * scale + offX, f.A.Y * scale + offY, f.DepthA,
+                        f.B.X * scale + offX, f.B.Y * scale + offY, f.DepthB,
+                        f.C.X * scale + offX, f.C.Y * scale + offY, f.DepthC,
+                        ShadedRgb(f.Shade, HighlightColor), f.Group);
+            }
+
             // Arestas depois de TODAS as faces: o Z-buffer já sabe o que está na frente.
             double bias = Math.Max(maxD - minD, 1e-6) * 0.01;
             int edge = (EdgeColor.R << 16) | (EdgeColor.G << 8) | EdgeColor.B;
@@ -235,8 +268,11 @@ namespace AutoEDM.Reporting
                 if (f.EdgeCA) DrawEdge(zbuf, rgb, s, cx, cy, f.DepthC, ax, ay, f.DepthA, edge, thickness, bias);
             }
 
+            if (xray) Composite(rgb, zbuf, gbuf, rgbH, gbufH);
+
             Bitmap bmp = Downsample(rgb, s, sizePx);
-            return WithCallouts(bmp, gbuf, s, highlights);
+            // Chamadas pelo raio-X: a alteração escondida agora aparece, então também ganha balão.
+            return WithCallouts(bmp, xray ? gbufH : gbuf, s, highlights);
         }
 
         /// <summary>Índice do grupo de cada malha (-1 = peça comum), a partir dos destaques.</summary>
@@ -258,8 +294,9 @@ namespace AutoEDM.Reporting
         /// <summary>
         /// A chamada numerada de cada feature: um balão com o número, ligado por uma linha ao meio
         /// do que se VÊ daquela feature. O centro e a própria existência da chamada saem dos pixels
-        /// que sobreviveram ao z-buffer — feature escondida atrás da peça (o caso normal na vista
-        /// oposta) simplesmente não ganha chamada, em vez de apontar para o nada (Carlos, 2026-09-18).
+        /// do <paramref name="gbuf"/> — com destaques, o do RAIO-X: a peça é desenhada esmaecida e a
+        /// alteração do lado escondido aparece através dela, então também ganha balão (2026-10-02).
+        /// Feature que nem assim aparece (fora do enquadramento, respingo) fica sem chamada.
         ///
         /// Os balões ficam em FAIXAS LATERAIS acrescentadas à imagem, fora da peça: à esquerda os
         /// que apontam para a metade esquerda, à direita os outros, cada um na altura do que aponta.
@@ -456,6 +493,33 @@ namespace AutoEDM.Reporting
                 double ceiling = k == n - 1 ? hi : values[order[k + 1]] - minGap;
                 if (values[order[k]] > ceiling) values[order[k]] = ceiling;
             }
+        }
+
+        /// <summary>
+        /// Junta a cena opaca com o raio-X: a face alterada que está NA FRENTE fica com a cor
+        /// cheia; o resto da peça (faces e arestas) é esmaecido para o branco, e onde houver uma
+        /// face alterada atrás dele ela aparece por transparência. O fundo branco não muda.
+        /// </summary>
+        private static void Composite(int[] rgb, double[] zbuf, int[] gbuf, int[] rgbH, int[] gbufH)
+        {
+            for (int i = 0; i < rgb.Length; i++)
+            {
+                if (gbuf[i] >= 0 || double.IsNegativeInfinity(zbuf[i])) continue;
+                int c = Mix(rgb[i], 0xFFFFFF, PlainWash);
+                if (gbufH[i] >= 0) c = Mix(c, rgbH[i], HiddenHighlightAlpha);
+                rgb[i] = c;
+            }
+        }
+
+        /// <summary>Mistura duas cores RRGGBB: <paramref name="t"/> = 0 dá <paramref name="a"/>, 1 dá <paramref name="b"/>.</summary>
+        private static int Mix(int a, int b, double t)
+        {
+            Func<int, int> ch = shift =>
+            {
+                int x = (a >> shift) & 0xFF, y = (b >> shift) & 0xFF;
+                return (int)Math.Round(x + (y - x) * t) & 0xFF;
+            };
+            return (ch(16) << 16) | (ch(8) << 8) | ch(0);
         }
 
         private static void FillTriangle(double[] zbuf, int[] rgb, int[] gbuf, int s,

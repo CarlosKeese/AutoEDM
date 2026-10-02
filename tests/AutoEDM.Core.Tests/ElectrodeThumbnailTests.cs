@@ -178,6 +178,50 @@ namespace AutoEDM.Core.Tests
             }
         }
 
+        /// <summary>Caixa como 6 malhas, uma por face (é como a miniatura recebe a peça).</summary>
+        private static List<double[]> BoxFaces(double x0, double y0, double z0, double x1, double y1, double z1)
+        {
+            double[] Quad(double[] a, double[] b, double[] c, double[] d) => new[]
+                { a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2] };
+            double[] P(double x, double y, double z) => new[] { x, y, z };
+            return new List<double[]>
+            {
+                Quad(P(x0, y0, z0), P(x1, y0, z0), P(x1, y1, z0), P(x0, y1, z0)),
+                Quad(P(x0, y0, z1), P(x1, y0, z1), P(x1, y1, z1), P(x0, y1, z1)),
+                Quad(P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1)),
+                Quad(P(x1, y0, z0), P(x1, y1, z0), P(x1, y1, z1), P(x1, y0, z1)),
+                Quad(P(x1, y1, z0), P(x0, y1, z0), P(x0, y1, z1), P(x1, y1, z1)),
+                Quad(P(x0, y1, z0), P(x0, y0, z0), P(x0, y0, z1), P(x0, y1, z1)),
+            };
+        }
+
+        [Fact]
+        public void Render_WithHighlights_WashesThePlainPart_AndShowsTheHiddenChangeThroughIt()
+        {
+            // "Faces sem modificação um pouco mais transparentes" (Carlos, 2026-10-02). A face
+            // alterada aqui é a de BAIXO, escondida na vista de cima: tem de aparecer através da
+            // peça e ganhar balão mesmo assim.
+            List<double[]> meshes = BoxFaces(0, 0, 0, 40, 40, 20);
+            var hidden = new List<ElectrodeThumbnail.HighlightGroup>
+            {
+                new ElectrodeThumbnail.HighlightGroup { Label = "1", MeshIndices = { 0 } },
+            };
+
+            using (Bitmap plain = ElectrodeThumbnail.Render(meshes, 180, ElectrodeThumbnail.View.FromAbove))
+            using (Bitmap xray = ElectrodeThumbnail.Render(meshes, 180, ElectrodeThumbnail.View.FromAbove, hidden))
+            {
+                int gutter = (xray.Width - 180) / 2;
+                Color before = plain.GetPixel(90, 90), after = xray.GetPixel(gutter + 90, 90);
+                Assert.True(after.GetBrightness() > before.GetBrightness(), $"{before} → {after}");
+                Assert.True(after.B > after.G + 10, $"sem o roxo da face escondida: {after}");
+
+                bool balloon = Enumerable.Range(0, xray.Height).Any(y => Enumerable.Range(0, gutter)
+                    .Concat(Enumerable.Range(xray.Width - gutter, gutter))
+                    .Any(x => { Color c = xray.GetPixel(x, y); return c.R > 150 && c.G < 80 && c.B < 80; }));
+                Assert.True(balloon, "a alteração escondida ficou sem balão");
+            }
+        }
+
         [Fact]
         public void Cube_OutlinesTheTwelveEdgesButNotFaceDiagonals()
         {

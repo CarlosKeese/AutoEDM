@@ -113,6 +113,14 @@ namespace AutoEDM.Revisions
         /// <summary>"AÇÕES INDICADAS", numeradas 1..n na folha — o que a oficina tem de fazer.</summary>
         public List<string> Actions { get; } = new List<string>();
 
+        /// <summary>
+        /// O projetista MEXEU nas ações na janela? Enquanto não mexer, elas vêm sempre das features
+        /// numeradas da árvore, e renomear uma feature muda a folha. Depois que ele edita, o texto
+        /// dele manda — mesmo vazio (Carlos, 2026-10-02: "altero os nomes das features e nada muda";
+        /// o .json congelava a lista na primeira vez que a janela fechava).
+        /// </summary>
+        public bool ActionsEdited { get; set; }
+
         /// <summary>Caixas de seleção desta peça (cópia do <see cref="ChangeTaskCatalog.NewSheet"/>).</summary>
         public List<ChangeTask> Tasks { get; set; } = ChangeTaskCatalog.NewSheet();
 
