@@ -241,6 +241,81 @@ contra 360° medida pelo maior vão (e não por `max − min`, que erraria atrav
 sintética. E corrigir o `psaObjects` do seccionamento, que é a alavanca que pouparia escrever
 reconhecimento de primitiva 2D.
 
+### 1º run do reconhecedor na malha real (2026-10-09)
+
+Peça `Rack_Anghinoni (1).par`: 6 corpos de malha, mais superfícies feitas com a Eng. Reversa
+NATIVA (FaceSet + "Superfície planar/cilíndrica" = `CopyConstruction`), usadas como gabarito:
+Ø7,00 e Ø14,00, planos em valores redondos. Rodado por console externo (ROT), sem a ponte.
+
+- **`Body.Faces` É acessível em corpo de facetas** (contradiz 09-18): `MeshSurface`,
+  `GeometryForm` 9; o FaceSet nativo parte o corpo em várias faces de malha.
+  `Face.GetFacetDataEx` devolve malha **indexada**.
+- `FaceSet` não tem coleção com `Add`: a segmentação nativa não é scriptável.
+- Defeitos do `SurfaceRecognizer` encontrados: (1) cilindro falso Ø135–143 com RMS 0,6–1 mm
+  aceito — `CylinderRelativeTolerance` 2 % é frouxa demais; (2) super-segmentação (300–600
+  "planos" por corpo): falta agrupar regiões coplanares/coaxiais numa superfície só, como o
+  nativo faz; (3) furo inteiro sai com "volta 345–350°" (vão de 1 faceta); (4) falta arredondar
+  a 0,01 mm (regra do Carlos) e alinhar normal a eixo; (5) raio de concordância vira mosaico
+  de planos.
+- **Rota B-spline por polos: NÃO serve nesta versão.** `BSplineSurfaces.Add` dá `E_FAIL` já na
+  1ª chamada (bilinear 2×2 e biquadrática 3×3, em síncrono e ordenado; nós completos e pesos
+  obrigatórios — nós distintos ou pesos vazios dão `E_INVALIDARG`). `AddBSplineCurveByPoles`
+  só funciona na **1ª** chamada por documento; as seguintes deixam feature `Failed` e devolvem
+  ponteiro nulo. **`u_order = 1` DERRUBA a Solid Edge** (processo morre) — nunca usar.
+
+**Rota que funciona, provada em peça nova (ordenado) com volume exato:**
+1. Plano de esboço em pose qualquer: `CoordinateSystems.AddByMatrix(16 doubles: linhas = eixos
+   X,Y,Z, translação em [12..14], metros)` → `cs.Plane(4)` (é uma **Face**, não aceita em
+   `Profiles.Add`) → `RefPlanes.AddParallelByDistance(face, 0, 2)` = RefPlane de verdade.
+2. O RefPlane derivado **não herda o eixo X do CS**: nunca supor os eixos do esboço — converter
+   cada ponto com `Profile.Convert3DCoordinate` (interop tipada, `out`).
+3. Plano = linha no esboço extrudada simétrica (`ExtrudedSurfaces.AddFinite` com
+   `Profile[]` TIPADO — `object[]` dá `DISP_E_TYPEMISMATCH`); cilindro = círculo extrudado.
+   Saíram `Plane` e `Cylinder` exatos (Ø7,0000).
+4. `ConstructionModel.IntersectSurfaces.AddByAutoTrim(n, Body[] TIPADO dos corpos de construção,
+   false, true, true, 1e-5)` → sólido. Com features: `E_INVALIDARG`; com faces: feature `Failed`.
+   (A coleção fica em `doc.Constructions.Item(i)`, não em `Constructions`.)
+5. `Models.AddByConstruction(<a feature Intersect>)` → corpo de projeto. Com o corpo ou o
+   ConstructionModel: `E_NOINTERFACE`.
+6. Furo interno NÃO entra no auto-trim (as faces planas não são furadas e a costura não fecha):
+   vai depois, como `Model.ExtrudedCutouts.AddFinite(perfil, 1, 3 simétrico, comprimento)`.
+   Bloco 20×30×40 + furo Ø7: **22.460,6196 mm³ = teórico**, 7 faces.
+
+7. **Limites medidos do auto-trim:** fecha casca CONVEXA. Furo/bolsão interno não: as faces
+   planas não são furadas e a costura não fecha. `AddByPointOnFace`: o ponto marca o pedaço a
+   **descartar** (6 × 14.400 − 5.200 = 81.200 mm² de folha, conferido), um por superfície; a
+   variante `Ex` com `Invert = true` faz a feature falhar. `SurfaceByBoundaries.Add` com
+   elementos de esboço (Line2d ou Profile) sai Failed — quer arestas 3D.
+8. Perfil de linhas soltas devolve `End(1) = −103`; com `Relations2d.AddKeypoint(l[i], 1,
+   l[i+1], 0)` entre as pontas, `End(1) = 0`.
+
+**Reconhecedor corrigido (2026-10-09), conferido contra o gabarito nativo** — malha 4 deu
+Ø7,00 e pontas Ø14,00 em meia volta, iguais aos ajustes da ferramenta nativa, e caiu de 381 para
+134 regiões:
+- componente misto (curva TANGENTE a plano, sem quina) agora cresce CILINDRO primeiro, a partir de
+  retalhos planos pequenos; só o que sobra vira plano. As 276 "faixas" que viravam plano sumiram;
+- tolerância do cilindro: absoluta 0,005 mm (cilindro real de STL de CAD dá RMS 0,00000;
+  fragmento de concordância de canto, 0,0002–0,02), relativa 0,1 % com teto de 5× a absoluta, e
+  arco mínimo de 5° — o "cilindro Ø38.035 com volta 0°" que engolia o fundo da peça sumiu;
+- furo inteiro tesselado dá 360° (vãos todos iguais = passo, não abertura);
+- `Snap`: normal/eixo a < 0,05° de X/Y/Z vira o eixo exato; offset de plano, Ø e posição do eixo
+  no passo de 0,01 mm (`RoundToMm`, `SnapAngleDeg`; 0 desliga);
+- 7 testes novos (rasgo arredondado, canto com raio tangente, volta 360°, quase-plano,
+  arredondamento ligado/desligado). 389 testes, 0 falhas.
+
+Ainda NÃO reconhece toro (raio ao longo de arco — nervura da malha 2 cai em "livre") nem cone
+(ângulo de saída). Concordância de canto (toro/esfera) não deve ser forçada em cilindro: na
+reconstrução ela vira Round sobre o canto vivo.
+
+**Decisão de rota (2026-10-09): prismática 2,5D primeiro.** Para placa/postiço/eletrodo:
+níveis Z dos planos horizontais → secção da malha no meio de cada faixa → cada trecho do
+contorno trocado pela geometria EXATA da superfície reconhecida (parede plana = reta, cilindro
+vertical = arco com centro e Ø a 0,01) → extrusão por faixa. Sai sólido com features
+editáveis. O kit superfícies + auto-trim fica para casca convexa.
+
+**Próxima ação:** escrever a secção 2,5D (pura, testável) e o construtor por faixas; rodar na
+malha 4 e comparar volume/caixa com a malha.
+
 ### Eng. Reversa — por que começou por uma sonda
 
 O dump da typelib (`docs/api`) foi conferido antes de qualquer código, e o resultado é

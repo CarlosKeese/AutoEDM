@@ -67,11 +67,30 @@ namespace AutoEDM.Reverse
         /// faria o reconhecedor não achar face nenhuma justamente no caso mais simples.</summary>
         public int MinTrianglesPerRegion = 2;
 
-        /// <summary>Tolerância relativa do ajuste de cilindro: RMS aceito = raio × isto.</summary>
-        public double CylinderRelativeTolerance = 0.02;
+        /// <summary>Tolerância relativa do ajuste de cilindro: desvio aceito = raio × isto.
+        /// Era 0,02 e deixou passar um "cilindro Ø143" com RMS de 0,64 mm na malha real — o que
+        /// mede a forma é a tolerância absoluta; esta só alarga para raio grande.</summary>
+        public double CylinderRelativeTolerance = 0.001;
 
-        /// <summary>Piso absoluto da tolerância do cilindro, para raio pequeno.</summary>
-        public double CylinderAbsoluteToleranceMm = 0.02;
+        /// <summary>Piso absoluto da tolerância do cilindro. 0,005 mm = metade do passo de
+        /// arredondamento: na malha real (STL exportado de CAD) todo cilindro de verdade deu RMS
+        /// 0,00000, e os fragmentos de concordância de canto forçados em cilindro ficaram entre
+        /// 0,0002 e 0,02. Malha de SCANNER tem ruído — aí este número tem de subir.</summary>
+        public double CylinderAbsoluteToleranceMm = 0.005;
+
+        /// <summary>Passo de arredondamento das medidas reconhecidas (offset de plano, Ø, posição
+        /// do eixo), em mm. 0,01 mm é a regra da ferramentaria para reconstruir: a malha traz o
+        /// erro da tesselação/exportação, e o projeto original foi cotado em centésimos. 0 desliga.</summary>
+        public double RoundToMm = 0.01;
+
+        /// <summary>Arco mínimo para uma região ser cilindro, em graus. Abaixo disso a curvatura
+        /// não é mensurável e a região é tratada como plana/mista.</summary>
+        public double MinCylinderSweepDeg = 5.0;
+
+        /// <summary>Normal de plano ou eixo de cilindro a menos disto de X, Y ou Z vira EXATAMENTE
+        /// esse eixo. Sem isso, um plano "horizontal" sairia com normal (0,00001; 0; 1) e a peça
+        /// reconstruída teria faces tortas por um erro de arredondamento do STL. 0 desliga.</summary>
+        public double SnapAngleDeg = 0.05;
     }
 
     /// <summary>
@@ -111,6 +130,7 @@ namespace AutoEDM.Reverse
         private const int Dead = -2;      // triângulo degenerado
         private const int TriedSeed = -3; // já foi semente e não deu região
         private const int InQueue = -4;   // dentro do crescimento em curso
+        private const int Patched = -5;   // já está num retalho plano de componente misto
 
         /// <param name="pointsMm">Sopa de triângulos: 9 doubles por triângulo (3 vértices XYZ), em mm.</param>
         public static RecognitionResult Recognize(double[] pointsMm, RecognizerOptions options)
@@ -220,8 +240,80 @@ namespace AutoEDM.Reverse
                            pointsMm, cosPlane, cosCrease, o, result);
             }
 
+            foreach (RecognizedSurface s in result.Surfaces) Snap(s, o);
             result.Surfaces.Sort((a, b) => b.AreaMm2.CompareTo(a.AreaMm2));
             return result;
+        }
+
+        // ------------------------------------------------------------------ arredondamento
+
+        /// <summary>
+        /// Leva a superfície ajustada para a medida de projeto: direção alinhada ao eixo do
+        /// sistema quando está a menos de <see cref="RecognizerOptions.SnapAngleDeg"/> dele, e
+        /// offset/Ø/posição do eixo no passo de <see cref="RecognizerOptions.RoundToMm"/>.
+        /// O RMS do ajuste NÃO é recalculado: ele continua dizendo quão bem a malha coube na
+        /// primitiva, que é a informação que o arredondamento não pode esconder.
+        /// </summary>
+        public static void Snap(RecognizedSurface s, RecognizerOptions o)
+        {
+            if (s == null || o == null) return;
+            if (s.Kind == "plano" && s.Normal != null && s.PointMm != null)
+            {
+                s.Normal = SnapDirection(s.Normal, o.SnapAngleDeg);
+                if (o.RoundToMm > 0)
+                {
+                    double[] n = s.Normal;
+                    double d = n[0] * s.PointMm[0] + n[1] * s.PointMm[1] + n[2] * s.PointMm[2];
+                    double shift = Round(d, o.RoundToMm) - d;
+                    s.PointMm = new[] { s.PointMm[0] + shift * n[0], s.PointMm[1] + shift * n[1], s.PointMm[2] + shift * n[2] };
+                }
+            }
+            else if (s.Kind == "cilindro" && s.AxisMm != null && s.PointMm != null)
+            {
+                s.AxisMm = SnapDirection(s.AxisMm, o.SnapAngleDeg);
+                if (o.RoundToMm > 0)
+                {
+                    // Ø arredondado no passo (é o Ø que a ferramentaria cota), e o raio sai dele.
+                    s.RadiusMm = Round(2 * s.RadiusMm, o.RoundToMm) / 2.0;
+                    // Posição do eixo: só as coordenadas PERPENDICULARES a um eixo alinhado se
+                    // arredondam — arredondar ao longo do eixo não move a superfície, e num eixo
+                    // inclinado arredondar coordenada por coordenada tiraria o ponto da reta.
+                    int along = AlignedAxis(s.AxisMm);
+                    if (along >= 0)
+                    {
+                        var c = (double[])s.PointMm.Clone();
+                        for (int k = 0; k < 3; k++) if (k != along) c[k] = Round(c[k], o.RoundToMm);
+                        s.PointMm = c;
+                    }
+                }
+            }
+        }
+
+        private static double[] SnapDirection(double[] v, double snapDeg)
+        {
+            if (snapDeg <= 0) return v;
+            double cosSnap = Math.Cos(snapDeg * Math.PI / 180.0);
+            for (int k = 0; k < 3; k++)
+                if (Math.Abs(v[k]) >= cosSnap)
+                {
+                    var e = new double[3];
+                    e[k] = Math.Sign(v[k]);
+                    return e;
+                }
+            return v;
+        }
+
+        /// <summary>Índice do eixo do sistema ao qual a direção é EXATAMENTE paralela, ou -1.</summary>
+        private static int AlignedAxis(double[] v)
+        {
+            for (int k = 0; k < 3; k++)
+                if (Math.Abs(v[k]) == 1.0 && v[(k + 1) % 3] == 0 && v[(k + 2) % 3] == 0) return k;
+            return -1;
+        }
+
+        private static double Round(double value, double step)
+        {
+            return Math.Round(value / step, MidpointRounding.AwayFromZero) * step;
         }
 
         // ------------------------------------------------------------------ vizinhança
@@ -418,9 +510,21 @@ namespace AutoEDM.Reverse
         }
 
         /// <summary>
-        /// Componente que não é um plano nem um cilindro inteiro — o caso do RAIO: o filete é
-        /// tangente à face, não há quina entre eles, e os dois vieram no mesmo componente.
-        /// Descasca os planos por crescimento e ajusta o que sobrou, pedaço conexo por pedaço.
+        /// Componente que não é um plano nem um cilindro inteiro — o caso do RAIO e da PONTA DE
+        /// RASGO: a superfície curva é tangente às faces planas, não há quina entre elas, e todas
+        /// vieram no mesmo componente.
+        ///
+        /// A ORDEM AQUI É CILINDRO PRIMEIRO, e o motivo foi medido na malha real (2026-10-09): a
+        /// versão anterior descascava planos primeiro, e num cilindro tesselado cada FAIXA é um
+        /// plano perfeito de dois triângulos — 276 das 302 regiões pequenas da malha 4 do
+        /// Rack_Anghinoni eram faixas das pontas Ø14 dos rasgos. Agora:
+        ///   1. o componente é partido em retalhos planos (coplanares por crescimento);
+        ///   2. cada retalho pequeno, junto com os vizinhos de tamanho parecido, semeia um
+        ///      cilindro, que cresce pelos retalhos vizinhos enquanto TODO vértice novo couber na
+        ///      tolerância. Um plano tangente é recusado sozinho: os vértices dele longe da
+        ///      tangência saem do cilindro;
+        ///   3. o que sobra vira plano — exceto a cadeia de faixas estreitas que nenhum cilindro
+        ///      explicou (cone, toro, esfera), que vai para "livre" em vez de virar mosaico.
         /// </summary>
         private static void SplitMixed(List<int> comp, List<int>[] neighbours, int[] region, int[] component,
             double[] nx, double[] ny, double[] nz, double[] cx, double[] cy, double[] cz, double[] area,
@@ -428,57 +532,173 @@ namespace AutoEDM.Reverse
         {
             int compId = component[comp[0]];
 
+            // ------------------------------------------------ 1. retalhos planos
             var byArea = new List<int>(comp);
             byArea.Sort((x, y) => area[y].CompareTo(area[x]));
 
+            var patchOf = new Dictionary<int, int>(comp.Count);
+            var patches = new List<List<int>>();
             foreach (int seed in byArea)
             {
-                if (region[seed] != Free) continue;
-
+                if (patchOf.ContainsKey(seed)) continue;
                 List<int> grown = GrowPlane(seed, neighbours, region, component, compId,
                                             nx, ny, nz, cx, cy, cz, area, p, cosPlane,
                                             o.PlaneDistanceToleranceMm);
-
-                if (grown.Count < o.MinTrianglesPerRegion)
-                {
-                    foreach (int t in grown) region[t] = Free;
-                    region[seed] = TriedSeed;
-                    continue;
-                }
-
-                foreach (int t in grown) region[t] = result.Surfaces.Count;
-                result.Surfaces.Add(MakePlane(grown, nx, ny, nz, area, p));
+                foreach (int t in grown) { region[t] = Patched; patchOf[t] = patches.Count; }
+                patches.Add(grown);
             }
 
-            // O que não virou plano: agrupa em pedaços conexos e tenta cilindro em cada um.
-            var seen = new HashSet<int>();
-            foreach (int start in comp)
-            {
-                if (region[start] >= 0 || seen.Contains(start)) continue;
+            int np = patches.Count;
+            var patchArea = new double[np];
+            for (int i = 0; i < np; i++) foreach (int t in patches[i]) patchArea[i] += area[t];
 
-                var piece = new List<int>();
-                var queue = new Queue<int>();
-                queue.Enqueue(start);
-                seen.Add(start);
-                while (queue.Count > 0)
+            var adj = new HashSet<int>[np];
+            for (int i = 0; i < np; i++) adj[i] = new HashSet<int>();
+            foreach (int t in comp)
+                foreach (int nb in neighbours[t])
                 {
-                    int t = queue.Dequeue();
-                    piece.Add(t);
-                    foreach (int nb in neighbours[t])
+                    int pa, pb;
+                    if (!patchOf.TryGetValue(t, out pa) || !patchOf.TryGetValue(nb, out pb) || pa == pb) continue;
+                    adj[pa].Add(pb);
+                    adj[pb].Add(pa);
+                }
+
+            // ------------------------------------------------ 2. cilindros por crescimento
+            var owner = new int[np];
+            for (int i = 0; i < np; i++) owner[i] = -1;
+
+            var ascending = new List<int>();
+            for (int i = 0; i < np; i++) ascending.Add(i);
+            ascending.Sort((x, y) => patchArea[x].CompareTo(patchArea[y]));
+
+            foreach (int seedPatch in ascending)
+            {
+                if (owner[seedPatch] >= 0 || adj[seedPatch].Count == 0) continue;
+
+                var cluster = new List<int> { seedPatch };
+                foreach (int q in adj[seedPatch])
+                    if (owner[q] < 0 && patchArea[q] <= 4.0 * patchArea[seedPatch] + 1e-9) cluster.Add(q);
+                if (cluster.Count < 3) continue;
+
+                RecognizedSurface cyl = TryCylinder(Gather(cluster, patches), nx, ny, nz, area, p, o);
+                if (cyl == null) continue;
+
+                var inCluster = new HashSet<int>(cluster);
+                var frontier = new Queue<int>(cluster);
+                while (frontier.Count > 0)
+                {
+                    int c = frontier.Dequeue();
+                    foreach (int q in adj[c])
                     {
-                        if (region[nb] >= 0 || seen.Contains(nb) || component[nb] != compId) continue;
-                        if (nx[t] * nx[nb] + ny[t] * ny[nb] + nz[t] * nz[nb] < cosCrease) continue;
-                        seen.Add(nb);
-                        queue.Enqueue(nb);
+                        if (owner[q] >= 0 || inCluster.Contains(q)) continue;
+                        if (!FitsCylinder(patches[q], cyl, nx, ny, nz, p, o)) continue;
+                        inCluster.Add(q);
+                        frontier.Enqueue(q);
                     }
                 }
 
-                RecognizedSurface s = TryCylinder(piece, nx, ny, nz, area, p, o)
-                                      ?? MakeFreeForm(piece, area, p);
-                foreach (int t in piece) region[t] = result.Surfaces.Count;
+                var members = new List<int>(inCluster);
+                RecognizedSurface final = TryCylinder(Gather(members, patches), nx, ny, nz, area, p, o);
+                if (final == null) continue;
+
+                int id = result.Surfaces.Count;
+                foreach (int m in members)
+                {
+                    owner[m] = id;
+                    foreach (int t in patches[m]) region[t] = id;
+                }
+                result.Surfaces.Add(final);
+            }
+
+            // ------------------------------------------------ 3. o que sobrou
+            // Faixa que nenhum cilindro explicou: retalho sobrando com dois ou mais vizinhos
+            // também sobrando. É cadeia de superfície curva (cone, toro, esfera) — vai inteira
+            // para "livre", nunca para plano, porque plano aqui seria mosaico.
+            var strip = new bool[np];
+            for (int i = 0; i < np; i++)
+            {
+                if (owner[i] >= 0) continue;
+                int left = 0;
+                foreach (int q in adj[i]) if (owner[q] < 0) left++;
+                strip[i] = left >= 2 && patches[i].Count <= 4;
+            }
+
+            var seenPatch = new bool[np];
+            for (int i = 0; i < np; i++)
+            {
+                if (owner[i] >= 0 || seenPatch[i]) continue;
+                seenPatch[i] = true;
+
+                if (!strip[i])
+                {
+                    int id = result.Surfaces.Count;
+                    foreach (int t in patches[i]) region[t] = id;
+                    result.Surfaces.Add(MakePlane(patches[i], nx, ny, nz, area, p));
+                    continue;
+                }
+
+                var chain = new List<int>();
+                var queue = new Queue<int>();
+                queue.Enqueue(i);
+                while (queue.Count > 0)
+                {
+                    int c = queue.Dequeue();
+                    chain.Add(c);
+                    foreach (int q in adj[c])
+                    {
+                        if (owner[q] >= 0 || seenPatch[q] || !strip[q]) continue;
+                        seenPatch[q] = true;
+                        queue.Enqueue(q);
+                    }
+                }
+
+                List<int> tris = Gather(chain, patches);
+                RecognizedSurface s = TryCylinder(tris, nx, ny, nz, area, p, o) ?? MakeFreeForm(tris, area, p);
+                int sid = result.Surfaces.Count;
+                foreach (int t in tris) region[t] = sid;
                 if (s.Kind == "livre") result.FreeFormAreaMm2 += s.AreaMm2;
                 result.Surfaces.Add(s);
             }
+        }
+
+        private static List<int> Gather(List<int> patchIds, List<List<int>> patches)
+        {
+            var tris = new List<int>();
+            foreach (int id in patchIds) tris.AddRange(patches[id]);
+            return tris;
+        }
+
+        /// <summary>O retalho cabe no cilindro já ajustado? Todo vértice dentro da tolerância
+        /// radial e toda normal perpendicular ao eixo. Um vértice fora reprova.</summary>
+        private static bool FitsCylinder(List<int> tris, RecognizedSurface cyl,
+            double[] nx, double[] ny, double[] nz, double[] p, RecognizerOptions o)
+        {
+            double[] a = cyl.AxisMm, c = cyl.PointMm;
+            double tol = CylinderTolerance(cyl.RadiusMm, o);
+            double sinTol = Math.Sin(o.PlaneAngleToleranceDeg * Math.PI / 180.0);
+
+            foreach (int t in tris)
+            {
+                if (Math.Abs(nx[t] * a[0] + ny[t] * a[1] + nz[t] * a[2]) > sinTol) return false;
+                for (int k = 0; k < 3; k++)
+                {
+                    int b = t * 9 + k * 3;
+                    double dx = p[b] - c[0], dy = p[b + 1] - c[1], dz = p[b + 2] - c[2];
+                    double along = dx * a[0] + dy * a[1] + dz * a[2];
+                    double rx = dx - along * a[0], ry = dy - along * a[1], rz = dz - along * a[2];
+                    double dist = Math.Sqrt(rx * rx + ry * ry + rz * rz);
+                    if (Math.Abs(dist - cyl.RadiusMm) > tol) return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Tolerância radial do cilindro. A parte relativa tem TETO de 5× a absoluta:
+        /// sem ele, raio grande compraria tolerância grande e o ajuste aceitaria qualquer coisa.</summary>
+        private static double CylinderTolerance(double radiusMm, RecognizerOptions o)
+        {
+            double relative = Math.Min(radiusMm * o.CylinderRelativeTolerance, 5 * o.CylinderAbsoluteToleranceMm);
+            return Math.Max(o.CylinderAbsoluteToleranceMm, relative);
         }
 
         // ------------------------------------------------------------------ ajustes
@@ -613,8 +833,13 @@ namespace AutoEDM.Reverse
                 angles.Add(Math.Atan2(dv, du));
             }
             double rms = Math.Sqrt(sq / n);
-            double tol = Math.Max(o.CylinderAbsoluteToleranceMm, radius * o.CylinderRelativeTolerance);
-            if (rms > tol) return null;
+            if (rms > CylinderTolerance(radius, o)) return null;
+
+            // Plano disfarçado: com a tolerância relativa, um "cilindro" de raio enorme engole
+            // qualquer face plana (a malha real deu Ø38.035 com volta de 0° no fundo de uma
+            // peça). Cilindro de verdade cobre arco mensurável E tem raio da ordem da região.
+            double sweepDeg = SweepDegrees(angles);
+            if (sweepDeg < o.MinCylinderSweepDeg) return null;
 
             // Centro do eixo, de volta ao mundo, na altura média da região.
             double wMid = (axMin + axMax) / 2.0;
@@ -647,7 +872,7 @@ namespace AutoEDM.Reverse
                 PointMm = centre,
                 RadiusMm = radius,
                 LengthMm = axMax - axMin,
-                SweepDeg = SweepDegrees(angles),
+                SweepDeg = sweepDeg,
                 FitRmsMm = rms,
                 MinMm = min,
                 MaxMm = max
@@ -662,12 +887,27 @@ namespace AutoEDM.Reverse
             var sorted = new List<double>(angles);
             sorted.Sort();
 
-            double biggestGap = (sorted[0] + 2 * Math.PI) - sorted[sorted.Count - 1];
+            // Vãos entre ângulos DISTINTOS: os vértices se repetem entre triângulos, e vão zero
+            // derrubaria a mediana.
+            var gaps = new List<double>();
             for (int i = 1; i < sorted.Count; i++)
             {
                 double g = sorted[i] - sorted[i - 1];
-                if (g > biggestGap) biggestGap = g;
+                if (g > 1e-9) gaps.Add(g);
             }
+            double wrap = (sorted[0] + 2 * Math.PI) - sorted[sorted.Count - 1];
+            if (wrap > 1e-9) gaps.Add(wrap);
+            if (gaps.Count == 0) return 0;
+
+            double biggestGap = 0;
+            foreach (double g in gaps) if (g > biggestGap) biggestGap = g;
+
+            // Furo inteiro tesselado em N segmentos tem TODOS os vãos iguais a 360°/N — o maior
+            // vão não é abertura, é só o passo da tesselação (a malha real dava "345°" para furo
+            // inteiro). Abertura de verdade é um vão que se destaca dos outros.
+            gaps.Sort();
+            double median = gaps[gaps.Count / 2];
+            if (gaps.Count >= 6 && biggestGap <= 1.5 * median) return 360.0;
 
             double sweep = (2 * Math.PI - biggestGap) * 180.0 / Math.PI;
             return sweep < 0 ? 0 : sweep;

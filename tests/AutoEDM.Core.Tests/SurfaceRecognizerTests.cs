@@ -206,7 +206,200 @@ namespace AutoEDM.Core.Tests
             Assert.InRange(sweep, 15, 25);
         }
 
+        // ------------------------------------- superfície curva TANGENTE (malha real, 2026-10-09)
+
+        [Fact]
+        public void Rasgo_arredondado_sai_com_duas_pontas_cilindricas_e_nao_como_mosaico()
+        {
+            // Oblongo: centros a 30 mm, R7 (largura 14) — a ponta do rasgo do Rack_Anghinoni.
+            // A ponta é TANGENTE às paredes retas: sem quina entre elas, tudo cai num componente
+            // só. A versão antiga descascava planos primeiro e cada faixa da ponta virava um
+            // "plano" de dois triângulos (276 regiões falsas na malha real).
+            double[] mesh = Prism(Stadium(centres: 30, radius: 7, segmentsPerEnd: 18), height: 6);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
+
+            var cyl = r.Surfaces.Where(s => s.Kind == "cilindro").ToList();
+            Assert.Equal(2, cyl.Count);
+            Assert.All(cyl, c =>
+            {
+                Assert.Equal(14.0, 2 * c.RadiusMm, 6);
+                Assert.InRange(c.SweepDeg, 175, 185);
+                Assert.Equal(1.0, Math.Abs(c.AxisMm[2]), 9);
+            });
+
+            // Duas paredes retas + duas tampas, e nenhuma faixa solta.
+            var planes = r.Surfaces.Where(s => s.Kind == "plano").ToList();
+            Assert.Equal(4, planes.Count);
+            Assert.Equal(0, r.FreeFormAreaMm2);
+
+            // Os centros das pontas, nos seus lugares (±15 em X).
+            var xs = cyl.Select(c => Math.Round(c.PointMm[0], 6)).OrderBy(x => x).ToList();
+            Assert.Equal(new[] { -15d, 15d }, xs);
+        }
+
+        [Fact]
+        public void Canto_com_raio_tangente_da_um_quarto_de_cilindro_entre_dois_planos()
+        {
+            // Retângulo 40×20 com UM canto arredondado R5, extrudado 10. O raio é tangente às
+            // duas paredes vizinhas: é o "raio de concordância" de toda peça de molde.
+            double[] mesh = Prism(RoundedCornerRect(40, 20, radius: 5, segments: 12), height: 10);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
+
+            RecognizedSurface raio = r.Surfaces.Single(s => s.Kind == "cilindro");
+            Assert.Equal(5.0, raio.RadiusMm, 6);
+            Assert.InRange(raio.SweepDeg, 85, 95);
+            Assert.Equal(6, r.Surfaces.Count(s => s.Kind == "plano")); // 4 paredes + 2 tampas
+        }
+
+        [Fact]
+        public void Furo_inteiro_tesselado_da_volta_de_360_e_nao_360_menos_um_passo()
+        {
+            // 24 segmentos de 15°: todos os vãos iguais. A versão antiga dizia "345°" e o furo
+            // parecia aberto.
+            double[] mesh = Cylinder(radius: 1.75, height: 2, segments: 24, withCaps: false);
+
+            RecognizedSurface cyl = SurfaceRecognizer.Recognize(mesh, null).Surfaces.Single(s => s.Kind == "cilindro");
+
+            Assert.Equal(360.0, cyl.SweepDeg);
+        }
+
+        [Fact]
+        public void Quase_plano_nao_vira_cilindro_de_raio_gigante()
+        {
+            // Casca com R20.000 e 0,3° de arco: a tolerância relativa antiga (2 % do raio)
+            // compraria 400 mm de folga e chamaria isto de "cilindro Ø40000" — a malha real deu
+            // exatamente esse defeito no fundo de uma peça.
+            double[] mesh = Cylinder(radius: 20000, height: 30, segments: 10, withCaps: false, sweepDeg: 0.3);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
+
+            Assert.DoesNotContain(r.Surfaces, s => s.Kind == "cilindro");
+        }
+
+        // ------------------------------------------------------------------ arredondamento
+
+        [Fact]
+        public void Medida_reconhecida_volta_ao_centesimo_e_ao_eixo_exato()
+        {
+            // Caixa 20×30×40 girada 0,01° em X e deslocada 0,002 mm em Z: o que um STL exportado
+            // com float faz com uma peça cotada em centésimos.
+            double[] mesh = Transform(Box(20, 30, 40), rotXDeg: 0.01, dz: 0.002);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
+
+            // Toda normal é EXATAMENTE um eixo — nada de (0; 0,00017; 1).
+            Assert.All(r.Surfaces, s =>
+                Assert.Equal(1.0, Math.Abs(s.Normal[0]) + Math.Abs(s.Normal[1]) + Math.Abs(s.Normal[2])));
+
+            var zs = r.Surfaces.Where(s => Math.Abs(s.Normal[2]) == 1)
+                               .Select(s => s.PointMm[2]).OrderBy(z => z).ToList();
+            Assert.Equal(0.00, zs[0], 9);
+            Assert.Equal(40.00, zs[1], 9);
+        }
+
+        [Fact]
+        public void Diametro_do_cilindro_sai_no_centesimo()
+        {
+            var s = new RecognizedSurface
+            {
+                Kind = "cilindro", AxisMm = new[] { 0.0, 0.00001, 1.0 },
+                PointMm = new[] { 70.0042, 115.9961, 3.5 }, RadiusMm = 3.50021
+            };
+
+            SurfaceRecognizer.Snap(s, new RecognizerOptions());
+
+            Assert.Equal(7.00, 2 * s.RadiusMm, 9);
+            Assert.Equal(new[] { 0.0, 0.0, 1.0 }, s.AxisMm);
+            Assert.Equal(70.00, s.PointMm[0], 9);
+            Assert.Equal(116.00, s.PointMm[1], 9);
+            Assert.Equal(3.5, s.PointMm[2], 9); // ao longo do eixo não se mexe
+        }
+
+        [Fact]
+        public void Arredondamento_desligado_preserva_a_medida_crua()
+        {
+            var o = new RecognizerOptions { RoundToMm = 0, SnapAngleDeg = 0 };
+            var s = new RecognizedSurface
+            {
+                Kind = "cilindro", AxisMm = new[] { 0.0, 0.00001, 1.0 },
+                PointMm = new[] { 70.0042, 115.9961, 3.5 }, RadiusMm = 3.50021
+            };
+
+            SurfaceRecognizer.Snap(s, o);
+
+            Assert.Equal(3.50021, s.RadiusMm);
+            Assert.Equal(0.00001, s.AxisMm[1]);
+        }
+
         // ------------------------------------------------------------------ malhas de teste
+
+        /// <summary>Prisma de eixo Z sobre um polígono CONVEXO (anti-horário), base em z = 0:
+        /// paredes de dois triângulos por aresta e tampas em leque a partir do centroide.</summary>
+        private static double[] Prism(List<double[]> poly, double height)
+        {
+            var pts = new List<double>();
+            int n = poly.Count;
+            double cxp = poly.Average(q => q[0]), cyp = poly.Average(q => q[1]);
+            for (int i = 0; i < n; i++)
+            {
+                double[] a = poly[i], b = poly[(i + 1) % n];
+                double[] a0 = { a[0], a[1], 0 }, b0 = { b[0], b[1], 0 };
+                double[] a1 = { a[0], a[1], height }, b1 = { b[0], b[1], height };
+                Push(pts, a0, b0, b1);
+                Push(pts, a0, b1, a1);
+                Push(pts, new[] { cxp, cyp, 0 }, b0, a0);
+                Push(pts, new[] { cxp, cyp, height }, a1, b1);
+            }
+            return pts.ToArray();
+        }
+
+        /// <summary>Oblongo (rasgo) centrado na origem, ao longo de X.</summary>
+        private static List<double[]> Stadium(double centres, double radius, int segmentsPerEnd)
+        {
+            var poly = new List<double[]>();
+            double h = centres / 2;
+            for (int i = 0; i <= segmentsPerEnd; i++) // ponta direita: −90° → +90°
+            {
+                double a = -Math.PI / 2 + Math.PI * i / segmentsPerEnd;
+                poly.Add(new[] { h + radius * Math.Cos(a), radius * Math.Sin(a) });
+            }
+            for (int i = 0; i <= segmentsPerEnd; i++) // ponta esquerda: +90° → +270°
+            {
+                double a = Math.PI / 2 + Math.PI * i / segmentsPerEnd;
+                poly.Add(new[] { -h + radius * Math.Cos(a), radius * Math.Sin(a) });
+            }
+            return poly;
+        }
+
+        /// <summary>Retângulo [0,sx]×[0,sy] com o canto (sx,sy) arredondado.</summary>
+        private static List<double[]> RoundedCornerRect(double sx, double sy, double radius, int segments)
+        {
+            var poly = new List<double[]> { new[] { 0.0, 0.0 }, new[] { sx, 0.0 } };
+            double ccx = sx - radius, ccy = sy - radius;
+            for (int i = 0; i <= segments; i++)
+            {
+                double a = Math.PI / 2 * i / segments;
+                poly.Add(new[] { ccx + radius * Math.Cos(a), ccy + radius * Math.Sin(a) });
+            }
+            poly.Add(new[] { 0.0, sy });
+            return poly;
+        }
+
+        private static double[] Transform(double[] mesh, double rotXDeg, double dz)
+        {
+            double a = rotXDeg * Math.PI / 180, c = Math.Cos(a), s = Math.Sin(a);
+            var o = new double[mesh.Length];
+            for (int i = 0; i < mesh.Length; i += 3)
+            {
+                double y = mesh[i + 1], z = mesh[i + 2];
+                o[i] = mesh[i];
+                o[i + 1] = c * y - s * z;
+                o[i + 2] = s * y + c * z + dz;
+            }
+            return o;
+        }
 
         /// <summary>Caixa sólida com o canto em (0,0,0), duas faces triangulares por lado.</summary>
         private static double[] Box(double sx, double sy, double sz)
