@@ -47,6 +47,11 @@ namespace AutoEDM.Reverse
 
         /// <summary>Área que ficou em regiões "livre" — o que um kernel free-form teria de cobrir.</summary>
         public double FreeFormAreaMm2;
+
+        /// <summary>Para cada triângulo, o índice em <see cref="Surfaces"/> da superfície a que ele
+        /// pertence (−1 = degenerado). É o que liga a malha de volta à geometria exata: a secção
+        /// 2,5D usa isto para trocar cada trecho do contorno pela superfície reconhecida.</summary>
+        public int[] RegionOfTriangle;
     }
 
     public sealed class RecognizerOptions
@@ -241,7 +246,15 @@ namespace AutoEDM.Reverse
             }
 
             foreach (RecognizedSurface s in result.Surfaces) Snap(s, o);
+
+            // Ordena por área, e leva o mapa triângulo → superfície junto com a ordenação.
+            var before = new List<RecognizedSurface>(result.Surfaces);
             result.Surfaces.Sort((a, b) => b.AreaMm2.CompareTo(a.AreaMm2));
+            var newIndex = new Dictionary<RecognizedSurface, int>();
+            for (int i = 0; i < result.Surfaces.Count; i++) newIndex[result.Surfaces[i]] = i;
+            result.RegionOfTriangle = new int[triCount];
+            for (int t = 0; t < triCount; t++)
+                result.RegionOfTriangle[t] = region[t] >= 0 ? newIndex[before[region[t]]] : -1;
             return result;
         }
 
