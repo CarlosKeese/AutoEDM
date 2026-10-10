@@ -93,10 +93,11 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Lista de modificações (folha de revisões) | 🚧 rodando no SE; escritor .xlsx próprio, miniaturas Z+/Z− com features numeradas |
 | Ponte MCP (Claude Code → Solid Edge) | ✅ **validada no SE (2026-09-18)** — 1º run com o CAD aberto: `se_status`, `se_planos`, `se_arvore`, `se_log` e `se_modelar` sobre COM real |
 | Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
-| Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | 🚧 escrito e coberto por 13 testes, **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
+| Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | ✅ **rodado nas 6 malhas reais (2026-10-09)** pelo Core, conferido contra a Eng. Reversa nativa (Ø7,00 e Ø14,00 iguais); plano + cilindro, medidas no centésimo |
+| **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); 🚧 botão e ferramenta MCP compilados, **aguardando instalação** (GuiVersion 17) |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 382 passando, 0 falhas |
+| Testes de unidade | ✅ 398 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -313,8 +314,35 @@ contorno trocado pela geometria EXATA da superfície reconhecida (parede plana =
 vertical = arco com centro e Ø a 0,01) → extrusão por faixa. Sai sólido com features
 editáveis. O kit superfícies + auto-trim fica para casca convexa.
 
-**Próxima ação:** escrever a secção 2,5D (pura, testável) e o construtor por faixas; rodar na
-malha 4 e comparar volume/caixa com a malha.
+**Feito no mesmo dia — malha → sólido, rota 2,5D** (`PrismaticSection`, `PrismaticBuilder`,
+`PrismaticReport`, botão "Malha → sólido", ferramenta `se_malha_para_solido`):
+- níveis Z dos planos horizontais; secção da malha no meio de cada faixa; cada trecho trocado pela
+  superfície exata (reta, arco, círculo) com vértice pela interseção exata das vizinhas; faixas
+  iguais fundidas; volume EXATO com arcos integrados (a malha tem furo/raio inscrito e dá a mais);
+- construção numa PEÇA NOVA ordenada: plano por matriz + `Convert3DCoordinate`, arco por 3 pontos,
+  `AddKeypoint` com o índice escolhido pela posição LIDA DE VOLTA, uma protrusão por faixa e os
+  furos como UM recorte por faixa (furo a furo se o lote falhar);
+- `AddFiniteExtrudedProtrusion` devolve o Model: o status se lê em `ExtrudedProtrusions` (que não
+  tem `GetStatusEx` — usar `.Status`);
+- furo TANGENTE a outro contorno: perfil com laços que se tocam dá protrusão SEM material e sem
+  erro; recorte tangente o Parasolid recusa. Saída: recorte refeito com Ø +0,002 mm, declarado;
+- encadeamento da secção: num vértice com duas saídas, a que vira mais à ESQUERDA (meia-volta por
+  último) — confirmado por teste que falhava com a regra invertida;
+- faixa NÃO prismática é denunciada (área da secção a 10/30/70/90 % contra o meio): o volume
+  sozinho enganou na malha 6, que tem raio ~1 mm na borda do bolsão.
+
+Resultado nas 6 malhas: **4, 5 e 6 constroem** (corpo = exato); 4 é integralmente prismática; 1, 2,
+3, 5 e 6 têm faixas com raio em aresta horizontal, chanfro ou saída (avisado). A 3 tem paredes com
+ângulo de saída e quebra a secção (vértice a 8 mm) — fora do alcance da rota 2,5D reta.
+
+**Próxima ação:**
+1. instalar (SE e Claude Code fechados: `tools\deploy-dev.ps1 -IncludeMcp`) e rodar o botão na
+   malha real;
+2. raio em aresta horizontal → feature **Round** sobre o canto vivo construído, com o raio
+   reconhecido (cilindro de eixo X/Y);
+3. ângulo de saída → extrusão com draft (cone/plano inclinado reconhecido);
+4. furo fora de Z → recorte num segundo eixo;
+5. toro (nervura com raio ao longo de arco) no reconhecedor.
 
 ### Eng. Reversa — por que começou por uma sonda
 
@@ -350,6 +378,13 @@ apagá-los, nunca salva). Confere presença de membro por introspecção **antes
 e registra o erro exato do que falha — que é o dado que ela existe para trazer.
 
 ## Histórico
+
+- **2026-10-09** — **Eng. Reversa: malha vira sólido.** 1º run do reconhecedor nas 6 malhas do
+  Rack_Anghinoni, conferido contra a Eng. Reversa nativa. Rota B-spline por polos testada e
+  descartada (só a 1ª criação por documento funciona; `u_order = 1` derruba a SE). Rota de
+  superfícies + auto-trim provada para casca convexa. Rota prismática 2,5D construída: malhas 4,
+  5 e 6 viram sólido com volume exato. Botão "Malha → sólido" e `se_malha_para_solido`. 398
+  testes. Commits `4f0c3ea` → `77e34fb`.
 
 - **2026-09-21** — **Alojamento de O'ring associativo, validado no SE.** Pedidos do
   Carlos: janela no lado direito da tela; feature com o nome do anel
