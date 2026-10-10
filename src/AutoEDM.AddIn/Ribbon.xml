@@ -80,6 +80,10 @@
               screentip="Diagnóstico: o que a API de malha responde na SUA malha (SÓ LEITURA)"
               supertip="Na PEÇA (.par) com a malha importada (STL/OBJ): mede o que a API do Solid Edge de fato entrega sobre ela — corpos de facetas, faces de malha, quantos triângulos leem por GetTrianglePoints/GetTriangleData, a caixa envolvente em mm, e quais membros da API de malha (DoRemesh, AddBodyByMeshFacets, HealAndOptimizeWithMeshOptions) existem nesta versão. Confere presença de membro por introspecção ANTES de chamar, e registra o erro exato do que falhar. Pergunta antes de incluir o teste de SECCIONAMENTO, que é o único que escreve (cria esboços, tenta apagá-los, nunca salva) e é o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Existe porque o dump da typelib já provou que a SE NÃO expõe por COM nenhum ajuste de plano/cilindro/cone sobre região de malha — esse ajuste terá de ser nosso, e esta sonda diz sobre qual base construí-lo. Todo o resultado vai para o log."
               imageId="6" showLabel="true" />
+      <button id="26" size="large" label="Malha → sólido"
+              screentip="Converte a malha em SÓLIDO com features (rota prismática, faixas Z)"
+              supertip="Na PEÇA (.par) com a malha importada: reconhece as superfícies (planos e cilindros, medidas no centésimo), tira os níveis Z dos planos horizontais e troca cada trecho da secção pela geometria EXATA — parede plana vira reta, cilindro vertical vira arco ou círculo, e os cantos saem da interseção exata das superfícies vizinhas. Mostra o plano ANTES de construir: as faixas, os três volumes (malha, plano e exato) e os avisos — faixa que NÃO é prismática (raio em aresta horizontal, chanfro, ângulo de saída) é denunciada, nunca escondida. Se você confirmar, constrói numa PEÇA NOVA (ordenada, não salva): uma protrusão por faixa e os furos como recorte, e confere o volume do corpo contra o exato. A peça da malha não é alterada."
+              imageId="6" showLabel="true" />
     </group>
     <group name="MCP">
       <button id="19" size="large" label="Ligar ponte"

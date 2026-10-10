@@ -163,6 +163,19 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
+        public void Relatorio_poe_os_tres_volumes_lado_a_lado_e_os_avisos()
+        {
+            string limpo = PrismaticReport.Format(PlanOf(PlateWithHole(40, 10, 5, 64)), null, "placa");
+            Assert.Contains("plano EXATO", limpo);
+            Assert.Contains("Sem avisos", limpo);
+            Assert.Contains("1 círculo(s)", limpo);
+
+            string saida = PrismaticReport.Format(PlanOf(Frustum(20, 10, 10)), null, "tronco");
+            Assert.Contains("NÃO é prismática", saida);
+            Assert.DoesNotContain("Sem avisos", saida);
+        }
+
+        [Fact]
         public void Recusa_reconhecimento_de_outra_malha()
         {
             RecognitionResult r = SurfaceRecognizer.Recognize(Box(0, 0, 0, 10, 10, 10), null);

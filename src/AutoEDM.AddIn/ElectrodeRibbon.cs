@@ -48,6 +48,7 @@ namespace AutoEDM.AddIn
         private const int CmdMcpSomenteLeitura = 23; // MCP: volta a ponte para somente-leitura
         private const int CmdSondaMalha = 24;       // ENG. REVERSA: sonda de diagnóstico sobre a malha (SÓ LEITURA)
         private const int CmdListaModificacoes = 25; // Folha de revisões: peças com grupo "Rev.N" na árvore ordenada
+        private const int CmdMalhaParaSolido = 26;  // ENG. REVERSA: malha → sólido pela rota prismática (cria PEÇA NOVA)
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -92,6 +93,7 @@ namespace AutoEDM.AddIn
                 case CmdMcpLiberarEscrita: McpDefinirModo(BridgeMode.Write); break;
                 case CmdMcpSomenteLeitura: McpDefinirModo(BridgeMode.ReadOnly); break;
                 case CmdSondaMalha: SondarMalha(); break;
+                case CmdMalhaParaSolido: MalhaParaSolido(); break;
             }
         }
 
@@ -946,6 +948,112 @@ namespace AutoEDM.AddIn
             });
         }
 
+        /// <summary>
+        /// MALHA → SÓLIDO, rota prismática (2,5D). Lê a malha, reconhece as superfícies, monta o
+        /// plano de faixas Z com contorno exato e mostra o plano ANTES de construir — com os
+        /// três volumes e os avisos de faixa não prismática. Se o usuário confirmar, constrói
+        /// numa PEÇA NOVA (ordenada, não salva). A peça da malha nunca é alterada.
+        /// </summary>
+        private void MalhaParaSolido()
+        {
+            Run(CmdMalhaParaSolido, (connector, doc, p) =>
+            {
+                const string title = "AutoEDM — Malha → sólido";
+
+                var meshes = new System.Collections.Generic.List<int>();
+                var names = new System.Collections.Generic.List<string>();
+                int count = 0;
+                try { count = (int)doc.Models.Count; } catch { }
+                for (int i = 1; i <= count; i++)
+                {
+                    dynamic m = doc.Models.Item(i);
+                    bool facet = false;
+                    try { facet = (bool)m.IsFacetBody; } catch { }
+                    if (!facet) continue;
+                    string nm = "corpo " + i;
+                    try { nm = (string)m.BodyName; } catch { }
+                    meshes.Add(i);
+                    names.Add("[" + i + "] " + nm);
+                }
+                if (meshes.Count == 0)
+                {
+                    MessageBox.Show("Esta peça não tem corpo de MALHA (facetas). Importe o STL/OBJ como malha e tente de novo.",
+                        title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                int pick = 0;
+                if (meshes.Count > 1)
+                {
+                    pick = PickFromList(title, "A peça tem " + meshes.Count + " corpos de malha. Qual converter?", names);
+                    if (pick < 0) return;
+                }
+
+                dynamic model = doc.Models.Item(meshes[pick]);
+                string name = names[pick];
+                MeshData mesh = MeshReader.Read((object)model.Body, 0.01);
+                if (!mesh.Ok)
+                {
+                    MessageBox.Show("Não consegui ler os triângulos: " + mesh.Error, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                RecognitionResult rec = SurfaceRecognizer.Recognize(mesh.PointsMm, new RecognizerOptions());
+                PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, rec, null);
+                string planText = PrismaticReport.Format(plan, null, name);
+                Log.Info(planText);
+
+                if (plan.Bands.Count == 0)
+                {
+                    MessageBox.Show(planText, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var go = MessageBox.Show(planText + "\nConstruir este sólido numa PEÇA NOVA (ordenada, não salva)?",
+                    title, MessageBoxButtons.YesNo, plan.Warnings.Count == 0 ? MessageBoxIcon.Question : MessageBoxIcon.Warning);
+                if (go != DialogResult.Yes) return;
+
+                PrismaticBuildResult built = PrismaticBuilder.Build((object)ElectrodeAddIn.Current.App, plan, name);
+                string text = PrismaticReport.Format(plan, built, name);
+                Log.Info(text);
+                MessageBox.Show(text, title, MessageBoxButtons.OK,
+                    built.BandsFailed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            });
+        }
+
+        /// <summary>Lista simples para escolher um item; −1 se cancelar.</summary>
+        private static int PickFromList(string title, string prompt, System.Collections.Generic.List<string> items)
+        {
+            using (var form = new Form())
+            using (var label = new Label())
+            using (var list = new ListBox())
+            using (var ok = new Button())
+            using (var cancel = new Button())
+            {
+                form.Text = title;
+                form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                form.StartPosition = FormStartPosition.CenterScreen;
+                form.MinimizeBox = false;
+                form.MaximizeBox = false;
+                form.ClientSize = new System.Drawing.Size(420, 260);
+
+                label.Text = prompt;
+                label.SetBounds(12, 10, 396, 20);
+                list.SetBounds(12, 34, 396, 180);
+                foreach (string it in items) list.Items.Add(it);
+                list.SelectedIndex = 0;
+                list.DoubleClick += (s, e) => form.DialogResult = DialogResult.OK;
+
+                ok.Text = "OK"; ok.DialogResult = DialogResult.OK; ok.SetBounds(252, 224, 75, 26);
+                cancel.Text = "Cancelar"; cancel.DialogResult = DialogResult.Cancel; cancel.SetBounds(333, 224, 75, 26);
+                form.Controls.AddRange(new Control[] { label, list, ok, cancel });
+                form.AcceptButton = ok;
+                form.CancelButton = cancel;
+
+                return form.ShowDialog() == DialogResult.OK ? list.SelectedIndex : -1;
+            }
+        }
+
         // -------------------------------------------------------------- infra
 
         /// <summary>Tipo de documento exigido por um comando (= SolidEdgeFramework.DocumentTypeConstants).</summary>
@@ -1022,6 +1130,8 @@ namespace AutoEDM.AddIn
                 // Sonda da malha: só LÊ (triângulos, secções, diagnóstico). A malha importada vive
                 // numa PEÇA; o ambiente não importa porque nada é criado.
                 { CmdSondaMalha,          new CommandSpec("SONDA DE MALHA (ENG. REVERSA)", DocKind.Part, ModelingEnv.Any) },
+                // Lê a malha em qualquer ambiente; constrói numa peça NOVA, que ele mesmo põe em ordenado.
+                { CmdMalhaParaSolido,     new CommandSpec("MALHA → SÓLIDO (ENG. REVERSA)", DocKind.Part, ModelingEnv.Any) },
 
                 // --- os 5 comandos do grupo MCP ficam DE FORA desta tabela de propósito ---
                 // Ligar/desligar a ponte e ler o status não dependem de documento nenhum: o Carlos

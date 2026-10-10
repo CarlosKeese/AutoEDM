@@ -50,6 +50,7 @@ namespace AutoEDM.Mcp
                 { "se_exportar_perfis_wedm", new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_planos",               new Requirement(DocKind.Part,     ModelingEnv.Any) },
                 { "se_reconhecer_malha",     new Requirement(DocKind.Part,     ModelingEnv.Any) },
+                { "se_malha_para_solido",    new Requirement(DocKind.Part,     ModelingEnv.Any) },
 
                 // --- os botões da ribbon, um a um: a MESMA tabela Specs do ElectrodeRibbon ---
                 { "se_trocar_ambiente",       new Requirement(DocKind.Part,     ModelingEnv.Any) },
@@ -162,6 +163,7 @@ namespace AutoEDM.Mcp
                 case "se_curvas_superficies": return SurfaceRimCurves(doc, captured);
                 case "se_exportar_perfis_wedm": return ExportWedm(doc, captured);
                 case "se_reconhecer_malha": return RecognizeMesh(doc, argsJson);
+                case "se_malha_para_solido": return MeshToSolid(app, doc, argsJson);
                 default:
                     string button = DispatchButton(spec.Name, app, doc, argsJson, captured);
                     if (button != null) return button;
@@ -659,54 +661,99 @@ namespace AutoEDM.Mcp
         /// </summary>
         private static string RecognizeMesh(dynamic doc, string argsJson)
         {
+            MeshData mesh; string name, route, error;
+            if (!TryReadMesh(doc, argsJson, out mesh, out name, out route, out error)) return error;
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh.PointsMm, RecognizerOptionsFrom(argsJson));
+            Log.Info($"[MALHA] reconhecimento em '{name}': {r.Surfaces.Count} superfície(s) " +
+                     $"sobre {r.TriangleCount} triângulo(s).");
+            return SurfaceReport.Format(r, route, name);
+        }
+
+        /// <summary>
+        /// Malha → sólido pela rota prismática. Sem 'construir' é SÓ LEITURA: devolve o plano
+        /// (níveis, contornos exatos, volumes e avisos), que é o que se olha antes de gastar uma
+        /// peça. Com 'construir' cria uma PEÇA NOVA e precisa da escrita liberada — a peça da
+        /// malha não é tocada em nenhum dos dois casos.
+        /// </summary>
+        private string MeshToSolid(dynamic app, dynamic doc, string argsJson)
+        {
+            bool build = ReadBool(argsJson, "construir", false);
+            if (build && _mode() != BridgeMode.Write)
+                return "RECUSADO: 'construir' cria uma peça nova, e a ponte está em SOMENTE-LEITURA. Rode sem 'construir' " +
+                       "para ver o plano, ou peça ao Carlos para clicar em \"Liberar escrita\" no grupo MCP da ribbon.";
+
+            MeshData mesh; string name, route, error;
+            if (!TryReadMesh(doc, argsJson, out mesh, out name, out route, out error)) return error;
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh.PointsMm, RecognizerOptionsFrom(argsJson));
+            PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, r, null);
+            Log.Info($"[MALHA] plano prismático de '{name}': {plan.Bands.Count} faixa(s), {plan.Warnings.Count} aviso(s).");
+
+            PrismaticBuildResult result = null;
+            if (build && plan.Bands.Count > 0)
+                result = PrismaticBuilder.Build((object)app, plan, name);
+
+            return PrismaticReport.Format(plan, result, name) +
+                   (build ? "" : "\n(Só o plano. Para construir o sólido numa peça nova: 'construir': true, com a escrita liberada.)");
+        }
+
+        private static RecognizerOptions RecognizerOptionsFrom(string argsJson)
+        {
+            return new RecognizerOptions
+            {
+                PlaneAngleToleranceDeg = ReadDouble(argsJson, "anguloPlanoGraus", 2.0, 0.1, 30.0),
+                PlaneDistanceToleranceMm = ReadDouble(argsJson, "distanciaPlanoMm", 0.05, 0.0001, 5.0),
+                CreaseAngleDeg = ReadDouble(argsJson, "anguloQuinaGraus", 35.0, 1.0, 89.0),
+                CylinderAbsoluteToleranceMm = ReadDouble(argsJson, "toleranciaCilindroMm", 0.005, 0.0001, 1.0),
+                RoundToMm = ReadDouble(argsJson, "arredondarMm", 0.01, 0.0, 1.0)
+            };
+        }
+
+        /// <summary>Lê os triângulos do corpo pedido ('corpo', padrão 1) — comum ao reconhecimento
+        /// e à conversão.</summary>
+        private static bool TryReadMesh(dynamic doc, string argsJson, out MeshData mesh, out string name,
+            out string route, out string error)
+        {
+            mesh = null; name = null; route = null; error = null;
             int wanted = ReadInt(argsJson, "corpo", 1, 1, 1000);
 
             dynamic models = null;
             try { models = doc.Models; } catch { }
             int count = 0;
             if (models != null) { try { count = (int)models.Count; } catch { } }
-            if (count <= 0) return "Esta peça não tem corpo nenhum para ler.";
-            if (wanted > count) return $"A peça tem {count} corpo(s); você pediu o [{wanted}].";
+            if (count <= 0) { error = "Esta peça não tem corpo nenhum para ler."; return false; }
+            if (wanted > count) { error = $"A peça tem {count} corpo(s); você pediu o [{wanted}]."; return false; }
 
             dynamic model = null;
             try { model = models.Item(wanted); }
-            catch (Exception ex) { return $"Models.Item({wanted}) falhou: {ex.GetBaseException().Message}"; }
+            catch (Exception ex) { error = $"Models.Item({wanted}) falhou: {ex.GetBaseException().Message}"; return false; }
 
-            string name = "Model[" + wanted + "]";
-            try { name = (string)model.Name; } catch { }
+            name = "Model[" + wanted + "]";
+            try { name = (string)model.BodyName; } catch { try { name = (string)model.Name; } catch { } }
 
             bool isFacet = false, isMixed = false;
             try { isFacet = (bool)model.IsFacetBody; } catch { }
             try { isMixed = (bool)model.IsMixedFacetBody; } catch { }
 
             object body = null;
-            try { body = model.Body; } catch (Exception ex) { return "model.Body falhou: " + ex.GetBaseException().Message; }
-            if (body == null) return "O corpo não devolveu Body.";
+            try { body = model.Body; } catch (Exception ex) { error = "model.Body falhou: " + ex.GetBaseException().Message; return false; }
+            if (body == null) { error = "O corpo não devolveu Body."; return false; }
 
             double tolMm = ReadDouble(argsJson, "toleranciaMm", 0.01, 0.0001, 5.0);
-            MeshData mesh = MeshReader.Read(body, tolMm);
+            mesh = MeshReader.Read(body, tolMm);
             if (!mesh.Ok)
-                return $"Não consegui ler os triângulos do corpo '{name}': {mesh.Error}\n\n" +
-                       "O detalhe da tentativa está no log ('se_log').";
-
-            var options = new RecognizerOptions
             {
-                PlaneAngleToleranceDeg = ReadDouble(argsJson, "anguloPlanoGraus", 2.0, 0.1, 30.0),
-                PlaneDistanceToleranceMm = ReadDouble(argsJson, "distanciaPlanoMm", 0.05, 0.0001, 5.0),
-                CreaseAngleDeg = ReadDouble(argsJson, "anguloQuinaGraus", 35.0, 1.0, 89.0)
-            };
-
-            RecognitionResult r = SurfaceRecognizer.Recognize(mesh.PointsMm, options);
+                error = $"Não consegui ler os triângulos do corpo '{name}': {mesh.Error}\n\n" +
+                        "O detalhe da tentativa está no log ('se_log').";
+                return false;
+            }
 
             string kind = isFacet ? "corpo de facetas" : isMixed ? "misto (facetas + B-rep)" : "B-rep tesselado";
-            string route = mesh.Route + $"  |  {kind}, tolerância {tolMm.ToString("0.####", CultureInfo.InvariantCulture)} mm";
+            route = mesh.Route + $"  |  {kind}, tolerância {tolMm.ToString("0.####", CultureInfo.InvariantCulture)} mm";
             if (mesh.FaceIds != null && mesh.FaceIds.Length > 0)
                 route += $"  |  {mesh.FaceIds.Length} FaceID(s) vieram junto";
-
-            Log.Info($"[MALHA] reconhecimento em '{name}': {r.Surfaces.Count} superfície(s) " +
-                     $"sobre {r.TriangleCount} triângulo(s).");
-
-            return SurfaceReport.Format(r, route, name);
+            return true;
         }
 
         /// <summary>Lê um double do JSON de argumentos, com limites. Mesma regra do ReadInt:

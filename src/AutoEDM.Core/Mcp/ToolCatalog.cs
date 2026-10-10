@@ -163,6 +163,27 @@ namespace AutoEDM.Mcp
                     "altera a peça, não salva."
             },
 
+            new ToolSpec
+            {
+                Name = "se_malha_para_solido",
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"corpo\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Índice do corpo de malha na peça (padrão 1).\"}," +
+                    "\"construir\":{\"type\":\"boolean\",\"description\":\"true = cria o sólido numa PEÇA NOVA (exige escrita liberada). Padrão false = só o plano.\"}," +
+                    "\"arredondarMm\":{\"type\":\"number\",\"description\":\"Passo de arredondamento das medidas reconhecidas. Padrão 0,01; 0 desliga.\"}," +
+                    "\"toleranciaCilindroMm\":{\"type\":\"number\",\"description\":\"Desvio radial aceito num cilindro. Padrão 0,005 (STL de CAD); suba para malha de scanner.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "PEÇA ativa com corpo de MALHA: converte a malha em SÓLIDO pela rota prismática (2,5D). Reconhece as " +
+                    "superfícies, tira os níveis Z dos planos horizontais, secciona cada faixa e troca cada trecho do " +
+                    "contorno pela geometria EXATA (parede plana = reta, cilindro vertical = arco/círculo, no centésimo), " +
+                    "com os vértices pela interseção exata das superfícies vizinhas. Devolve níveis, contornos, três " +
+                    "volumes (malha, plano, EXATO) e avisos — faixa NÃO prismática (raio em aresta horizontal, chanfro, " +
+                    "ângulo de saída) e trecho aproximado são denunciados, nunca escondidos. Sem 'construir' é só leitura. " +
+                    "Com 'construir': true (escrita liberada) cria uma PEÇA NOVA ordenada com uma protrusão por faixa e os " +
+                    "furos como recorte, confere o volume do corpo contra o EXATO e não salva. A peça da malha não é tocada."
+            },
+
             // ---------------------------------------------------- escrita (modo ESCRITA)
             new ToolSpec
             {
