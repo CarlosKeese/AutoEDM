@@ -50,6 +50,12 @@ namespace AutoEDM.Reverse
 
         /// <summary>O que a construção teve de ajustar nesta faixa (ex.: furo tangente aberto).</summary>
         public readonly List<string> Notes = new List<string>();
+
+        /// <summary>Maior diferença entre a área da secção da malha no meio da faixa e em quatro
+        /// outras alturas dela, em mm². Faixa prismática de verdade dá ~0; o que passa disso é
+        /// raio em aresta horizontal, chanfro, ângulo de saída — forma que a extrusão reta não
+        /// reproduz e que o volume exato do plano, sozinho, não denunciaria.</summary>
+        public double AreaVariationMm2;
     }
 
     public sealed class PrismaticPlan
@@ -82,6 +88,11 @@ namespace AutoEDM.Reverse
         /// vizinhas) e o ponto de transição na malha. Acima disto o vértice exato é suspeito e
         /// fica o da malha, com aviso.</summary>
         public double VertexToleranceMm = 0.5;
+
+        /// <summary>Variação de área da secção dentro de uma faixa a partir da qual ela é declarada
+        /// NÃO prismática: o maior entre este piso absoluto e a fração abaixo da área.</summary>
+        public double MaxAreaVariationMm2 = 0.05;
+        public double MaxAreaVariationFraction = 0.0005;
     }
 
     /// <summary>
@@ -158,17 +169,30 @@ namespace AutoEDM.Reverse
                     band.Loops.AddRange(SplitTouchingCircles(loop));
                 }
                 if (band.Loops.Count == 0) continue;
+                band.AreaVariationMm2 = AreaVariation(pointsMm, r.RegionOfTriangle, z0, z1);
 
                 // ------------------------------------------------------- 5. funde faixas iguais
                 string key = Signature(band);
                 if (previous != null && key == previousKey && Math.Abs(previous.Z1 - z0) < 1e-9)
                 {
                     previous.Z1 = z1;
+                    previous.AreaVariationMm2 = Math.Max(previous.AreaVariationMm2, band.AreaVariationMm2);
                     continue;
                 }
                 plan.Bands.Add(band);
                 previous = band;
                 previousKey = key;
+            }
+
+            foreach (SectionBand b in plan.Bands)
+            {
+                double mid = 0;
+                foreach (SectionLoop l in b.Loops) mid += l.SignedAreaMm2;
+                if (b.AreaVariationMm2 > Math.Max(o.MaxAreaVariationMm2, Math.Abs(mid) * o.MaxAreaVariationFraction))
+                    plan.Warnings.Add(string.Format(CultureInfo.InvariantCulture,
+                        "Faixa Z {0:0.00}–{1:0.00} NÃO é prismática: a área da secção varia {2:0.###} mm² ao longo dela " +
+                        "({3:0.##}% da área) — há raio, chanfro ou saída que a extrusão reta não reproduz.",
+                        b.Z0, b.Z1, b.AreaVariationMm2, Math.Abs(mid) > 0 ? 100 * b.AreaVariationMm2 / Math.Abs(mid) : 0));
             }
 
             foreach (SectionBand b in plan.Bands)
@@ -179,6 +203,25 @@ namespace AutoEDM.Reverse
                     plan.ExactVolumeMm3 += l.ExactAreaMm2 * (b.Z1 - b.Z0);
                 }
             return plan;
+        }
+
+        /// <summary>Área da secção em quatro alturas da faixa (10, 30, 70 e 90 %), comparada com a
+        /// do meio.</summary>
+        private static double AreaVariation(double[] p, int[] regionOf, double z0, double z1)
+        {
+            double mid = SectionArea(p, regionOf, (z0 + z1) / 2);
+            double worst = 0;
+            foreach (double f in new[] { 0.1, 0.3, 0.7, 0.9 })
+                worst = Math.Max(worst, Math.Abs(SectionArea(p, regionOf, z0 + f * (z1 - z0)) - mid));
+            return worst;
+        }
+
+        public static double SectionArea(double[] p, int[] regionOf, double z)
+        {
+            double a = 0;
+            foreach (List<Seg> loop in Cut(p, regionOf, z))
+                foreach (Seg s in loop) a += s.Ax * s.By - s.Bx * s.Ay;
+            return a / 2;
         }
 
         private static void SnapEnds(List<double> levels, double zMin, double zMax, double merge, List<double> raw)

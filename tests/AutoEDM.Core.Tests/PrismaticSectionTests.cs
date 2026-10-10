@@ -140,6 +140,29 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
+        public void Faixa_prismatica_nao_gera_aviso_de_forma()
+        {
+            PrismaticPlan p = PlanOf(PlateWithHole(side: 40, thickness: 10, holeRadius: 5, segments: 64));
+
+            Assert.True(Assert.Single(p.Bands).AreaVariationMm2 < 1e-6);
+            Assert.DoesNotContain(p.Warnings, w => w.Contains("NÃO é prismática"));
+        }
+
+        [Fact]
+        public void Piramide_truncada_e_denunciada_como_nao_prismatica()
+        {
+            // Tronco de pirâmide: base 20×20, topo 10×10, altura 10 — o caso do ângulo de saída.
+            // A secção do meio (15×15) faria uma extrusão reta com o volume ERRADO sem aviso
+            // nenhum; a variação da área ao longo da faixa é o que denuncia.
+            double[] mesh = Frustum(bottom: 20, top: 10, height: 10);
+
+            PrismaticPlan p = PlanOf(mesh);
+
+            Assert.Contains(p.Warnings, w => w.Contains("NÃO é prismática"));
+            Assert.True(Assert.Single(p.Bands).AreaVariationMm2 > 50);
+        }
+
+        [Fact]
         public void Recusa_reconhecimento_de_outra_malha()
         {
             RecognitionResult r = SurfaceRecognizer.Recognize(Box(0, 0, 0, 10, 10, 10), null);
@@ -243,6 +266,23 @@ namespace AutoEDM.Core.Tests
                 poly.Add(new[] { -h + radius * Math.Cos(a), radius * Math.Sin(a) });
             }
             return poly;
+        }
+
+        /// <summary>Tronco de pirâmide de base quadrada centrado na origem.</summary>
+        private static double[] Frustum(double bottom, double top, double height)
+        {
+            double b = bottom / 2, t = top / 2;
+            double[][] lo = { new[] { -b, -b, 0 }, new[] { b, -b, 0 }, new[] { b, b, 0 }, new[] { -b, b, 0 } };
+            double[][] hi = { new[] { -t, -t, height }, new[] { t, -t, height }, new[] { t, t, height }, new[] { -t, t, height } };
+            var pts = new List<double>();
+            Quad(pts, lo[0], lo[3], lo[2], lo[1]); // fundo (Z−)
+            Quad(pts, hi[0], hi[1], hi[2], hi[3]); // topo (Z+)
+            for (int i = 0; i < 4; i++)
+            {
+                int j = (i + 1) % 4;
+                Quad(pts, lo[i], lo[j], hi[j], hi[i]);
+            }
+            return pts.ToArray();
         }
 
         private static double[] P3(double[] xy, double z) => new[] { xy[0], xy[1], z };
