@@ -93,7 +93,8 @@ namespace AutoEDM.AddIn.UI
             BuildUi();
         }
 
-        private string Tag => _spec.LogTag ?? "Seleção de faces";
+        // Não "Tag": esconderia o Control.Tag de toda janela (aviso CS0108).
+        private string LogTag => _spec.LogTag ?? "Seleção de faces";
 
         /// <summary>Documento FRESCO a cada operação — o Application é o único proxy que
         /// sobrevive a tudo (ver a regra de RPC_E_DISCONNECTED do projeto).</summary>
@@ -290,7 +291,7 @@ namespace AutoEDM.AddIn.UI
             }
             catch (Exception e)
             {
-                Log.Warn($"{Tag}: seleção por etapas indisponível — " + e.GetBaseException().Message);
+                Log.Warn($"{LogTag}: seleção por etapas indisponível — " + e.GetBaseException().Message);
                 _picker = null;
             }
             return _picker;
@@ -307,7 +308,7 @@ namespace AutoEDM.AddIn.UI
             object window = _picker?.LastWindow;
             System.Drawing.Point screen = _picker?.LastScreenPoint ?? System.Drawing.Point.Empty;
             try { BeginInvoke(new Action(() => Accept(graphic, point, window, screen))); }
-            catch (Exception e) { Log.Error($"{Tag}: seleção não pôde ser processada.", e); }
+            catch (Exception e) { Log.Error($"{LogTag}: seleção não pôde ser processada.", e); }
         }
 
         private void OnPickMissed()
@@ -342,7 +343,7 @@ namespace AutoEDM.AddIn.UI
             StopPicking();
             try
             {
-                if (_picks.Count == 0 && graphic != null) Log.Info($"{Tag}: 1º clique — tipo do objeto: " + ComTypeName(graphic));
+                if (_picks.Count == 0 && graphic != null) Log.Info($"{LogTag}: 1º clique — tipo do objeto: " + ComTypeName(graphic));
 
                 // A face que a SE localizou não respeita a profundidade (peça de trás ganhava da
                 // da frente). Quem decide é o raio de visão; a da SE só vale se o raio falhar.
@@ -354,7 +355,7 @@ namespace AutoEDM.AddIn.UI
                         Report("Nenhuma face à vista sob o cursor (o log diz por quê). Clique sobre uma face do modelo.");
                     else
                     {
-                        Log.Warn($"{Tag}: raio de visão sem resultado — usando a face que a SE localizou.");
+                        Log.Warn($"{LogTag}: raio de visão sem resultado — usando a face que a SE localizou.");
                         Toggle(graphic, "clique");
                     }
                 }
@@ -390,14 +391,14 @@ namespace AutoEDM.AddIn.UI
                 catch (Exception e)
                 {
                     // Proxy guardado morreu (peça recarregada, documento mexido): relê e tenta 1 vez.
-                    Log.Warn($"{Tag}: cena guardada inválida, relendo — " + e.GetBaseException().Message);
+                    Log.Warn($"{LogTag}: cena guardada inválida, relendo — " + e.GetBaseException().Message);
                     _scene = VisibleScene.Build((object)doc);
                     return VisibleFacePicker.PickNearest(doc, origin, dir, _scene);
                 }
             }
             catch (Exception e)
             {
-                Log.Warn($"{Tag}: raio de visão falhou — " + e.GetBaseException().Message);
+                Log.Warn($"{LogTag}: raio de visão falhou — " + e.GetBaseException().Message);
                 return null;
             }
             finally { Cursor = Cursors.Default; }
@@ -419,7 +420,7 @@ namespace AutoEDM.AddIn.UI
                     Toggle(item, $"SelectSet[{i}]", addOnly: true);
                 }
             }
-            catch (Exception e) { Log.Warn($"{Tag}: SelectSet ilegível — " + e.GetBaseException().Message); }
+            catch (Exception e) { Log.Warn($"{LogTag}: SelectSet ilegível — " + e.GetBaseException().Message); }
 
             int added = _picks.Count - before;
             if (explain)
@@ -454,7 +455,7 @@ namespace AutoEDM.AddIn.UI
 
             var pick = new Pick { Graphic = graphic, Face = face, Key = key };
             if (FaceGeometry.TryGetRangeMm(face.Face, out double[] mn, out double[] mx)) { pick.Min = mn; pick.Max = mx; }
-            Log.Info($"{Tag}: +face {key ?? "(sem ID)"} de '{face.OccurrenceName ?? "?"}'" +
+            Log.Info($"{LogTag}: +face {key ?? "(sem ID)"} de '{face.OccurrenceName ?? "?"}'" +
                      (pick.Min == null ? ", sem caixa." :
                       $", caixa na peça X {pick.Min[0]:0.0}…{pick.Max[0]:0.0}  Y {pick.Min[1]:0.0}…{pick.Max[1]:0.0}  Z {pick.Min[2]:0.0}…{pick.Max[2]:0.0} mm."));
             _picks.Add(pick);
@@ -536,7 +537,7 @@ namespace AutoEDM.AddIn.UI
             _btnUndo.Enabled = _btnClear.Enabled = _picks.Count > 0;
 
             try { _spec.SelectionChanged?.Invoke(_picks.Select(k => k.Face).ToList()); }
-            catch (Exception e) { Log.Warn($"{Tag}: prévia do painel falhou — " + e.GetBaseException().Message); }
+            catch (Exception e) { Log.Warn($"{LogTag}: prévia do painel falhou — " + e.GetBaseException().Message); }
         }
 
         private void Report(string text) { _txtReport.Text = text; }
@@ -560,12 +561,12 @@ namespace AutoEDM.AddIn.UI
             Cursor = Cursors.WaitCursor;
             try
             {
-                Log.Info($"{Tag} (janela): {_picks.Count} face(s).");
+                Log.Info($"{LogTag} (janela): {_picks.Count} face(s).");
                 res = _spec.Create((object)doc, _picks.Select(k => k.Face).ToList());
             }
             catch (Exception e)
             {
-                Log.Error($"{Tag}: falha ao criar.", e);
+                Log.Error($"{LogTag}: falha ao criar.", e);
                 string logPath = ElectrodeAddIn.Current?.LogPath;
                 Report("Não foi possível criar. " +
                        (string.IsNullOrEmpty(logPath) ? "Detalhes no log." : "Detalhes no log:\r\n" + logPath));
@@ -603,7 +604,7 @@ namespace AutoEDM.AddIn.UI
                 hs.AddItem(item);
                 hs.Draw();
             }
-            catch (Exception e) { Log.Warn($"{Tag}: realce não aplicado — " + e.GetBaseException().Message); }
+            catch (Exception e) { Log.Warn($"{LogTag}: realce não aplicado — " + e.GetBaseException().Message); }
         }
 
         private void RebuildHighlight()
