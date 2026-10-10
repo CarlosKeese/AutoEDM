@@ -782,6 +782,15 @@ geratrizes — fragmento de concordância de canto não passa). O que sobra em c
 regiões livres é testado como **toro**: primeiro o grupo conectado inteiro (par a par o eixo fica
 indeterminado), depois absorção de vizinho de qualquer tipo enquanto couber.
 
+**Raio de concordância** (`FilletRecognizer`), depois de tudo: o que sobrou livre (mais retalhos
+< 1 mm²) é testado como raio entre duas superfícies já reconhecidas em volta — entre dois planos,
+cilindro de eixo n₁ × n₂; entre um plano e um cilindro perpendicular a ele, toro no eixo do
+cilindro. O centro fica a r das duas, então só r é livre: busca de consenso, refino com os pontos
+que concordam, cobertura de ≥ 60% do arco, pedaço conexo, raio redondo (múltiplo de 0,05 a menos de
+0,015 mm). Pega o raio de tesselação torcida que o crescimento não pega. Antes disso, cilindro de
+poucos retalhos devolve o que cabe no vizinho maior (disputa) e pedaço coaxial a um cilindro maior
+volta para ele.
+
 **Medida de projeto:** offset de plano, Ø e posição do eixo no passo de 0,01 mm; direção a menos
 de 0,05° de X/Y/Z vira o eixo, e componente a menos disso de zero vira zero (parede "vertical" de
 0,02° é vertical); pontas de arco a menos de 1° de X/Y/Z encostam no eixo (raio de 90° não sai de
@@ -794,7 +803,8 @@ Sempre numa **peça nova em modelagem ordenada, não salva** (a peça do usuári
 trocado). Esboços, CS e planos de referência saem **ocultos**.
 
 1. **Faixas Z** (`PrismaticSection`): níveis dos planos horizontais; secção da malha no meio de cada
-   faixa; cada trecho trocado pela superfície exata (reta, arco, círculo) com os vértices pela
+   faixa, afastada 0,1 µm de qualquer altura de vértice (corte exatamente num vértice perde o
+   segmento e o laço pula trechos); cada trecho trocado pela superfície exata (reta, arco, círculo) com os vértices pela
    interseção exata das vizinhas; uma protrusão por faixa e os furos como recorte.
 2. **Correções de fronteira** (`BoundaryCorrections`): no plano em que a superfície vira curva, ela
    parte uma região pequena em duas, e a **malha** (número de enrolamento) diz se cada uma tem

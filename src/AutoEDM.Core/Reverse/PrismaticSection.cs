@@ -248,6 +248,7 @@ namespace AutoEDM.Reverse
         /// <summary>Corta a malha em Z = z e encadeia os segmentos em laços fechados.</summary>
         private static List<List<Seg>> Cut(double[] p, int[] regionOf, double z)
         {
+            z = OffVertex(p, z);
             var segs = new List<Seg>();
             int triCount = p.Length / 9;
             var pts = new List<double[]>(2);
@@ -332,6 +333,27 @@ namespace AutoEDM.Reverse
                 if (turn > bestTurn) { bestTurn = turn; best = c; }
             }
             return best;
+        }
+
+        /// <summary>
+        /// Altura de corte que não passa por vértice nenhum. Aresta com ponta EXATAMENTE na
+        /// altura não conta como cruzada, o triângulo dá um ponto só, o segmento some e o laço se
+        /// fecha por outro caminho: na perna do corpo 3 a faixa 4–40 era cortada em Z 22, altura
+        /// de vértices da face R10, e o contorno pulava da ponta R1 direto para a parede X = 45 —
+        /// R10, a outra ponta R1 e um trecho de parede sumiam da perna inteira.
+        /// </summary>
+        public static double OffVertex(double[] p, double z)
+        {
+            const double step = 1e-4;
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                double candidate = z + (attempt % 2 == 0 ? 1 : -1) * step * ((attempt + 1) / 2);
+                bool hit = false;
+                for (int i = 2; i < p.Length; i += 3)
+                    if (Math.Abs(p[i] - candidate) < 1e-9) { hit = true; break; }
+                if (!hit) return candidate;
+            }
+            return z;
         }
 
         private static double[] EdgeCut(double[] p, int a, int b, double z)

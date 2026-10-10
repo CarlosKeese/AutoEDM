@@ -160,7 +160,7 @@ namespace AutoEDM.Reverse
     /// Toda superfície sai com o RMS do próprio ajuste. Sem esse número o reconhecimento seria
     /// opinião.
     /// </summary>
-    public static class SurfaceRecognizer
+    public static partial class SurfaceRecognizer
     {
         // Marcas do vetor 'region', todas negativas para não colidir com o índice da região.
         private const int Free = -1;      // livre, ainda não tentado
@@ -278,7 +278,12 @@ namespace AutoEDM.Reverse
                            pointsMm, cosPlane, cosCrease, o, result);
             }
 
+            CompactRemoved(result, region);
             MergeIntoTori(result, region, neighbours, nx, ny, nz, area, pointsMm, o);
+            MergeCoaxialFragments(result, region, neighbours, area, pointsMm, o);
+            CompactRemoved(result, region);
+            RecognizeFillets(result, region, neighbours, nx, ny, nz, area, pointsMm, o);
+            CompactRemoved(result, region);
 
             foreach (RecognizedSurface s in result.Surfaces) Snap(s, o);
 
@@ -654,6 +659,7 @@ namespace AutoEDM.Reverse
             int compId = component[comp[0]];
 
             // ------------------------------------------------ 1. retalhos planos
+            double cosPatch = Math.Cos(o.PlaneAngleToleranceDeg / 4 * Math.PI / 180.0);
             var byArea = new List<int>(comp);
             byArea.Sort((x, y) => area[y].CompareTo(area[x]));
 
@@ -662,9 +668,14 @@ namespace AutoEDM.Reverse
             foreach (int seed in byArea)
             {
                 if (patchOf.ContainsKey(seed)) continue;
+                // Tolerância APERTADA aqui dentro: o raio de concordância nasce tangente à parede,
+                // e com os 2° / 0,05 mm do plano solto o retalho atravessava da faceta vertical
+                // para o raio de cima (perna do corpo 3: a última faceta da ponta R1 virou um
+                // "plano" de Z 4 a 40 e saiu do cilindro). STL de CAD tem plano de RMS zero; malha
+                // de scanner, que pede tolerância maior, continua proporcional.
                 List<int> grown = GrowPlane(seed, neighbours, region, component, compId,
-                                            nx, ny, nz, cx, cy, cz, area, p, cosPlane,
-                                            o.PlaneDistanceToleranceMm);
+                                            nx, ny, nz, cx, cy, cz, area, p, cosPatch,
+                                            o.PlaneDistanceToleranceMm / 5);
                 foreach (int t in grown) { region[t] = Patched; patchOf[t] = patches.Count; }
                 patches.Add(grown);
             }
@@ -685,6 +696,7 @@ namespace AutoEDM.Reverse
                 }
 
             // ------------------------------------------------ 2. cilindros por crescimento
+            var cylMembers = new Dictionary<int, List<int>>();
             var owner = new int[np];
             for (int i = 0; i < np; i++) owner[i] = -1;
 
@@ -741,6 +753,51 @@ namespace AutoEDM.Reverse
                     foreach (int t in patches[m]) region[t] = id;
                 }
                 result.Surfaces.Add(final);
+                cylMembers[id] = members;
+            }
+
+            // ------------------------------------------------ 2b. disputa entre cilindros
+            // Cilindro de POUCOS retalhos devolve cada retalho que cabe num cilindro vizinho
+            // maior. Na perna do corpo 3 a alma de 45° e as últimas facetas das duas pontas R1
+            // (três facetas em ângulos vizinhos sempre cabem num círculo grande) viraram um
+            // "cilindro R10,04 de 18°" antes que o R1 crescesse até elas — as sementes vão da
+            // menor para a maior. O que sobra com menos de 3 retalhos se desfaz e volta a plano.
+            foreach (var small in new List<KeyValuePair<int, List<int>>>(cylMembers))
+            {
+                if (small.Value.Count > 3) continue;
+                foreach (int m in new List<int>(small.Value))
+                {
+                    foreach (int q in adj[m])
+                    {
+                        int big = owner[q];
+                        if (big < 0 || big == small.Key || !cylMembers.ContainsKey(big)) continue;
+                        if (cylMembers[big].Count <= small.Value.Count) continue;
+                        if (!FitsCylinder(patches[m], result.Surfaces[big], nx, ny, nz, p, o)) continue;
+                        var grown = new List<int>(cylMembers[big]) { m };
+                        RecognizedSurface refit = TryCylinder(Gather(grown, patches), nx, ny, nz, area, p, o, true);
+                        if (refit == null) continue;
+                        result.Surfaces[big] = refit;
+                        cylMembers[big] = grown;
+                        small.Value.Remove(m);
+                        owner[m] = big;
+                        foreach (int t in patches[m]) region[t] = big;
+                        break;
+                    }
+                }
+                if (small.Value.Count >= 3)
+                {
+                    RecognizedSurface refit = TryCylinder(Gather(small.Value, patches), nx, ny, nz, area, p, o, true);
+                    if (refit != null) { result.Surfaces[small.Key] = refit; continue; }
+                }
+                // Desfeito: os retalhos voltam a ser de ninguém e o passo 3 decide (plano).
+                foreach (int m in small.Value)
+                {
+                    owner[m] = -1;
+                    foreach (int t in patches[m]) region[t] = Patched;
+                }
+                small.Value.Clear();
+                result.Surfaces[small.Key] = null;
+                cylMembers.Remove(small.Key);
             }
 
             // ------------------------------------------------ 3. o que sobrou
@@ -786,14 +843,35 @@ namespace AutoEDM.Reverse
                 }
 
                 List<int> tris = Gather(chain, patches);
+                // Faixa estreita que é UM plano (a alma de 45° da perna do corpo 3: 4 triângulos de
+                // Z 4 a 40) é plano, não forma livre.
                 RecognizedSurface s = TryCylinder(tris, nx, ny, nz, area, p, o, true)
                                       ?? TryCone(tris, nx, ny, nz, area, p, o, true)
+                                      ?? TryPlaneWhole(tris, nx, ny, nz, area, p, cosPlane, o.PlaneDistanceToleranceMm)
                                       ?? MakeFreeForm(tris, area, p);
                 int sid = result.Surfaces.Count;
                 foreach (int t in tris) region[t] = sid;
                 if (s.Kind == "livre") result.FreeFormAreaMm2 += s.AreaMm2;
                 result.Surfaces.Add(s);
             }
+        }
+
+        /// <summary>Tira as superfícies desfeitas (null) da lista e refaz o mapa triângulo →
+        /// superfície. Triângulo de superfície desfeita sem dono novo vira −1.</summary>
+        private static void CompactRemoved(RecognitionResult result, int[] region)
+        {
+            if (!result.Surfaces.Contains(null)) return;
+            var map = new int[result.Surfaces.Count];
+            var kept = new List<RecognizedSurface>();
+            for (int i = 0; i < result.Surfaces.Count; i++)
+            {
+                if (result.Surfaces[i] == null) { map[i] = -1; continue; }
+                map[i] = kept.Count;
+                kept.Add(result.Surfaces[i]);
+            }
+            for (int t = 0; t < region.Length; t++) if (region[t] >= 0) region[t] = map[region[t]];
+            result.Surfaces.Clear();
+            result.Surfaces.AddRange(kept);
         }
 
         // ------------------------------------------------------------------ toro

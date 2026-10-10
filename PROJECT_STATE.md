@@ -97,7 +97,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release; depois da fusão com o grupo Molde o botão é o **id 28** e a ribbon `GuiVersion` 19); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 455 passando, 0 falhas (depois da fusão com o grupo Molde) |
+| Testes de unidade | ✅ 457 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -387,7 +387,7 @@ ERRADAS. Foi o desvio que achou a pele de 0,001 mm.
 |---|---|---|---|
 | 1 (Desenho_6) | bandeja + rampa 19,47° | 0,005 | 0,023 ✅ |
 | 2 (Desenho_5) | placa + alça (R2,5 eixo Y + toro R2,5 nas pontas R3) | 0,005 | 0,039 ✅ |
-| 3 (Desenho_4) | tampo + 4 pernas com concordância orgânica | 3,98 | 2,02 ❌ |
+| 3 (Desenho_4) | tampo + 4 pernas (cantoneira R1–R10–R1, R5 até o tampo) | 0,77 | 1,57 ⚠️ só as 8 concordâncias de canto, forma livre |
 | 4 (Desenho_3) | prismática pura | 0,005 | 0,022 ✅ |
 | 5 (Desenho_2) | placa + 24 chanfros 0,5×45° | 0,009 | 0,023 ✅ |
 | 6 (Desenho_1) | bloco + 24 chanfros + 24 colarinhos cônicos | 0,009 | 0,023 ✅ |
@@ -425,12 +425,38 @@ tinha 32 de 32 perfis visíveis. No fim da construção todo `Profile.Visible = 
 malha (raio virado retas) coincide com ela por construção. O veredito do relatório agora só diz
 "EXATO" se o desvio passa E nenhum trecho do contorno é polígono da malha sem correção.
 
+### Pernas do corpo 3 — "vários detalhes não são reconhecidos" (Carlos, 2026-10-10)
+
+O botão gerava 22.707,6 mm³ contra 24.094,4 da malha (−1.387 mm³, 5,8%), com vértices a até 4,5 mm
+em toda a altura das pernas. A perna é uma cantoneira: paredes de 2 mm, pontas R1, **face interna
+R10 tangente às duas pontas** (em S), canto externo R2,5 e um **raio R5** até o fundo do tampo. Seis
+defeitos, todos corrigidos:
+- **corte da secção passando por vértice**: a faixa 4–40 era cortada em Z 22, altura de vértices da
+  face R10; aresta com ponta exatamente no plano não contava, o segmento sumia e o laço pulava da
+  ponta R1 para a parede X = 45 — R10, a outra ponta e um trecho de parede saíam da perna inteira.
+  `PrismaticSection.OffVertex` afasta o corte 0,1 µm de qualquer vértice;
+- faixa estreita que é UM plano saía "livre" (regra das faixas de cadeia curva);
+- crescimento de retalho plano dentro de região mista com a tolerância do plano solto atravessava
+  da parede para o raio tangente — agora 1/4 do ângulo e 1/5 da distância;
+- três facetas vizinhas viravam um cilindro falso antes de o R1 crescer até elas: **disputa** —
+  cilindro de poucos retalhos devolve o que cabe no vizinho maior, ou se desfaz;
+- pedaços **coaxiais** (R0,905…R0,965 no alto da ponta R1, tesselação girada) voltam ao R1;
+- **raio de concordância por hipótese e verificação** (`FilletRecognizer`): entre plano e plano é
+  cilindro de eixo n₁ × n₂; entre plano e cilindro perpendicular, toro no eixo dele. O centro fica a
+  r das duas superfícies, então o perfil só tem r livre: busca de CONSENSO em r, refino só com os
+  pontos que concordam, cobertura mínima de 60% do arco, só o pedaço conexo, e raio redondo
+  (múltiplo de 0,05 a menos de 0,015). Resultado: 8 × R5 de 90° (2 por perna), viram protrusões.
+Resultado: **24.036,7 mm³ (−58 mm³, 0,24%)**; desvio só em Z 35–40 nas 4 pernas. O que sobra é a
+concordância de CANTO em volta da ponta R1 (R5 da parede → ponta R1 → face R10): medida em 11
+meridianos, nenhum perfil é círculo (resíduo até 0,09 mm, "raio" de 2,7 a 4,7) — forma livre,
+avisada como tal. Corpos 1, 2, 4, 5 e 6 reconferidos, continuam exatos. 457 testes.
+
 **Próxima ação:**
 1. add-in já instalado (2026-10-10); falta o servidor MCP — `powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1
    -Configuration Release -IncludeMcp` com SE e Claude Code fechados — e rodar o botão
    "Malha → sólido" nos corpos 1, 2, 4, 5 e 6;
-2. pernas do corpo 3: perfil de perna que não é reta/arco (spline?) + concordância de canto —
-   medir antes de escolher rota;
+2. concordância de canto de forma livre (perna do corpo 3, ~58 mm³ no total): não é primitiva —
+   decidir se vale aproximar por superfície ou deixar avisado;
 4. cone parcial e cilindro de eixo inclinado (hoje avisados, não corrigidos);
 5. toro (nervura com raio ao longo de arco) no reconhecedor.
 
@@ -469,6 +495,10 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-10-10 (noite)** — **Pernas do corpo 3 reconhecidas.** Corte de secção fora de vértice,
+  faixa plana, disputa entre cilindros, fragmentos coaxiais e raio de concordância por hipótese
+  (cilindro/toro tangente a duas superfícies conhecidas). Corpo 3: −1.387 → −58 mm³; sobra só a
+  concordância de canto de forma livre. 457 testes.
 - **2026-10-10 (fusão)** — **`main` desta máquina e do GitHub reunidas.** Separadas desde
   2026-09-21: aqui os 10 commits da Eng. Reversa (09–10/10), lá os 6 do grupo Molde, revisões e
   GAP (24/09–02/10). Os dois lados tinham dado o **id 26** a botões diferentes, e o `Ribbon.xml`
