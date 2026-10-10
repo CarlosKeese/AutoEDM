@@ -16,6 +16,13 @@ namespace AutoEDM.Revisions
         [JsonPropertyName("descricao")] public string Description { get; set; }
         [JsonPropertyName("acoes")] public List<string> Actions { get; set; } = new List<string>();
 
+        /// <summary>
+        /// As ações foram EDITADAS na janela? Só então a lista gravada manda; senão ela é só o
+        /// retrato do rascunho da árvore e a varredura nova vence. Arquivo antigo, sem o campo,
+        /// conta como não editado.
+        /// </summary>
+        [JsonPropertyName("acoesEditadas")] public bool ActionsEdited { get; set; }
+
         /// <summary>Rótulos das caixas marcadas (o texto, não o índice: a lista de tarefas pode crescer).</summary>
         [JsonPropertyName("marcadas")] public List<string> Checked { get; set; } = new List<string>();
 
@@ -146,10 +153,16 @@ namespace AutoEDM.Revisions
 
                 part.Include = stored.Include;
                 if (!string.IsNullOrWhiteSpace(stored.Description)) part.Description = stored.Description;
-                // A lista gravada manda até quando está VAZIA: apagar uma ação é uma decisão, e o
-                // rascunho vindo das features numeradas não pode ressuscitar o que ele tirou.
-                part.Actions.Clear();
-                if (stored.Actions != null) part.Actions.AddRange(stored.Actions);
+                // Só a lista que ele EDITOU manda — e aí manda até VAZIA: apagar uma ação é uma
+                // decisão, e o rascunho das features numeradas não pode ressuscitar o que ele tirou.
+                // Lista nunca editada fica com o rascunho da varredura NOVA: renomear a feature na
+                // árvore tem de aparecer na folha (Carlos, 2026-10-02).
+                if (stored.ActionsEdited)
+                {
+                    part.ActionsEdited = true;
+                    part.Actions.Clear();
+                    if (stored.Actions != null) part.Actions.AddRange(stored.Actions);
+                }
                 foreach (ChangeTask task in part.Tasks ?? new List<ChangeTask>())
                 {
                     task.Checked = stored.Checked != null &&
@@ -186,6 +199,7 @@ namespace AutoEDM.Revisions
                     Include = part.Include,
                     Description = part.Description,
                     Actions = part.Actions.Where(a => !string.IsNullOrWhiteSpace(a)).ToList(),
+                    ActionsEdited = part.ActionsEdited,
                     Checked = part.CheckedTasks.Select(t => t.Label).ToList(),
                     Details = (part.Tasks ?? new List<ChangeTask>())
                         .Where(t => !string.IsNullOrWhiteSpace(t.Detail))

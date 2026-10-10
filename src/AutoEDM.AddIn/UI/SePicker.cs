@@ -32,6 +32,31 @@ namespace AutoEDM.AddIn.UI
         /// <summary>O comando morreu sem escolha: Esc, ou o usuário disparou outro comando da SE.</summary>
         public event Action Cancelled;
 
+        /// <summary>Clique esquerdo que não localizou geometria nenhuma. A etapa continua ativa.</summary>
+        public event Action Missed;
+
+        /// <summary>
+        /// Clique SEM geometria também vira <see cref="Picked"/> (com <c>null</c>), em vez de
+        /// <see cref="Missed"/>. Para quem decide a face sozinho pelo ponto do cursor
+        /// (<c>ManualElectrodeForm</c>): no <c>seSmartLocate</c> a SE não entrega geometria ao
+        /// comando, mas também não acende a face errada sob o mouse — o QuickPick acendia a peça
+        /// de TRÁS antes do clique, e o Carlos lia isso como "vai pegar a de baixo" (2026-09-24).
+        /// </summary>
+        public bool AcceptEmptyClicks { get; set; }
+
+        /// <summary>Ponto do último clique (metros, espaço do documento) — lido DENTRO do
+        /// <see cref="Picked"/>, antes de sair do callback. É com ele e com a câmera de
+        /// <see cref="LastWindow"/> que se monta o raio de visão.</summary>
+        public double[] LastPointM { get; private set; }
+
+        /// <summary>Janela do último clique (tem a <c>View</c> com a câmera).</summary>
+        public object LastWindow { get; private set; }
+
+        /// <summary>Cursor na TELA no instante do clique (pixels). Com a vista, é ele que dá o
+        /// ponto sob o cursor — o (x, y, z) do evento não serve para o raio (ver
+        /// <c>VisibleFacePicker.TryScreenToModel</c>).</summary>
+        public System.Drawing.Point LastScreenPoint { get; private set; }
+
         private readonly SolidEdgeFramework.Application _app;
         private SolidEdgeFramework.Command _cmd;
         private SolidEdgeFramework.Mouse _mouse;
@@ -58,6 +83,16 @@ namespace AutoEDM.AddIn.UI
         /// o comando — o chamador então cai no plano B (ler o SelectSet).
         /// </summary>
         public bool Start(string prompt, params seLocateFilterConstants[] filters)
+            => Start(prompt, seLocateModes.seLocateQuickPick, filters);
+
+        /// <summary>
+        /// Igual, escolhendo o modo de localização. <c>seLocateQuickPick</c> serve quando é
+        /// preciso desempatar elementos encostados (aresta × face, no O'ring), mas sem a escolha
+        /// na listinha a SE devolve o 1º candidato da lista interna, que NÃO é o mais próximo da
+        /// vista — o Carlos viu faces de trás/síncronas ganharem da face visível (2026-09-24).
+        /// <c>seSmartLocate</c> é o modo da ferramenta Selecionar nativa: prioridade visual.
+        /// </summary>
+        public bool Start(string prompt, seLocateModes locateMode, params seLocateFilterConstants[] filters)
         {
             Stop();
             try
@@ -77,8 +112,7 @@ namespace AutoEDM.AddIn.UI
                 // WindowTypes=1 → janelas de MODELO (esse enum não veio no interop; 1 é o valor
                 // documentado, e o log abaixo mostra o que a SE de fato aceitou).
                 TrySet("WindowTypes", () => _mouse.WindowTypes = 1);
-                // QuickPick: aresta encostada em face pede a listinha de desempate da SE.
-                TrySet("LocateMode", () => _mouse.LocateMode = (int)seLocateModes.seLocateQuickPick);
+                TrySet("LocateMode", () => _mouse.LocateMode = (int)locateMode);
                 TrySet("ClearLocateFilter", () => _mouse.ClearLocateFilter());
                 foreach (var f in filters)
                 {
@@ -143,7 +177,21 @@ namespace AutoEDM.AddIn.UI
         {
             // Botão direito é do menu de contexto/QuickPick da SE — não é escolha nossa.
             if (button != (short)seButton.seLEFT) return;
-            if (graphic == null) { Log.Warn("[picker] clique sem geometria localizada."); return; }
+            LastPointM = new[] { x, y, z };
+            LastWindow = window;
+            LastScreenPoint = System.Windows.Forms.Cursor.Position;
+            Log.Info(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "[picker] clique em ({0:0.###}, {1:0.###}, {2:0.###}) mm, modo {3}{4}.", x * 1000, y * 1000, z * 1000,
+                Read(() => _mouse.LocateMode), graphic == null ? " — SEM geometria localizada" : ""));
+            if (graphic == null && !AcceptEmptyClicks)
+            {
+                // Clique no vazio, ou modo de localização que não entrega a geometria ao nosso
+                // comando (seSmartLocate, visto em 2026-09-24: cursor em cruz e nada selecionado).
+                // Quem está na tela precisa saber — o aviso só no log deixava o clique "morto".
+                var missed = Missed;
+                if (missed != null && Running) { try { missed(); } catch (Exception e) { Log.Error("[picker] erro no aviso de clique vazio.", e); } }
+                return;
+            }
 
             var handler = Picked;
             if (handler == null || !Running) return;

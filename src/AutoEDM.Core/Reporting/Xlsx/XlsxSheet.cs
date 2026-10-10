@@ -74,6 +74,9 @@ namespace AutoEDM.Reporting.Xlsx
         public byte[] Png { get; set; }
         public int WidthPx { get; set; }
         public int HeightPx { get; set; }
+
+        /// <summary>Deslocamento do canto a partir da borda esquerda da célula, em px (centra a imagem na coluna).</summary>
+        public int OffsetXPx { get; set; }
     }
 
     /// <summary>Intervalo mesclado (A1:D1).</summary>
@@ -137,6 +140,20 @@ namespace AutoEDM.Reporting.Xlsx
         public XlsxSheet Width(int column, double width) { ColumnWidths[column] = width; return this; }
 
         public XlsxSheet Height(int row, double points) { RowHeights[row] = points; return this; }
+
+        /// <summary>Largura padrão de coluna do Excel, em caracteres.</summary>
+        public const double DefaultColumnWidth = 8.43;
+
+        /// <summary>
+        /// Largura da coluna em PIXELS, como o Excel desenha: largura × 7 px (dígito mais largo da
+        /// Arial 10 / Calibri 11 a 96 dpi) + 5 px de margem. É o que diz onde fica o meio da coluna.
+        /// </summary>
+        public int ColumnWidthPx(int column)
+        {
+            double width;
+            if (!ColumnWidths.TryGetValue(column, out width)) width = DefaultColumnWidth;
+            return (int)Math.Truncate(width * 7 + 5);
+        }
 
         /// <summary>Referência de célula no estilo A1 (coluna 1-based → A, 27 → AA).</summary>
         public static string CellRef(int row, int column) =>

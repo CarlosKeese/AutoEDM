@@ -51,6 +51,11 @@ namespace AutoEDM.Reporting
         private static XlsxStyle Caption => new XlsxStyle { Bold = true, Fill = "D9D9D9", Border = true, Align = "center" };
         /// <summary>Uma caixa de seleção: contorno igual ao do resto da folha.</summary>
         private static XlsxStyle Task => new XlsxStyle { Border = true, VerticalAlign = "center" };
+        /// <summary>
+        /// Caixa MARCADA: grifada em amarelo e em negrito, para quem lê a folha achar de relance o
+        /// que tem de ser feito no meio das caixas vazias (Carlos, 2026-10-01).
+        /// </summary>
+        private static XlsxStyle TaskChecked => new XlsxStyle { Border = true, VerticalAlign = "center", Bold = true, Fill = "FFFF00" };
         private static XlsxStyle Plain => new XlsxStyle();
 
         /// <summary>Grava o relatório como .xlsx no caminho dado.</summary>
@@ -65,9 +70,10 @@ namespace AutoEDM.Reporting
 
             // Larguras do exemplo do Carlos: B comporta a caixa de seleção mais longa sem cortar,
             // C e D são as colunas das duas miniaturas (e, mescladas com E/F, comportam o caminho
-            // de rede), e a lista da capa não espreme a descrição.
+            // de rede), e a lista da capa não espreme a descrição. C e D têm a MESMA largura: as
+            // duas vistas saem na mesma escala, cada uma centrada na sua coluna (2026-10-01).
             sheet.Width(1, 2.4).Width(ColLabel, 43.5).Width(ColImageLeft, 46.5)
-                 .Width(ColImageRight, 37.5).Width(5, 9).Width(ColValueEnd, 9).Width(7, 2.4)
+                 .Width(ColImageRight, 46.5).Width(5, 9).Width(ColValueEnd, 9).Width(7, 2.4)
                  .Width(8, 2.4).Width(ColSummaryFile, 29.5).Width(ColSummaryDesc, 55.5);
 
             int row = Cover(sheet, report);
@@ -176,7 +182,7 @@ namespace AutoEDM.Reporting
                 row++;
                 foreach (ChangeTask t in tasks)
                 {
-                    sheet.Set(row, ColLabel, TaskLine(t), Task);
+                    sheet.Set(row, ColLabel, ChangeReportFormatter.TaskLine(t), t.Checked ? TaskChecked : Task);
                     row++;
                 }
             }
@@ -200,19 +206,40 @@ namespace AutoEDM.Reporting
 
             int[] columns = { ColImageLeft, ColImageRight };
             string[] captions = { "VISTA Z+ (de cima)", "VISTA Z− (de baixo)" };
+            // As duas vistas na MESMA escala: o tamanho sai da coluna mais estreita das duas.
+            int fitPx = columns.Min(c => sheet.ColumnWidthPx(c));
             for (int i = 0; i < images.Count && i < columns.Length; i++)
             {
                 sheet.Set(row, columns[i], captions[i], Caption);
                 int w, h;
                 if (!XlsxWriter.TryReadPngSize(images[i], out w, out h)) { w = 300; h = 300; }
+                Fit(fitPx, ref w, ref h);
+                int offset = Math.Max(0, (sheet.ColumnWidthPx(columns[i]) - w) / 2);
                 // +1 na linha: a legenda fica em cima, a imagem começa na linha seguinte.
-                sheet.Images.Add(new XlsxImage { Row = row + 1, Column = columns[i], Png = images[i], WidthPx = w, HeightPx = h });
+                sheet.Images.Add(new XlsxImage
+                {
+                    Row = row + 1, Column = columns[i], Png = images[i], WidthPx = w, HeightPx = h, OffsetXPx = offset,
+                });
             }
         }
 
-        /// <summary>"☑ SOLDA TIG / LASER", com o complemento digitado quando tem.</summary>
-        private static string TaskLine(ChangeTask t) =>
-            (t.Checked ? ChangeReportFormatter.Checked : ChangeReportFormatter.Unchecked) + " " + t.Label +
-            (string.IsNullOrWhiteSpace(t.Detail) ? "" : " " + t.Detail);
+        /// <summary>Folga de cada lado da imagem dentro da coluna, em px — a imagem não encosta na grade.</summary>
+        private const int ImagePaddingPx = 6;
+
+        /// <summary>
+        /// Encaixa a imagem na coluna: reduz (mantendo a proporção) se for mais larga que a coluna
+        /// menos a folga — quem chama a CENTRA com o que sobrar (Carlos, 2026-10-01: a imagem
+        /// colada na borda esquerda e vazando para a coluna vizinha desalinhava o bloco).
+        /// Nunca amplia: uma miniatura pequena esticada fica borrada.
+        /// </summary>
+        public static void Fit(int columnPx, ref int widthPx, ref int heightPx)
+        {
+            int room = Math.Max(1, columnPx - 2 * ImagePaddingPx);
+            if (widthPx > room)
+            {
+                heightPx = Math.Max(1, (int)Math.Round((double)heightPx * room / widthPx));
+                widthPx = room;
+            }
+        }
     }
 }

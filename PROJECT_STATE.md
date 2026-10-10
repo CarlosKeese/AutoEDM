@@ -82,7 +82,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Spec-sheet de eletrodos | ✅ construído |
 | Criar eletrodos c/ blank | ✅ validado no SE |
 | Criar Base | ✅ validado no SE |
-| Criar eletrodo (manual) | ✅ validado no SE |
+| Criar eletrodo (manual) | ✅ validado no SE; janela de seleção por clique **validada (2026-09-24)** — face à vista pelo raio do cursor, centro certo com faces de vários postiços, 11–20 ms por clique |
 | Unir superfícies | ✅ validado no SE |
 | Guarda de ambiente por comando | ✅ construído |
 | Configuração externa (`config.json`) | ✅ construído, coberto por teste |
@@ -94,16 +94,19 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Ponte MCP (Claude Code → Solid Edge) | ✅ **validada no SE (2026-09-18)** — 1º run com o CAD aberto: `se_status`, `se_planos`, `se_arvore`, `se_log` e `se_modelar` sobre COM real |
 | Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
 | Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | ✅ **rodado nas 6 malhas reais (2026-10-09)** pelo Core, conferido contra a Eng. Reversa nativa (Ø7,00 e Ø14,00 iguais); plano + cilindro, medidas no centésimo; **2026-10-10: + cone, + toro/esfera, + identificação** (furos, raios, chanfros, faces inclinadas), cilindro falso de 3 pontos e fragmento de concordância recusados — ✅ instalado no add-in em 2026-10-10 |
-| **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release, sem mudança de ribbon — GuiVersion continua 17); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
+| **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release; depois da fusão com o grupo Molde o botão é o **id 28** e a ribbon `GuiVersion` 19); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 409 passando, 0 falhas |
+| Testes de unidade | ✅ 455 passando, 0 falhas (depois da fusão com o grupo Molde) |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só em edição em contexto (in-place) |
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
 | Orquestrador "gerar todos os eletrodos" | 📋 planejado |
+| Nova peça (molde) | 🚧 construída (2026-09-24), coberta por teste, **aguardando validação no SE** |
+| Refrigeração (molde) | 🚧 construída (2026-09-24), plano coberto por teste, **aguardando o 1º run no SE** |
+| Grupo **Molde** (Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
 
 ## Regra de ouro
 
@@ -466,6 +469,14 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-10-10 (fusão)** — **`main` desta máquina e do GitHub reunidas.** Separadas desde
+  2026-09-21: aqui os 10 commits da Eng. Reversa (09–10/10), lá os 6 do grupo Molde, revisões e
+  GAP (24/09–02/10). Os dois lados tinham dado o **id 26** a botões diferentes, e o `Ribbon.xml`
+  fundia SEM conflito com dois botões 26: "Malha → sólido" passou a **id 28**, `GuiVersion` 19.
+  A fusão expôs um defeito da Refrigeração nesta máquina: a SE 2026 está em PORTUGUÊS, a base de
+  furos tem a aba "Rosqueado" (não "Threaded") e sub-tipos "Rosca de Tubo Reta/Cônica" — o leitor
+  achava zero roscas de tubo. `HoleDatabase` agora lê as duas línguas (o texto do sub-tipo segue
+  cru, é com ele que o `AddEx` casa — **não conferido ao vivo** na SE em português). 455 testes.
 - **2026-10-10 (tarde)** — **Alça do corpo 2 exata.** Raio que saía em retas: semente de
   cilindro por eixo, crescimento com reajuste, pontas de arco nos eixos, TORO/ESFERA reconhecidos
   (Plücker + Nelder–Mead nos vértices) e corrigidos por revolução parcial; amostragem da região
@@ -483,7 +494,34 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
   superfícies + auto-trim provada para casca convexa. Rota prismática 2,5D construída: malhas 4,
   5 e 6 viram sólido com volume exato. Botão "Malha → sólido" e `se_malha_para_solido`. 398
   testes. Commits `4f0c3ea` → `77e34fb`.
-
+- **2026-09-24** — **Refrigeração (Fase 2 do plano de molde).** Botão id 27 (peça ordenada) +
+  MCP `se_refrigeracao_plano` (só leitura) / `se_refrigeracao`. Linhas retas do esboço 3D da
+  peça → um furo por passada (colineares juntas), plano normal à aresta na ponta de entrada,
+  sobrefuro Ø/2 e ponta 118° nos cruzamentos; engate/tampão = furo roscado coaxial com rosca
+  de tubo lida da base de furos da SE (strings exatas — a NPT tem espaços). 415 testes.
+- **2026-09-24** — **Nova peça (molde), Fase 1 do plano.** Botão id 26 no grupo Molde. A
+  janela de seleção do eletrodo virou genérica (`FacePickForm` + `FacePickSpec`) e serve os
+  dois botões. Peça vazia `{molde}.{NNN}.par` no próximo número da série (fixa .100, móvel
+  .200, extração .300), orientação da montagem, origem no centro das faces e no ponto mais
+  baixo/alto do eixo de altura escolhido por projeto. MCP `se_nova_peca`. 406 testes, 0 falhas.
+- **2026-09-24** — **Grupo "Molde" na ribbon e eletrodo manual por clique.** O
+  Alojamento de O'ring saiu do grupo "Peça" para o novo grupo "Molde". O "Criar eletrodo
+  (manual)" deixou de exigir faces pré-selecionadas: abre uma janela modeless que assume o
+  mouse da SE com filtro de face (`ManualElectrodeForm` + `SePicker`), soma/retira faces
+  clique a clique e cria um eletrodo atrás do outro. Core: `CreateElectrodeFromFaces` é o
+  miolo, `TryUnwrapFace` desembrulha o item. Os seis botões de molde pedidos (Nova peça,
+  Refrigeração, Canais, Pontos de injeção, Extratores, Gavetas) foram **planejados, não
+  implementados**, em [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md), com a sequência de
+  desenvolvimento. No mesmo dia, a janela foi acertada ao vivo em cinco rodadas: filtro
+  com todos os tipos de face; a localização da SE dentro do comando não respeita
+  profundidade (QuickPick/Simples pegavam a peça de trás, Simples nem entrega o clique),
+  então a face sai de um **raio de visão nosso** (`VisibleFacePicker`: câmera da janela +
+  pixel do cursor via `DrawHwnd`/`TransformDCToModel` — o (x, y, z) do `MouseClick` NÃO
+  está sob o cursor — e primeiro impacto na malha das faces); SmartLocate com clique sem
+  geometria aceito para não acender a peça errada sob o mouse; caixa de faces de postiços
+  diferentes levada ao espaço da ocorrência de referência (`OccurrenceTransform.MapBoxMm`;
+  o eletrodo tinha saído 12 mm deslocado); leitura da cena guardada entre cliques
+  (~0,35 s → 11–20 ms). 393 testes, 0 falhas.
 - **2026-09-21** — **Alojamento de O'ring associativo, validado no SE.** Pedidos do
   Carlos: janela no lado direito da tela; feature com o nome do anel
   (`O'ring 2-214 - d2 3,53 x d1 24,99 - 1`, número por anel); canal pintado com o
@@ -596,6 +634,10 @@ As 7 falhas registradas em `701725f` (testes escritos contra uma especificação
 alojamento foi validado no SE em 2026-09-21. Vale a tabela de catálogo.
 
 ## Próxima ação
+
+**Validar no SE a "Nova peça"** (grupo Molde): nome no próximo número da série, pasta, origem
+no ponto certo do eixo de altura e orientação da montagem. Depois, a Fase 2 do
+[plano de molde](docs/PLANO_MOLDE.md) (Refrigeração).
 
 **Nível 2 da análise de usinabilidade** — a varredura do vazio da cavidade
 (malha por `Body.GetFacetData` → rasterização por fatia → transformada de

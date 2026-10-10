@@ -8,6 +8,7 @@ using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Mcp;
 using AutoEDM.Model;
+using AutoEDM.Mold;
 using AutoEDM.Reporting;
 using AutoEDM.Revisions;
 using AutoEDM.Reverse;
@@ -48,7 +49,9 @@ namespace AutoEDM.AddIn
         private const int CmdMcpSomenteLeitura = 23; // MCP: volta a ponte para somente-leitura
         private const int CmdSondaMalha = 24;       // ENG. REVERSA: sonda de diagnóstico sobre a malha (SÓ LEITURA)
         private const int CmdListaModificacoes = 25; // Folha de revisões: peças com grupo "Rev.N" na árvore ordenada
-        private const int CmdMalhaParaSolido = 26;  // ENG. REVERSA: malha → sólido pela rota prismática (cria PEÇA NOVA)
+        private const int CmdNovaPeca = 26;         // MOLDE: peça vazia codificada (.100/.200/.300) na origem das faces escolhidas
+        private const int CmdRefrigeracao = 27;     // MOLDE: canais de refrigeração a partir das linhas do esboço 3D (PEÇA ordenada)
+        private const int CmdMalhaParaSolido = 28;  // ENG. REVERSA: malha → sólido pela rota prismática (cria PEÇA NOVA) — era 26 até a fusão com o grupo Molde
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -70,6 +73,8 @@ namespace AutoEDM.AddIn
             {
                 case CmdCriarEletrodos: CriarEletrodos(); break;
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
+                case CmdNovaPeca: NovaPeca(); break;
+                case CmdRefrigeracao: Refrigeracao(); break;
                 case CmdCoordenadas: AbrirCoordenadas(); break;
                 case CmdListaCorte: AbrirListaCorte(); break;
                 case CmdListaModificacoes: AbrirListaModificacoes(); break;
@@ -181,22 +186,132 @@ namespace AutoEDM.AddIn
 
         /// <summary>
         /// Versão MANUAL do "Criar eletrodos" (Carlos): em vez da detecção automática por
-        /// cor/nível de Z, o usuário SELECIONA à mão a(s) FACE(s) do fundo do bolsão (no SE,
-        /// clique na ocorrência e clique DE NOVO no mesmo ponto — ou segure Alt — para
-        /// selecionar a FACE em vez da peça inteira; não existe um "modo" de seleção
-        /// separado a ligar, é o comportamento nativo de seleção em 2 cliques do SE) e
-        /// clica este botão UMA vez por eletrodo. Cria e posiciona UMA peça VAZIA (sem
-        /// bloco/base ainda) no centro XY + Z mais fundo das faces escolhidas — mesmo
-        /// pipeline do "Criar eletrodos" automático. ESCREVE na montagem (não salva).
+        /// cor/nível de Z, o usuário escolhe à mão a(s) FACE(s) do fundo do bolsão. Desde
+        /// 2026-09-24 o botão não exige mais a pré-seleção: abre uma janela MODELESS que assume
+        /// o mouse da SE e recebe as faces clique a clique (<see cref="ManualElectrodeForm"/>);
+        /// o que já estava selecionado entra na lista. Cada "Criar eletrodo" cria e posiciona
+        /// UMA peça VAZIA no centro XY + Z mais fundo das faces — mesmo pipeline do automático
+        /// — e a janela segue aberta para o próximo. ESCREVE na montagem (não salva).
         /// </summary>
         private void CriarEletrodoManual()
         {
-            Run(CmdCriarEletrodoManual, (connector, doc, p) =>
+            OpenFacePick(CmdCriarEletrodoManual, "CRIAR ELETRODO (MANUAL)", appObj => new FacePickSpec
             {
-                ManualElectrodeResult res = NewBuilder(connector).CreateElectrodeFromSelection(doc, p);
-                MessageBox.Show(res.Message, "AutoEDM — Criar eletrodo (manual)", MessageBoxButtons.OK,
-                    res.Created ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                Title = "AutoEDM — Criar eletrodo (manual)",
+                Instructions = "Clique direto no modelo, na(s) FACE(s) do fundo do bolsão a erodir — uma por clique. " +
+                               "Clicar de novo numa face já escolhida a retira. O eletrodo nasce no centro XY e no Z " +
+                               "mais fundo das faces escolhidas.",
+                CreateCaption = "Criar eletrodo",
+                LogTag = "Criar eletrodo manual",
+                NextHint = "Pronto para o próximo: clique nas faces dele.",
+                MultiOwnerNote = "o centro sai de todas, a orientação da 1ª.",
+                // `object`, não `dynamic`: com argumento dynamic a chamada inteira vira dinâmica
+                // (a regra do "Duplicar eletrodo"), e aqui o tipo de retorno importa.
+                Create = (doc, faces) =>
+                {
+                    ManualElectrodeResult r = NewBuilder(SolidEdgeConnector.Attach(appObj)).CreateElectrodeFromFaces(doc, LoadParams(), faces);
+                    return new FacePickResult { Created = r.Created, Message = r.Message };
+                },
             });
+        }
+
+        /// <summary>
+        /// Botão "Nova peça" do grupo Molde (Carlos, 2026-09-24): mesma janela de seleção do eletrodo
+        /// manual, com o painel da peça do molde — parte (série .100/.200/.300 do código), eixo da
+        /// altura e origem no ponto mais baixo/alto. Cria a peça vazia com o próximo número livre e a
+        /// posiciona com a ORIENTAÇÃO DA MONTAGEM (<see cref="NewPartBuilder"/>). Não salva a montagem.
+        /// </summary>
+        private void NovaPeca()
+        {
+            OpenFacePick(CmdNovaPeca, "NOVA PEÇA (MOLDE)", appObj =>
+            {
+                dynamic app = appObj;
+                string asmPath = null;
+                try { asmPath = (string)app.ActiveDocument.FullName; } catch { }
+                var panel = new NewPartOptionsPanel(() => { try { return (object)app.ActiveDocument; } catch { return null; } }, asmPath);
+                return new FacePickSpec
+                {
+                    Title = "AutoEDM — Nova peça (molde)",
+                    Instructions = "Clique direto no modelo nas FACES de referência da peça nova — uma por clique; clicar de " +
+                                   "novo tira. A origem fica no centro delas e, no eixo da altura, no ponto mais baixo ou " +
+                                   "mais alto; os eixos da peça são os da montagem.",
+                    CreateCaption = "Criar peça",
+                    LogTag = "Nova peça",
+                    NextHint = "Pronto para a próxima: clique nas faces dela.",
+                    MultiOwnerNote = "a origem sai do conjunto delas.",
+                    Options = panel,
+                    Create = (doc, faces) =>
+                    {
+                        NewPartResult r = NewPartBuilder.Create(appObj, doc, faces, panel.Options);
+                        panel.RefreshName();          // o número andou
+                        return new FacePickResult { Created = r.Created, Message = r.Message };
+                    },
+                };
+            });
+        }
+
+        /// <summary>
+        /// Botão "Refrigeração" do grupo Molde (Carlos, 2026-09-24): na PEÇA ordenada, as linhas do
+        /// esboço 3D viram furos de canal (ponta de broca e sobrefuro nos cruzamentos) e as pontas
+        /// livres recebem cega/passante/engate/tampão. Janela modeless única, como o O'ring.
+        /// </summary>
+        private static CoolingChannelForm _coolingForm;
+
+        private void Refrigeracao()
+        {
+            if (!AllowedHere(CmdRefrigeracao, explain: true)) return;
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
+            {
+                if (_coolingForm != null && !_coolingForm.IsDisposed) { _coolingForm.BringToFront(); _coolingForm.Activate(); return; }
+                if (_pickForm != null && !_pickForm.IsDisposed) _pickForm.Close();   // uma janela com o mouse da SE por vez
+                Log.Info("===== REFRIGERAÇÃO — janela aberta =====");
+                _coolingForm = new CoolingChannelForm((object)app);
+                _coolingForm.FormClosed += (s, e) => { _coolingForm = null; Log.Info("===== FIM (REFRIGERAÇÃO) ====="); };
+                _coolingForm.Show();
+            }
+            catch (Exception ex) { Fail("abrir a refrigeração", ex); }
+        }
+
+        /// <summary>
+        /// A janela de seleção de faces aberta agora (só UMA por vez: cada uma assume o mouse da SE,
+        /// e duas brigariam pelo clique) e o comando dono dela.
+        /// </summary>
+        private static FacePickForm _pickForm;
+        private static int _pickFormCommand;
+
+        private void OpenFacePick(int commandId, string logTitle, Func<object, FacePickSpec> buildSpec)
+        {
+            if (!AllowedHere(commandId, explain: true)) return;
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
+            {
+                if (_pickForm != null && !_pickForm.IsDisposed)
+                {
+                    if (_pickFormCommand == commandId)
+                    {
+                        _pickForm.BringToFront();
+                        _pickForm.Activate();
+                        return;
+                    }
+                    _pickForm.Close();            // a outra janela devolve o mouse antes desta assumir
+                }
+
+                Log.Info($"===== {logTitle} — janela aberta =====");
+                object appObj = app;
+                var form = new FacePickForm(appObj, buildSpec(appObj));
+                form.FormClosed += (s, e) =>
+                {
+                    if (ReferenceEquals(_pickForm, form)) _pickForm = null;
+                    Log.Info($"===== FIM ({logTitle}) =====");
+                };
+                _pickForm = form;
+                _pickFormCommand = commandId;
+                form.Show();
+            }
+            catch (Exception ex) { Fail("abrir a janela de " + logTitle.ToLowerInvariant(), ex); }
         }
 
         /// <summary>
@@ -1096,6 +1211,7 @@ namespace AutoEDM.AddIn
                 { CmdAnalisarZ,           new CommandSpec("ANALISAR ELETRODOS (Z)",               DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCriarEletrodos,      new CommandSpec("CRIAR ELETRODOS",                      DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCriarEletrodoManual, new CommandSpec("CRIAR ELETRODO (MANUAL, da seleção)",  DocKind.Assembly, ModelingEnv.Any) },
+                { CmdNovaPeca,            new CommandSpec("NOVA PEÇA (MOLDE)",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdDuplicarEletrodo,    new CommandSpec("DUPLICAR ELETRODO",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCoordenadas,         new CommandSpec("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdListaCorte,          new CommandSpec("LISTA DE CORTE (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
@@ -1114,6 +1230,9 @@ namespace AutoEDM.AddIn
                 // Esboço + corte revolvido: em ORDENADO o esboço é filho legítimo do recurso e
                 // some junto quando o usuário apaga o canal. Em síncrono viraria órfão.
                 { CmdAlojamentoORing,     new CommandSpec("ALOJAMENTO DE O'RING", DocKind.Part, ModelingEnv.Ordered) },
+                // Furos ordenados, cada um com esboço num plano normal à linha — o esboço é filho do
+                // furo (mesma regra do O'ring); em síncrono ficaria órfão.
+                { CmdRefrigeracao,        new CommandSpec("REFRIGERAÇÃO",         DocKind.Part, ModelingEnv.Ordered) },
                 // WEDM: só LÊ as curvas e grava .igs. Síncrono porque é onde o Carlos prepara os perfis.
                 { CmdExportarPerfisWedm,  new CommandSpec("EXPORTAR PERFIS WEDM (IGES por Z)", DocKind.Part, ModelingEnv.Synchronous) },
                 // Cria curva derivada a partir das arestas das superfícies: mesmo ambiente do

@@ -19,6 +19,7 @@ namespace AutoEDM.Electrode
 
     /// <summary>
     /// Offset por faixa de Ra, conforme a tabela do usuário:
+    ///   Ra 0,1 µm     -> 0,01 mm (Carlos, 2026-09-28: 0,05 deixava o polimento lento)
     ///   Ra 0,2–0,8 µm -> 0,05 mm
     ///   Ra 1,6 µm     -> 0,10 mm
     ///   Ra 3,2 µm     -> 0,20 mm
@@ -52,6 +53,7 @@ namespace AutoEDM.Electrode
 
         private static IEnumerable<(double, double)> DefaultBands() => new[]
         {
+            (0.1, 0.01),
             (0.8, 0.05),
             (1.6, 0.10),
             (3.2, 0.20),

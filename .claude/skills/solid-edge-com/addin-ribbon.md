@@ -147,5 +147,27 @@ _mouse.AddToLocateFilter((int)seLocateFilterConstants.seLocateEdge);   // =31; f
   (`Control.BeginInvoke`), then stop.
 - `seLocateFilterConstants` (0–76), `seCmdFlag`, `seLocateModes`, `seButton` all live in the
   `SolidEdgeConstants` namespace of `Interop.SolidEdge` — reflect the DLL for the values.
+- **Locate modes inside an add-in command (live logs, SE assembly, 2026-09-24):** only
+  `seLocateQuickPick`(2) works. `seSmartLocate`(0) fires `MouseClick` with `graphic == null`
+  (crosshair cursor, nothing picked). `seLocateSimple`(1) fires **no `MouseClick` at all** — the
+  click falls through to SE's native Select (which grabs the whole occurrence), so it *looks*
+  like a picker that prefers some part. QuickPick delivers a face but is **not depth-aware**:
+  a whole round of picks all came from the same occurrence, and its hover pre-highlight lights
+  the part BEHIND, which misleads the user even when your own pick is right. When you decide
+  the face yourself (below), use SmartLocate and accept the empty click: events arrive, nothing
+  misleading lights up. `seLocateFace` alone located only planar
+  faces there — add the per-surface filters too (Plane 20, Cone 21, Sphere 22, Torus 23,
+  ProjectedFace 24, RevolvedFace 25, BspSurfaceFace 26, RuledFace 28). For "the face the user
+  sees", decide depth yourself: view ray from `Window.View.GetCamera` (11 by-ref args; eye,
+  target, up, perspective, scale — order confirmed live) → per occurrence, inverse pose →
+  `Body.FacesByRay` → exact hit on `Face.GetFacetData` → nearest wins
+  (`AutoEDM.Selection.VisibleFacePicker`).
+- **The (x, y, z) of `MouseClick` is NOT a point under the cursor** — a ray through it hit the
+  plate behind (live, MD-15335). The point under the cursor comes from the PIXEL:
+  `Cursor.Position` at click time → `ScreenToClient(Window.DrawHwnd)` (the DRAWING window, not
+  `hWnd`) → `View.TransformDCToModel(x, y, [out] X, Y, Z)` (metres). Round trip
+  `TransformModelToDC`/`TransformDCToModel` on a point of a selected face closed, and the ray
+  through it picked exactly that face. External probes need `OleMessageFilter.Register()` or SE
+  rejects calls while busy and occurrence reads come back missing.
 - Highlight what was picked with `Document.HighlightSets.Add()` → `AddItem` / `Color` (COLORREF
   `r | g<<8 | b<<16`) / `Draw`, and drive the prompt through `Application.StatusBar`.

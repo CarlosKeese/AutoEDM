@@ -1,6 +1,6 @@
 ﻿# AutoEDM — Manual de funcionamento
 
-> **O que é:** o manual único do projeto — a camada COM, as duas APIs (Core e MCP), a skill `solid-edge-com` e as 25 funcionalidades entregues, com as regras de negócio e seus valores exatos.
+> **O que é:** o manual único do projeto — a camada COM, as duas APIs (Core e MCP), a skill `solid-edge-com` e as 27 funcionalidades entregues, com as regras de negócio e seus valores exatos.
 > **Para quem:** quem vai manter ou estender o AutoEDM (pessoa ou agente), e quem precisa saber *por que* um número é aquele antes de mudá-lo.
 > **Como ler:** cada afirmação traz `arquivo:linha`. O código é a fonte da verdade; quando este manual divergir dele, o código vence e o manual é que está errado.
 > **Levantado em:** 2026-09-21, contra o commit `20c58ee`. Conferido nesta data: 25 botões na ribbon, 12 ferramentas MCP (3 de escrita), 369 casos de teste, `GuiVersion = 16`.
@@ -15,7 +15,7 @@
 | [1](#parte-1--com-a-camada-solid-edge) | **COM** — conexão, registro, ciclo de vida, geometria, escopos, armadilhas |
 | [2](#parte-2--api-o-core-e-a-ponte-mcp) | **API** — o Core em C# e as 12 ferramentas MCP |
 | [3](#parte-3--a-skill-solid-edge-com) | **SKILL** — `solid-edge-com`: o que impõe e quando carrega o quê |
-| [4](#parte-4--funcionalidades) | **Funcionalidades** — os 25 comandos e suas regras de negócio |
+| [4](#parte-4--funcionalidades) | **Funcionalidades** — os 27 comandos e suas regras de negócio |
 | [5](#parte-5--operação) | Operação — build, registro, deploy, o ciclo com a SE aberta |
 | [A](#apêndice-a--estado-da-documentação-2026-09-21) | Apêndice — estado da documentação |
 
@@ -343,7 +343,7 @@ SeToolRunner.Execute                  thread STA da Solid Edge, COM ao vivo
 
 **Nenhuma ferramenta MCP alcança essa chave** — ela é só da ribbon. Um teste garante que *toda* ferramenta de escrita seja recusada em modo leitura, e que a recusa diga o que fazer.
 
-## 2.3 Referência das 28 ferramentas
+## 2.3 Referência das 32 ferramentas
 
 14 de leitura, 14 de escrita (a seção 2.3.1 traz as 15 que espelham os botões da ribbon, mais a troca de ambiente). Fonte: `Mcp/ToolCatalog.cs` (schema) e `Mcp/SeToolRunner.cs` (implementação e guardas).
 
@@ -479,7 +479,7 @@ Na prática: quando uma sessão descobre algo no CAD, o achado entra em `api-sig
 
 # Parte 4 — Funcionalidades
 
-## 4.1 Os 25 comandos
+## 4.1 Os 27 comandos
 
 A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `Specs` (`ElectrodeRibbon.cs:982-1032`) define o pré-requisito. **No ambiente errado o botão fica cinza** (relógio de 750 ms) e, se clicado, explica.
 
@@ -493,14 +493,16 @@ A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `S
 | 16 | Lista de corte | Relatórios | montagem | qualquer |
 | 25 | Lista de modificações | Relatórios | montagem | qualquer |
 | 4 | Ficha (spec-sheet) | Relatórios | montagem | qualquer |
-| 5 | Criar Base | Peça | peça | **SÍNCRONO** |
-| 7 | Unir superfícies | Peça | peça | **SÍNCRONO** |
-| 11 | Aplicar GAP | Peça | peça | **ORDENADO** |
-| 14 | Alojamento de anel | Peça | peça | **ORDENADO** |
+| 5 | Criar Base | Eletrodos | peça | **SÍNCRONO** |
+| 7 | Unir superfícies | Eletrodos | peça | **SÍNCRONO** |
+| 11 | Aplicar GAP | Eletrodos | peça | **ORDENADO** |
+| 26 | Nova peça | Molde | montagem | qualquer |
+| 27 | Refrigeração | Molde | peça | **ORDENADO** |
+| 14 | Alojamento de anel | Molde | peça | **ORDENADO** |
 | 18 | Curvas das superfícies | WEDM | peça | **SÍNCRONO** |
 | 17 | Exportar perfis (IGES) | WEDM | peça | **SÍNCRONO** |
 | 24 | Sonda de malha | Eng. Reversa | peça | qualquer |
-| 26 | Malha → sólido | Eng. Reversa | peça (com corpo de malha) | qualquer — cria peça nova **ordenada** |
+| 28 | Malha → sólido | Eng. Reversa | peça (com corpo de malha) | qualquer — cria peça nova **ordenada** |
 | 19 / 21 / 22 / 23 / 20 | Ligar ponte / Status / Liberar escrita / Somente leitura / Desligar | MCP | — | — |
 | 6 | Inspecionar seleção | Diagnóstico | qualquer | qualquer |
 | 8 / 9 | Iniciar leitura de ação manual / Gravar log da leitura | Diagnóstico | qualquer | qualquer |
@@ -538,7 +540,9 @@ Cria uma peça `.par` por eletrodo proposto e a posiciona na montagem. Exige **c
 | Margem do blank por lado | **0,0 mm** — o blank não leva sobremetal | `ElectrodeParams.cs:73` |
 
 ### Criar eletrodo (manual) — id 10
-Mesmo pipeline, mas o candidato vem do bounding box das **faces selecionadas à mão**. Tenta identificar o Ra pela cor e grava na peça.
+Mesmo pipeline, mas o candidato vem do bounding box das **faces escolhidas à mão**. Tenta identificar o Ra pela cor e grava na peça.
+
+Desde 2026-09-24 o botão **não exige pré-seleção**: abre a janela modeless `ManualElectrodeForm`, que assume o mouse da SE (`SePicker`, filtro de FACE). Cada clique no modelo soma uma face; clicar de novo na mesma face a retira (identidade = ocorrência + `Face.ID`). "Criar eletrodo" chama `ElectrodeBuilder.CreateElectrodeFromFaces`, limpa a lista e recomeça a coleta para o próximo eletrodo. O que já estava selecionado ao abrir entra na lista, e "Usar seleção" é o modo reserva quando a SE não deixa assumir o mouse. **A face escolhida é a primeira À VISTA, decidida pelo AutoEDM**: a localização da SE dentro do comando não respeita profundidade (peça de trás ganhava) e o SmartLocate não entrega geometria. Por isso cada clique monta o raio de visão (câmera da janela + ponto sob o cursor, convertido do PIXEL pela vista — `DrawHwnd` + `View.TransformDCToModel`; o (x, y, z) do evento `MouseClick` não está sob o cursor) e `VisibleFacePicker` acha o primeiro impacto entre as ocorrências de peça visíveis do 1º nível (`Body.FacesByRay` + malha da face); a face que a SE localizou só vale se o raio falhar (submontagem, por exemplo). A ferramenta MCP `se_criar_eletrodo_manual` continua lendo o `SelectSet` (`CreateElectrodeFromSelection`, casca sobre o mesmo método).
 
 O Ra é gravado como **`Variable.Formula` (string), nunca `Variable.Value`** — `Value` é escalado pela unidade do documento. Nome da variável: **`AutoEDM_Ra`**.
 
@@ -679,6 +683,45 @@ Lê as curvas de construção **visíveis** (o sólido é ignorado), agrupa por 
 
 Cadeia validada ponta a ponta até o Pitágoras em 2026-09-16.
 
+## 4.5b Nova peça (molde) — id 26 (montagem)
+
+Cria uma peça **vazia** do molde, codificada e posicionada a partir de faces clicadas na montagem. Usa a mesma janela de seleção do "Criar eletrodo (manual)" (`FacePickForm`: face à vista pelo raio do cursor, lista, realce), com o painel `NewPartOptionsPanel`. Core: `AutoEDM.Mold` (`MoldPartNaming`, `NewPartPlacement`, `MoldProjectSettings`, `NewPartBuilder`). MCP: `se_nova_peca`.
+
+| Regra | Valor | Onde |
+|---|---|---|
+| Nome | `{código do molde}.{NNN}.par` | `MoldPartNaming.FileName` |
+| Séries | fixa **100–199**, móvel **200–299**, extração **300–399** | `MoldSection` |
+| Próximo número | maior número **em uso na série + 1**; série vazia começa no próprio 100/200/300. Contam os arquivos da pasta da montagem (qualquer extensão — um `.dft` ocupa o número) **e** as ocorrências da montagem | `MoldPartNaming.NextNumber`, `NewPartBuilder.PlanName` |
+| Código do molde | o prefixo mais frequente entre os arquivos codificados; sem nenhum, o `MD-XXXXX` do nome da pasta | `MoldPartNaming.GuessPrefix` |
+| Pasta | a da montagem (recusa se a montagem não estiver salva) | `NewPartBuilder.PlanName` |
+| Orientação | **a da montagem** (matriz identidade) — diferente do eletrodo, que herda a da cavidade | `NewPartBuilder.Create` |
+| Origem | caixa das faces **nas coordenadas da montagem** (cada face pela pose da sua ocorrência); centro nos dois eixos de planta, ponto mais **baixo** ou mais **alto** no eixo de altura | `NewPartPlacement.OriginMm` |
+| Eixo de altura | X, Y ou Z da montagem, escolhido por projeto | `MoldProjectSettings` |
+| Preferências | eixo, lado da origem e última parte, por montagem, em `%LOCALAPPDATA%\AutoEDM\mold-projects.json` | `MoldProjectSettings` |
+
+O nome é recalculado no momento de criar (outra peça pode ter nascido desde a prévia) e a criação recusa se o arquivo já existir. A montagem não é salva.
+
+## 4.5c Refrigeração — id 27 (peça, **ordenada**)
+
+As linhas retas de um **esboço 3D da placa** viram canais. Janela modeless `CoolingChannelForm`; Core `AutoEDM.Mold.Cooling` (`CoolingPlanner` puro, `CoolingLineReader`, `HoleDatabase`, `CoolingChannelModeler`, `CoolingService`). MCP: `se_refrigeracao_plano` (só leitura) e `se_refrigeracao`.
+
+| Regra | Valor | Onde |
+|---|---|---|
+| Linhas | as arestas retas de `Constructions.Sketch3DFeatures[i].Edges[igQueryAll]`, pontas por `Edge.GetEndPoints`; clicadas (filtro linha + aresta) ou todas | `CoolingLineReader` |
+| Ø do canal | 6 / 8 / 10 / 12 mm | `CoolingService.Diameters` |
+| Passada de broca | linhas **colineares** encadeadas viram **um** furo | `CoolingPlanner` |
+| Automático | a janela abre com **todas** as linhas dos esboços 3D (ou a seleção, se houver linha selecionada) e o plano pronto | `CoolingChannelForm.OnShown` |
+| Boca na face | ponta que chega na face (medida na peça: raio de saída do material ≤ 0,5 mm); chave `L3:I` (início) / `L3:F` (fim) | `CoolingPlanner`, `CoolingExitProbe` |
+| Prolongamento | passada cujas duas pontas ficam **dentro** da placa (cantos do caminho): prolongada até a face pela ponta de saída mais curta, preferindo a face **externa** (na caixa do corpo) a um bolsão; avisa se o prolongamento passar a menos de 1 Ø de outro canal | `CoolingPlanner.Plan`, `CoolingExitProbe` |
+| Terminação automática | boca de prolongamento = **tampão**; ponta do caminho na face = **engate**; o usuário troca por boca na tabela | `CoolingPlanner.AutoTerminal` |
+| Entrada | uma boca na face (com duas, a mais aberta: engate > tampão > passante > cega) ou a boca do prolongamento; entrada cega = **problema** | `CoolingPlanner.Plan` |
+| Fundo | cruzamento → comprimento + **sobrefuro** (padrão **Ø/2**) e ponta de broca **118°** (profundidade até o ombro); ponta cega → ponta de broca na ponta desenhada; ponta aberta → fundo reto, **+0,5 mm** além da face | `CoolingPlanner.Plan` |
+| Engate / tampão | furo **roscado coaxial** em cada ponta que pede: rosca de tubo da **base de furos da SE** (`Preferences\Holes\*.xlsx`, aba Threaded — strings exatas), profundidade da rosca da planilha ou **12 mm**, furo = rosca + 2 mm. Padrões: engate G1/4, tampão G1/8 | `HoleDatabase`, `CoolingChannelModeler.HoleData` |
+| Modelagem | recurso de **furo** (`Holes.AddFinite` / `AddFiniteEx` com rosca cosmética). Plano: canal paralelo a um eixo → `AddParallelByDistance` do plano-base perpendicular, na boca (não depende da aresta, que morre a cada furo); inclinado → `AddNormalToCurve` na aresta **relida** antes de cada furo | `CoolingChannelModeler` |
+| Roscas oferecidas | ISO Metric + ANSI Inch da base (as outras normas repetem as mesmas G/R); padrão engate **G1/4**, tampão **G1/8** | `CoolingService` |
+| Conferência | referencial do esboço (origem na ponta, normal no eixo) e o furo **medido** (as faces cobrem um ponto de dentro do canal); lado errado → apaga e refaz do outro lado | `CoolingChannelModeler.TryHole` |
+| Nome na árvore | `Refrigeração Ø8 - L1+L2`, `Engate G1/4 - L1:I`, `Tampão G1/8 - L3:F` | `CoolingPlanner` |
+
 ## 4.6 Alojamento de anel de vedação — id 14 (peça, **ordenada**)
 
 Captura uma face (cilíndrica = eixo ou furo; plana = vedação de face) e arestas circulares, mede o diâmetro, escolhe o anel no catálogo, dimensiona o canal e corta como retângulo revolvido 360°. É a **única janela modeless** do add-in, porque a seleção de aresta precisa que o usuário clique na SE com a janela aberta.
@@ -708,7 +751,7 @@ Captura uma face (cilíndrica = eixo ou furo; plana = vedação de face) e arest
 
 **Filosofia: avisar, não recusar** — quem decide cortar é o operador. Candidato reprovado vai para o fim da fila, mas continua na lista.
 
-## 4.7 Engenharia reversa de malha — ids 24 e 26
+## 4.7 Engenharia reversa de malha — ids 24 e 28
 
 **Por que o ajuste é nosso:** o dump da typelib provou que a SE **não expõe por COM** nenhum ajuste
 de plano/cilindro/cone sobre região de malha, nem segmentação, nem seleção de região. Ela **lê**
@@ -745,7 +788,7 @@ de 0,05° de X/Y/Z vira o eixo, e componente a menos disso de zero vira zero (pa
 90,4°). **Toda superfície sai com o RMS do próprio ajuste** — sem esse número o reconhecimento
 seria opinião.
 
-### Construção — Malha → sólido (26)
+### Construção — Malha → sólido (28)
 
 Sempre numa **peça nova em modelagem ordenada, não salva** (a peça do usuário nunca tem o ambiente
 trocado). Esboços, CS e planos de referência saem **ocultos**.

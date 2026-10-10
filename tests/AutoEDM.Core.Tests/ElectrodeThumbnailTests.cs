@@ -113,35 +113,113 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
-        public void CloseCallouts_AreSeparated_KeepingTheirOrderAroundThePart()
+        public void CloseCallouts_AreSpreadAlongTheSide_KeepingTheirOrder()
         {
-            // Três features vizinhas + uma longe: sem separar, três balões caem um sobre o outro.
-            // A 1ª versão (empurra-empurra iterativo) oscilava e devolvia dois ângulos IDÊNTICOS.
-            var angles = new List<double> { -1.62, -1.60, -1.58, 0.30 };
-            var original = new List<double>(angles);
-            ElectrodeThumbnail.SeparateAngles(angles, 0.293);
+            // Três features vizinhas + uma longe: sem afastar, três balões caem um sobre o outro.
+            var ys = new List<double> { 100, 101, 102, 300 };
+            var original = new List<double>(ys);
+            ElectrodeThumbnail.SpreadAlong(ys, 46, 22, 338);
 
-            var sorted = angles.OrderBy(a => a).ToList();
+            var sorted = ys.OrderBy(y => y).ToList();
             for (int i = 1; i < sorted.Count; i++)
-                Assert.True(sorted[i] - sorted[i - 1] >= 0.293 - 1e-9,
-                    $"vão {i} ficou em {sorted[i] - sorted[i - 1]:0.000}");
+                Assert.True(sorted[i] - sorted[i - 1] >= 46 - 1e-9, $"vão {i} ficou em {sorted[i] - sorted[i - 1]:0.0}");
+            // Quem apontava mais para cima continua em cima: as linhas não se cruzam.
+            Assert.Equal(Enumerable.Range(0, 4).OrderBy(i => original[i]), Enumerable.Range(0, 4).OrderBy(i => ys[i]));
+            Assert.Equal(300, ys[3]);   // o que já estava livre não sai do lugar
+        }
 
-            // A ordem em volta da peça é preservada: quem apontava mais à esquerda continua à esquerda.
-            List<int> before = Enumerable.Range(0, 4).OrderBy(i => original[i]).ToList();
-            List<int> after = Enumerable.Range(0, 4).OrderBy(i => angles[i]).ToList();
-            Assert.Equal(before, after);
+        [Fact]
+        public void CalloutsNearTheBottom_ArePushedBackUp_InsteadOfLeavingTheImage()
+        {
+            var ys = new List<double> { 330, 335, 340 };
+            ElectrodeThumbnail.SpreadAlong(ys, 46, 22, 338);
+            Assert.All(ys, y => Assert.InRange(y, 22, 338));
+            Assert.Equal(338, ys.Max(), 6);
+            Assert.Equal(338 - 2 * 46, ys.Min(), 6);
         }
 
         [Fact]
         public void TooManyCallouts_AreSpreadEvenly_InsteadOfOverlapping()
         {
-            var angles = Enumerable.Repeat(0.5, 8).ToList();
-            ElectrodeThumbnail.SeparateAngles(angles, 1.5);   // 8 × 1,5 rad não cabe em 2π
+            var ys = Enumerable.Repeat(50.0, 8).ToList();
+            ElectrodeThumbnail.SpreadAlong(ys, 46, 0, 210);   // 7 vãos × 46 não cabem em 210
 
-            var sorted = angles.OrderBy(a => a).ToList();
-            double step = 2 * System.Math.PI / 8;
+            var sorted = ys.OrderBy(y => y).ToList();
+            Assert.Equal(0, sorted[0], 6);
+            Assert.Equal(210, sorted[7], 6);
             for (int i = 1; i < sorted.Count; i++)
-                Assert.Equal(step, sorted[i] - sorted[i - 1], 6);
+                Assert.Equal(30, sorted[i] - sorted[i - 1], 6);
+        }
+
+        [Fact]
+        public void Render_WithHighlights_AddsSideStripsForTheBalloons_OutsideThePart()
+        {
+            // "Os balões estão muito em cima do detalhe" (Carlos, 2026-10-01): os balões vão para
+            // faixas laterais acrescentadas à imagem, fora da peça.
+            var highlights = new List<ElectrodeThumbnail.HighlightGroup>
+            {
+                new ElectrodeThumbnail.HighlightGroup { Label = "1", MeshIndices = { 0 } },
+            };
+            using (Bitmap bmp = ElectrodeThumbnail.Render(new[] { Cube() }, 180, ElectrodeThumbnail.View.FromBelow, highlights))
+            {
+                Assert.Equal(180, bmp.Height);
+                Assert.True(bmp.Width > 180, $"largura {bmp.Width}");
+                int gutter = (bmp.Width - 180) / 2;
+
+                // Há tinta vermelha (balão) numa das faixas laterais.
+                bool balloon = false;
+                for (int y = 0; y < bmp.Height && !balloon; y++)
+                    foreach (int x in Enumerable.Range(0, gutter).Concat(Enumerable.Range(bmp.Width - gutter, gutter)))
+                    {
+                        Color c = bmp.GetPixel(x, y);
+                        if (c.R > 150 && c.G < 80 && c.B < 80) { balloon = true; break; }
+                    }
+                Assert.True(balloon, "nenhum balão nas faixas laterais");
+            }
+        }
+
+        /// <summary>Caixa como 6 malhas, uma por face (é como a miniatura recebe a peça).</summary>
+        private static List<double[]> BoxFaces(double x0, double y0, double z0, double x1, double y1, double z1)
+        {
+            double[] Quad(double[] a, double[] b, double[] c, double[] d) => new[]
+                { a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2] };
+            double[] P(double x, double y, double z) => new[] { x, y, z };
+            return new List<double[]>
+            {
+                Quad(P(x0, y0, z0), P(x1, y0, z0), P(x1, y1, z0), P(x0, y1, z0)),
+                Quad(P(x0, y0, z1), P(x1, y0, z1), P(x1, y1, z1), P(x0, y1, z1)),
+                Quad(P(x0, y0, z0), P(x1, y0, z0), P(x1, y0, z1), P(x0, y0, z1)),
+                Quad(P(x1, y0, z0), P(x1, y1, z0), P(x1, y1, z1), P(x1, y0, z1)),
+                Quad(P(x1, y1, z0), P(x0, y1, z0), P(x0, y1, z1), P(x1, y1, z1)),
+                Quad(P(x0, y1, z0), P(x0, y0, z0), P(x0, y0, z1), P(x0, y1, z1)),
+            };
+        }
+
+        [Fact]
+        public void Render_WithHighlights_WashesThePlainPart_AndShowsTheHiddenChangeThroughIt()
+        {
+            // "Faces sem modificação um pouco mais transparentes" (Carlos, 2026-10-02). A face
+            // alterada aqui é a de BAIXO, escondida na vista de cima: tem de aparecer através da
+            // peça e ganhar balão mesmo assim.
+            List<double[]> meshes = BoxFaces(0, 0, 0, 40, 40, 20);
+            var hidden = new List<ElectrodeThumbnail.HighlightGroup>
+            {
+                new ElectrodeThumbnail.HighlightGroup { Label = "1", MeshIndices = { 0 } },
+            };
+
+            using (Bitmap plain = ElectrodeThumbnail.Render(meshes, 180, ElectrodeThumbnail.View.FromAbove))
+            using (Bitmap xray = ElectrodeThumbnail.Render(meshes, 180, ElectrodeThumbnail.View.FromAbove, hidden))
+            {
+                int gutter = (xray.Width - 180) / 2;
+                Color before = plain.GetPixel(90, 90), after = xray.GetPixel(gutter + 90, 90);
+                Assert.True(after.GetBrightness() > before.GetBrightness(), $"{before} → {after}");
+                Assert.True(after.B > after.G + 10, $"sem o roxo da face escondida: {after}");
+
+                bool balloon = Enumerable.Range(0, xray.Height).Any(y => Enumerable.Range(0, gutter)
+                    .Concat(Enumerable.Range(xray.Width - gutter, gutter))
+                    .Any(x => { Color c = xray.GetPixel(x, y); return c.R > 150 && c.G < 80 && c.B < 80; }));
+                Assert.True(balloon, "a alteração escondida ficou sem balão");
+            }
         }
 
         [Fact]

@@ -189,7 +189,7 @@ confirmação e não sobrevive a um desligamento. Nenhuma ferramenta MCP consegu
 | **Somente leitura** | Revoga a escrita na hora; as ferramentas de leitura seguem funcionando. |
 | **Desligar ponte** | Derruba o pipe. O agente passa a receber a instrução de pedir a você para religar. |
 
-O catálogo tem 29 ferramentas. As de leitura: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
+O catálogo tem 32 ferramentas. As de leitura: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
 `se_medir_selecao`, `se_analisar_z`, `se_coordenadas`, `se_planos`, `se_reconhecer_malha` e
 `se_log` — e `se_malha_para_solido`, que só lê sem `construir` e com ele cria uma peça nova. As de escrita: `se_modelar`, `se_curvas_superficies` e `se_exportar_perfis_wedm`. Além
 delas, cada botão da ribbon tem a sua ferramenta (`se_criar_eletrodos`, `se_criar_base`,

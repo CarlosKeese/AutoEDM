@@ -27,6 +27,7 @@ namespace AutoEDM.Core.Tests
             ChangeReport first = Scanned();
             first.Parts[0].Description = "Adicionado alojamento para molas da extração";
             first.Parts[0].Actions.Add("Usinar face plana");
+            first.Parts[0].ActionsEdited = true;
             first.Parts[0].Tasks.First(t => t.Label.StartsWith("EROSÃO")).Checked = true;
             first.Parts[0].Tasks.First(t => t.Label.StartsWith("FABRICAR")).Detail = "2 pçs";
             first.Parts[1].Include = false;
@@ -44,6 +45,54 @@ namespace AutoEDM.Core.Tests
             Assert.Equal("2 pçs", second.Parts[0].Tasks.First(t => t.Label.StartsWith("FABRICAR")).Detail);
             Assert.False(second.Parts[1].Include);
             Assert.Equal("RV-99", second.Rvpa);
+        }
+
+        [Fact]
+        public void UneditedActions_FollowTheRenamedFeatures()
+        {
+            // "Altero os nomes das features e nada muda" (Carlos, 2026-10-02): a janela fechada
+            // uma vez gravava o rascunho, e o rascunho gravado vencia a árvore para sempre.
+            ChangeReport first = Scanned();
+            first.Parts[0].Actions.Add("1");                     // rascunho da feature "1"
+            ChangeArchive archive = ChangeReportStore.Capture(null, first);
+
+            ChangeReport second = Scanned();
+            second.Parts[0].Actions.Add("Redução do diametro");  // a feature virou "1 - Redução do diametro"
+            ChangeReportStore.Apply(archive, second);
+
+            Assert.Equal(new[] { "Redução do diametro" }, second.Parts[0].Actions);
+            Assert.False(second.Parts[0].ActionsEdited);
+        }
+
+        [Fact]
+        public void EditedActions_WinOverTheTree_EvenWhenEmpty()
+        {
+            ChangeReport first = Scanned();
+            first.Parts[0].ActionsEdited = true;                 // apagou tudo na janela
+            ChangeArchive archive = ChangeReportStore.Capture(null, first);
+
+            ChangeReport second = Scanned();
+            second.Parts[0].Actions.Add("Redução do diametro");
+            ChangeReportStore.Apply(archive, second);
+
+            Assert.Empty(second.Parts[0].Actions);
+            Assert.True(second.Parts[0].ActionsEdited);
+        }
+
+        [Fact]
+        public void OldFileWithoutTheFlag_LetsTheTreeWin()
+        {
+            const string json = "{\"revisoes\":{\"2\":{\"pecas\":{\"14309.205.par\":{\"acoes\":[]}}}}}";
+            string path = Path.Combine(Path.GetTempPath(), "autoedm_test_" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                File.WriteAllText(path, json);
+                ChangeReport report = Scanned();
+                report.Parts[0].Actions.Add("Aumentar diametro do alívio");
+                ChangeReportStore.Apply(ChangeReportStore.Load(path), report);
+                Assert.Equal(new[] { "Aumentar diametro do alívio" }, report.Parts[0].Actions);
+            }
+            finally { try { File.Delete(path); } catch { } }
         }
 
         [Fact]

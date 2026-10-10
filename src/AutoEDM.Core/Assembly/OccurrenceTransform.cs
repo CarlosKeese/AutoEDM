@@ -98,6 +98,55 @@ namespace AutoEDM.Assembly
         }
 
         /// <summary>
+        /// O caminho de volta: ponto da MONTAGEM → espaço LOCAL da ocorrência (metros). A parte
+        /// de rotação é ortonormal, então a inversa é a transposta: <c>p = Rᵀ·(q − t)</c>.
+        /// </summary>
+        public void InverseTransformPointM(double xM, double yM, double zM,
+            out double outXM, out double outYM, out double outZM)
+        {
+            InverseRotate(xM - _t[0], yM - _t[1], zM - _t[2], out outXM, out outYM, out outZM);
+        }
+
+        /// <summary>Direção da MONTAGEM → LOCAL (só rotação, sem translação — é um vetor, não um ponto).</summary>
+        public void InverseRotate(double x, double y, double z, out double outX, out double outY, out double outZ)
+        {
+            outX = _r[0] * x + _r[3] * y + _r[6] * z;
+            outY = _r[1] * x + _r[4] * y + _r[7] * z;
+            outZ = _r[2] * x + _r[5] * y + _r[8] * z;
+        }
+
+        /// <summary>
+        /// Caixa (mm) no espaço LOCAL de <paramref name="from"/> → caixa (mm) no espaço LOCAL de
+        /// <paramref name="to"/>, passando pela montagem. Os 8 cantos são levados e a caixa é
+        /// refeita: exata quando as duas ocorrências têm a mesma orientação (o caso normal dos
+        /// postiços de um molde), conservadora (maior) quando não têm.
+        ///
+        /// Existe porque o "Criar eletrodo (manual)" juntava caixas de faces de PEÇAS DIFERENTES
+        /// em coordenadas locais de cada uma e aplicava a pose só da 1ª — com dois postiços
+        /// lado a lado o eletrodo saiu 12 mm deslocado (Carlos, 2026-09-24, MD-15335).
+        /// </summary>
+        public static void MapBoxMm(OccurrenceTransform from, OccurrenceTransform to,
+            double[] minMm, double[] maxMm, out double[] outMinMm, out double[] outMaxMm)
+        {
+            outMinMm = new[] { double.MaxValue, double.MaxValue, double.MaxValue };
+            outMaxMm = new[] { double.MinValue, double.MinValue, double.MinValue };
+            for (int c = 0; c < 8; c++)
+            {
+                double x = ((c & 1) == 0 ? minMm[0] : maxMm[0]) / 1000.0;
+                double y = ((c & 2) == 0 ? minMm[1] : maxMm[1]) / 1000.0;
+                double z = ((c & 4) == 0 ? minMm[2] : maxMm[2]) / 1000.0;
+                from.TransformPointM(x, y, z, out double ax, out double ay, out double az);
+                to.InverseTransformPointM(ax, ay, az, out double lx, out double ly, out double lz);
+                double[] p = { lx * 1000.0, ly * 1000.0, lz * 1000.0 };
+                for (int k = 0; k < 3; k++)
+                {
+                    outMinMm[k] = Math.Min(outMinMm[k], p[k]);
+                    outMaxMm[k] = Math.Max(outMaxMm[k], p[k]);
+                }
+            }
+        }
+
+        /// <summary>
         /// A MESMA orientação, numa posição nova (metros). É esta a pose que o eletrodo recebe:
         /// herda a inclinação da cavidade — para que o eixo de queima dele seja o eixo de queima
         /// dela — mas fica na superfície de queima, não na origem da cavidade.

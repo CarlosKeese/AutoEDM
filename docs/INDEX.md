@@ -13,7 +13,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 | Documento | Descrição |
 |---|---|
 | [`README.md`](../README.md) | Visão geral do projeto, propósito, estado atual, build & run. |
-| [`docs/MANUAL.md`](./MANUAL.md) | **O manual de funcionamento** — a camada COM, as duas APIs (Core e ponte MCP), a skill e as 25 funcionalidades com as regras de negócio e seus valores exatos. É o documento que liga botão → id → handler → classe do Core. Comece por aqui para entender **como** o projeto funciona; pelo `README` para saber **o que** ele faz. |
+| [`docs/MANUAL.md`](./MANUAL.md) | **O manual de funcionamento** — a camada COM, as duas APIs (Core e ponte MCP), a skill e as 27 funcionalidades com as regras de negócio e seus valores exatos. É o documento que liga botão → id → handler → classe do Core. Comece por aqui para entender **como** o projeto funciona; pelo `README` para saber **o que** ele faz. |
 | [`PROJECT_STATE.md`](../PROJECT_STATE.md) | Estado por ferramenta, decisões travadas e histórico datado das sessões. |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Fluxo de PR e as regras de ouro (inclusive a convenção de idioma). |
 | [`docs/INDEX.md`](./INDEX.md) | Este índice. |
@@ -46,6 +46,7 @@ Documentação completa e atualizada sobre o desenvolvimento de integrações co
 |---|---|
 | [`docs/MAPEAMENTO_INTEGRACAO_COM.md`](./MAPEAMENTO_INTEGRACAO_COM.md) | Fluxo completo de extração de eletrodos: seleção → planejamento → Inter-Part Copy → offset → stitch → blank → furos → relatório. |
 | [`docs/PLANO_TESTE_SE.md`](./PLANO_TESTE_SE.md) | Procedimentos de teste manual no Solid Edge. |
+| [`docs/PLANO_MOLDE.md`](./PLANO_MOLDE.md) | **Plano do grupo "Molde"** (2026-09-24): Nova peça, Refrigeração, Canais de alimentação, Pontos de injeção, Extratores e Gavetas — sequência de desenvolvimento, sondas de API e perguntas pendentes por fase. Só a Fase 0 está feita. |
 
 ## Arquitetura e decisões
 

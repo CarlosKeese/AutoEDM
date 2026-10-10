@@ -161,10 +161,13 @@ namespace AutoEDM.Reporting
             sb.Append("</table>");
         }
 
-        /// <summary>"☑ SOLDA TIG / LASER" — com o complemento digitado, quando tem.</summary>
-        private static string TaskLine(ChangeTask t) =>
+        /// <summary>
+        /// "☑ SOLDA TIG / LASER" — com o complemento digitado (a quantidade do "FABRICAR"), mas só
+        /// quando a caixa está MARCADA: "☐ FABRICAR, QUANTIDADE: 2" mandaria fabricar o que não é.
+        /// </summary>
+        public static string TaskLine(ChangeTask t) =>
             (t.Checked ? Checked : Unchecked) + " " + t.Label +
-            (string.IsNullOrWhiteSpace(t.Detail) ? "" : " " + t.Detail);
+            (!t.Checked || string.IsNullOrWhiteSpace(t.Detail) ? "" : " " + t.Detail);
 
         private static void Row(StringBuilder sb, string label, string value)
         {

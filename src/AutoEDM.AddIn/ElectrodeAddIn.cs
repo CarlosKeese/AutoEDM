@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 17; // incrementar ao mudar a ribbon (v17 = "Malha → sólido" em Eng. Reversa)
+            AddInEx.GuiVersion = 19; // incrementar ao mudar a ribbon (v19 = fusão Molde + Eng. Reversa: "Malha → sólido" passa a id 28)
 
             Current = this;
             App = application;
