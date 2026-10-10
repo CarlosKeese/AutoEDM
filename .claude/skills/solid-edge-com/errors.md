@@ -68,3 +68,9 @@ and may legitimately return null:
 **And never chain the probe.** `doc.Models.Item(1).FaceOffsets` on one line always reports the
 same "null reference" no matter which link is null. Split it, and name the link in the log —
 that single change is the difference between one test round and three.
+
+**Build warning `NU1701` on `Interop.SolidEdge` in net8 projects.** The package declares only
+.NET Framework targets, but it is COM interface metadata and works unchanged on
+`net8.0-windows` (tests, MCP server). Silence it on the reference itself —
+`<PackageReference Include="Interop.SolidEdge" Version="219.0.0" NoWarn="NU1701" />` — which also
+covers projects that get it transitively; do not blanket-suppress NU1701 project-wide.

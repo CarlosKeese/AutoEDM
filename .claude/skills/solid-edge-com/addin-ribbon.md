@@ -171,3 +171,16 @@ _mouse.AddToLocateFilter((int)seLocateFilterConstants.seLocateEdge);   // =31; f
   rejects calls while busy and occurrence reads come back missing.
 - Highlight what was picked with `Document.HighlightSets.Add()` → `AddItem` / `Color` (COLORREF
   `r | g<<8 | b<<16`) / `Draw`, and drive the prompt through `Application.StatusBar`.
+
+**Merging branches that both touched the ribbon (2026-10-10).** Command ids are plain integers
+declared twice — once in the C# constants, once in `Ribbon.xml`. Two branches that each took "the
+next free id" (here both 26) produce a **conflict in C# but NOT in the XML**: git merges the two
+`<button id="26">` lines silently, and one button stops answering. On every merge, list the ids in
+the XML (`grep 'button id='`) and renumber before building; then bump `GuiVersion` past BOTH
+branches' values. Tooltip/supertip text lives in the same cached XML, so a text-only change needs
+the bump too.
+
+**Deploy from a machine without PowerShell 7.** Our scripts run on Windows PowerShell 5.1:
+`powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 …` — `pwsh` may simply not exist.
+Replacing the MCP server also needs the Claude Code app closed (its `AutoEDM.Mcp.exe` locks the
+files); the add-in needs SE closed.

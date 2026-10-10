@@ -506,6 +506,12 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-10-10 (noite, 3)** — **Skill `solid-edge-com` atualizada com a sessão** (secção fora de
+  vértice, arcos tangentes, raio de concordância por hipótese, disputa entre cilindros, lote numa
+  montagem por PutMatrix identidade, orientação de perfil fechado × `igLeft`, dados da SE no idioma
+  da instalação, ids de botão ao fundir branches, NU1701, deploy sem `pwsh`) e `.skill`
+  reempacotado. A skill lembrou um defeito: o `RefAxis` das revoluções ficava visível — agora oculto
+  (corpo 6: 0 de 48 eixos visíveis).
 - **2026-10-10 (noite, 2)** — **Malha → sólido em lote, com montagem.** Vários corpos de uma vez;
   peças salvas e reunidas numa montagem nova na posição original. Validado nas 6 malhas (100 s).
   459 testes.

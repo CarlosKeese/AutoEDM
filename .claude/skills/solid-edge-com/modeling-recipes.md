@@ -43,7 +43,9 @@ ProfileSet.Delete()                     // code-made sketch is locked for the us
 assembly without in-place edit: build the part **standalone** (recipe above),
 `partDoc.SaveAs(path)` → `partDoc.Close()`, then
 `AssemblyDocument.Occurrences.AddByFilename(path)` → `Occurrence.PutOrigin(x,y,z)`. All
-validated. (`Occurrences.AddByTemplate(newPartPath, template)` creates a part in-context —
+validated. When the part was already built in the assembly's coordinates (mesh → solid), place it
+with `PutMatrix(identity, Replace: true)` and nothing moves — the cheapest correct placement there
+is. (`Occurrences.AddByTemplate(newPartPath, template)` creates a part in-context —
 arg1 is the NEW part's path, arg2 the template — but still does **not** grant in-place edit.)
 
 **Synchronous vs ordered features (this bites).** The default part template (SE 2023) is
@@ -465,3 +467,10 @@ hole has `CreatePhysicalThread = False`, and the shop works from the cosmetic th
 the cosmetic recipe; reach for `bPhysicalThread` / `CreatePhysicalThreadAndReturnStatus` only
 if someone actually needs the helix in the solid, and expect to debug it (a real attempt
 returned `5 InvalidThreadType`, though that run’s HoleData was not tapped either).
+
+**Revolved correction features, partial or full (CONFIRMED LIVE 2026-10-10, SE 226).**
+`axis = profile.SetAxisOfRevolution(line2d)` → `RevolvedCutouts/RevolvedProtrusions.AddFinite(
+profile, axis, igRight(2), planeSide, angleRad)`. For a full turn `planeSide = 2`; for a PARTIAL
+revolve put the sketch at the MIDDLE of the arc and use `planeSide = 3` (symmetric) with the total
+angle — the rotation sense then cannot be wrong. After the feature: hide the `Profile` AND the
+`RefAxis` the call returned (48 chamfers left 48 axis strokes on screen until we did).

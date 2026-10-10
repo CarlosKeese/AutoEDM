@@ -153,6 +153,20 @@ exceptions:
   in sketch-driven modeling come from reasoning about construction history instead of
   querying the result.
 
+- **A closed profile's ORIENTATION decides what `igLeft`/`igRight` means.** Extruded cut or
+  protrusion with `ProfileSide = igLeft` removes/adds the side to the LEFT of the drawing
+  direction — the inside for a counter-clockwise loop, the OUTSIDE for a clockwise one. Circles
+  come out counter-clockwise, so hole cuts "just work" and hide the rule; a triangle drawn the
+  other way took 17 700 mm³ instead of 1 060. Measure the signed area of the loop **in sketch
+  coordinates** (read back with `Convert3DCoordinate`, the sketch can be mirrored relative to your
+  own frame) and reverse it if negative.
+- **SE's own data files are in the INSTALL language.** The hole database
+  (`Preferences\Holes\<standard>.xlsx`) of a Portuguese install has the sheet "Rosqueado", not
+  "Threaded", headers "Subtipo / Tamanho / Diâmetro de Macho", and sub-types "Rosca de Tubo
+  Reta/Cônica". A reader that only knows the English names silently finds nothing. Match names in
+  every language you ship for, and pass the raw string back to the API — it is what `AddEx`
+  matches against.
+
 ## Where to look next
 
 Read only the file you need; each is self-contained.
@@ -165,7 +179,7 @@ Read only the file you need; each is self-contained.
 | Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered, placing a part in an assembly | `references/modeling-recipes.md` |
 | Putting a button inside SE: add-in registration, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, modeless dialogs, in-process hosting limits, picking a face or edge from the model | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |
-| Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser, reference-plane normals | `references/mesh-reverse.md` |
+| Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser (plane, cylinder, cone, torus, fillets between known faces), mesh → solid with boundary corrections, batch conversion into an assembly, verifying by deviation | `references/mesh-reverse.md` |
 
 ## The discovery loop, in order
 

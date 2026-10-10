@@ -161,7 +161,11 @@ namespace AutoEDM.Reverse
             dynamic feature = c.Add
                 ? model.RevolvedProtrusions.AddFinite(p, refAxis, IgRight, planeSide, c.SweepRad)
                 : model.RevolvedCutouts.AddFinite(p, refAxis, IgRight, planeSide, c.SweepRad);
-            return CheckOrDelete(feature, c.Add ? "revolução (protrusão)" : "revolução (recorte)");
+            string bad = CheckOrDelete(feature, c.Add ? "revolução (protrusão)" : "revolução (recorte)");
+            // O RefAxis do SetAxisOfRevolution é objeto do documento e DESENHA por conta própria:
+            // esconder só o perfil deixava um traço por chanfro na peça (regra da skill, 2026-09-21).
+            try { ((dynamic)refAxis).Visible = false; } catch (Exception ex) { Log.Warn("[ENG.REVERSA] eixo de revolução visível: " + ex.GetBaseException().Message); }
+            return bad;
         }
 
         private static string Extrude(dynamic doc, dynamic model, CorrectionRegion c)

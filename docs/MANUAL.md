@@ -447,17 +447,17 @@ O `description` do frontmatter é um gatilho: enumera as tarefas (ler faces, cor
 
 ## 3.2 Os arquivos e quando carregar cada um
 
-`SKILL.md` (228 linhas) é a entrada: regras duras + índice. Os apoios carregam **um de cada vez**, conforme a tarefa:
+`SKILL.md` (255 linhas) é a entrada: regras duras + índice. Os apoios carregam **um de cada vez**, conforme a tarefa:
 
 | Carregue | Quando |
 |---|---|
-| `api-signatures.md` (520 l.) | precisa de assinatura ou enum confirmado: cor de face, bbox, transform de ocorrência, in-place, **grupos da árvore ordenada**, propriedades de documento, cache de `GuiVersion` |
-| `modeling-recipes.md` (342 l.) | vai construir geometria: sketch+extrusão, cilindros, furos, roscas, canais anulares, síncrono × ordenado, colocar peça em montagem |
-| `discovery.md` (153 l.) | vai montar a descoberta: dump da typelib, SPY, gravador de ação, tabelas DATA do install |
-| `addin-ribbon.md` (151 l.) | botão dentro da SE: registro, XML da ribbon, ícones, HKCU, pasta de deploy, diálogos modeless, escolher face ou aresta |
-| `edm-electrode.md` (134 l.) | fluxo do eletrodo: cópia da superfície de queima, costura, anexar ao bloco, offset de GAP |
-| `mesh-reverse.md` (183 l.) | malha: ler facetas, o que a SE ajusta e o que não, seccionar, escrever reconhecedor (plano, cilindro, cone, toro), malha → sólido por faixas + correções, conferir por desvio |
-| `errors.md` (67 l.) | um HRESULT específico, erro do binder, ou "funcionou e nada aconteceu" |
+| `api-signatures.md` (545 l.) | precisa de assinatura ou enum confirmado: cor de face, bbox, transform de ocorrência, in-place, **grupos da árvore ordenada**, propriedades de documento, cache de `GuiVersion` |
+| `modeling-recipes.md` (476 l.) | vai construir geometria: sketch+extrusão, cilindros, furos, roscas, canais anulares, síncrono × ordenado, colocar peça em montagem |
+| `discovery.md` (166 l.) | vai montar a descoberta: dump da typelib, SPY, gravador de ação, tabelas DATA do install |
+| `addin-ribbon.md` (186 l.) | botão dentro da SE: registro, XML da ribbon, ícones, HKCU, pasta de deploy, diálogos modeless, escolher face ou aresta, ids de botão ao fundir branches |
+| `edm-electrode.md` (143 l.) | fluxo do eletrodo: cópia da superfície de queima, costura, anexar ao bloco, offset de GAP |
+| `mesh-reverse.md` (238 l.) | malha: ler facetas, o que a SE ajusta e o que não, seccionar (nunca na altura de um vértice), escrever reconhecedor (plano, cilindro, cone, toro, raio de concordância por hipótese), malha → sólido por faixas + correções, lote numa montagem, conferir por desvio |
+| `errors.md` (76 l.) | um HRESULT específico, erro do binder, ou "funcionou e nada aconteceu" |
 
 > `SKILL.md` referencia os apoios como `references/<arquivo>.md`. No repositório eles estão na **raiz** da pasta da skill; a subpasta `references/` só existe dentro do pacote `solid-edge-com.skill`. `OLD/` guarda a versão monolítica anterior (756 linhas num arquivo só).
 

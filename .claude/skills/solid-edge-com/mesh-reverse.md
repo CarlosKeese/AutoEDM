@@ -181,3 +181,58 @@ Both are idempotent against the prismatic body, which can only be wrong inside t
   collars cancel exactly in volume. And deviation alone does not prove exact geometry either — a
   contour segment copied from the mesh (a radius turned into 26 lines) lies on the mesh by
   construction. "Exact" = deviation ≤ ~0.05 mm **and** no mesh-copied segment left uncorrected.
+
+## Second real body: what a cast-like part adds (2026-10-10)
+
+The same 6-mesh part had a body with legs: an L-angle section (2 mm walls, R1 tips, an inner R10
+face tangent to both tips — an S curve), an R5 fillet from every leg wall into the underside of
+the top plate, and free-form corner blends. The straight-extrusion solid lost 5.8 % of the
+volume. Every fix below was found by measuring, and each one is general:
+
+- **Never section a mesh exactly at a vertex height.** An edge whose endpoint lies ON the cutting
+  plane counts as not crossed, its triangle yields one point, the segment vanishes and the loop
+  closes through the wrong neighbour — the R10 face, one R1 tip and a wall disappeared from every
+  leg because the band mid-height (Z 22) was a tessellation row. Nudge the cut by ~1e-4 mm off
+  any vertex z before cutting.
+- **Two tangent arcs are real, not noise.** Before "straightening" a curved strip between two
+  arcs, check tangency: centre distance = R1 + R2 (external) or |R1 − R2| (internal). The R10 had
+  RMS 0.0006 mm through four vertices and centres 11.05 mm apart for R1 + R10 = 11.04.
+- **Inside a mixed region, grow plane patches with a TIGHTER tolerance than for whole planes**
+  (we use 1/4 of the angle and 1/5 of the distance). A fillet is tangent to its wall, so with the
+  loose tolerance a wall facet grows straight into the fillet and no longer fits its cylinder.
+- **A narrow strip that is one plane is a plane.** A "chain of narrow patches → free-form" rule
+  meant for cones/tori also swallowed a 4-triangle planar web; test the union as a plane first.
+- **Seeds compete.** Seeding cylinders from the smallest patch up lets three neighbouring facets
+  (any three profile points fit a circle) form a big false cylinder before the true small one
+  grows to them. After growing, let every cylinder with few patches hand back each patch that
+  fits a larger neighbouring cylinder; dissolve it if fewer than 3 remain.
+- **Coaxial fragments are the same cylinder.** Where the tessellation rotates (top of the R1
+  tips) a cylinder splits into "R0.905…R0.965" pieces. Merge pieces whose axis is parallel, axis
+  line within ~0.15 mm and radius within ~0.15 of a larger neighbour: triangles that fit go to it,
+  the rest become free-form.
+- **Recognise a fillet as a HYPOTHESIS between two known faces, not as a free fit.** Fillet
+  tessellation in real STL is often not ruled, so region growing never finds it, and a free fit
+  mixes its cylindrical and toroidal parts. But a fillet touches two faces you already know:
+  plane–plane ⇒ cylinder with axis `n₁ × n₂`; plane–cylinder ⊥ plane ⇒ torus on the cylinder's
+  axis. Its centre is at `corner + s·r·(n₁ + n₂)` (s = +1 concave, −1 convex, normals outward), so
+  the profile has ONE free parameter. Do a consensus search over r (how many vertices fall on the
+  circle), refine r with only the agreeing points, require the inliers to cover ≥ 60 % of the
+  expected arc (a wrong circle touches only near one tangency), keep only the largest connected
+  piece (walls of two different legs can be coplanar — one "fillet" spanned 120 mm across the part
+  before this), and snap r to a round value (multiple of 0.05 within 0.015).
+- **Know when to stop.** A corner blend where an R5 wall fillet runs into a tip and dies against
+  another face: meridian sections at 11 angles gave no circular profile (best tangent circle
+  residual up to 0.09 mm, "radius" wandering 2.7–4.7). That is free-form; report it as such
+  instead of forcing a torus. The deviation map (only Z 35–40 at the four legs) is what makes that
+  call defensible.
+
+Result on that body: −1 387 mm³ → −58 mm³ (0.24 %), deviation only inside the free-form blends.
+
+## Batch conversion into one assembly
+
+Convert several mesh bodies at once, each into its own new part; to put them together, save
+each part, **close it**, then `Occurrences.AddByFilename(path)` into a new assembly and
+`PutMatrix(identity, Replace: true)` (fallback `PutOrigin(0,0,0)`). Each solid was built in its
+mesh's own coordinates, so the identity placement reproduces the original arrangement with no
+positioning at all — checked by reading the occurrences back (origin 0,0,0, rotation 0). Never
+overwrite: a taken name gets " (2)", " (3)". Six bodies + assembly took 100 s.
