@@ -690,11 +690,13 @@ namespace AutoEDM.Mcp
             PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, r, null);
             Log.Info($"[MALHA] plano prismático de '{name}': {plan.Bands.Count} faixa(s), {plan.Warnings.Count} aviso(s).");
 
+            CorrectionPlan corrections = BoundaryCorrections.Plan(mesh.PointsMm, r, plan);
+
             PrismaticBuildResult result = null;
             if (build && plan.Bands.Count > 0)
-                result = PrismaticBuilder.Build((object)app, plan, name);
+                result = PrismaticBuilder.Build((object)app, plan, corrections, name, mesh.PointsMm);
 
-            return PrismaticReport.Format(plan, result, name) +
+            return PrismaticReport.Format(plan, result, name, r, corrections) +
                    (build ? "" : "\n(Só o plano. Para construir o sólido numa peça nova: 'construir': true, com a escrita liberada.)");
         }
 

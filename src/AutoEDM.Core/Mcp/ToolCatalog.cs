@@ -155,8 +155,10 @@ namespace AutoEDM.Mcp
                     "\"additionalProperties\":false}",
                 Description =
                     "PEÇA ativa, SÓ LEITURA: lê os triângulos do corpo (Body.GetFacetData) e RECONHECE superfícies sobre a " +
-                    "malha — planos (com normal, ponto e extensão) e cilindros (com eixo, Ø, comprimento e quanto da volta " +
-                    "cobrem, então furo sai como furo). Cada superfície vem com o RMS do próprio ajuste, em mm: é o número " +
+                    "malha — planos (com normal, ponto e extensão), cilindros (com eixo, Ø, comprimento e quanto da volta " +
+                    "cobrem, então furo sai como furo) e cones (chanfro, escareado, saída: semi-ângulo, Ø das duas bocas, " +
+                    "ápice). Abre por uma IDENTIFICAÇÃO agrupada pela medida: furos/pinos, raios, chanfros/cones e faces " +
+                    "inclinadas (ângulo contra a vertical e a horizontal). Cada superfície vem com o RMS do próprio ajuste, em mm: é o número " +
                     "que separa medida de palpite. O que não cabe em primitiva é reportado como região LIVRE, e a ÁREA dessa " +
                     "sobra é o que decide se a peça se reconstrói por primitivas ou se exige superfície free-form. Funciona " +
                     "em corpo de facetas (malha importada) e em sólido B-rep (que é tesselado na hora). Não cria feature, não " +
@@ -179,9 +181,12 @@ namespace AutoEDM.Mcp
                     "contorno pela geometria EXATA (parede plana = reta, cilindro vertical = arco/círculo, no centésimo), " +
                     "com os vértices pela interseção exata das superfícies vizinhas. Devolve níveis, contornos, três " +
                     "volumes (malha, plano, EXATO) e avisos — faixa NÃO prismática (raio em aresta horizontal, chanfro, " +
-                    "ângulo de saída) e trecho aproximado são denunciados, nunca escondidos. Sem 'construir' é só leitura. " +
-                    "Com 'construir': true (escrita liberada) cria uma PEÇA NOVA ordenada com uma protrusão por faixa e os " +
-                    "furos como recorte, confere o volume do corpo contra o EXATO e não salva. A peça da malha não é tocada."
+                    "ângulo de saída) e trecho aproximado são denunciados, nunca escondidos. Abre pela IDENTIFICAÇÃO (furos, " +
+                    "raios, chanfros, faces inclinadas) e planeja as CORREÇÕES DE FRONTEIRA: cone de volta inteira vira " +
+                    "revolução, raio de eixo X/Y e face inclinada viram extrusão ao longo do eixo, cada uma protrusão ou " +
+                    "recorte conforme a malha diz que há material. Sem 'construir' é só leitura. Com 'construir': true " +
+                    "(escrita liberada) cria uma PEÇA NOVA ordenada (faixas + correções), mede o DESVIO geométrico nos dois " +
+                    "sentidos (malha → sólido e sólido → malha) além do volume, e não salva. A peça da malha não é tocada."
             },
 
             // ---------------------------------------------------- escrita (modo ESCRITA)

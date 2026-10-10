@@ -1000,7 +1000,8 @@ namespace AutoEDM.AddIn
 
                 RecognitionResult rec = SurfaceRecognizer.Recognize(mesh.PointsMm, new RecognizerOptions());
                 PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, rec, null);
-                string planText = PrismaticReport.Format(plan, null, name);
+                CorrectionPlan corrections = BoundaryCorrections.Plan(mesh.PointsMm, rec, plan);
+                string planText = PrismaticReport.Format(plan, null, name, rec, corrections);
                 Log.Info(planText);
 
                 if (plan.Bands.Count == 0)
@@ -1013,8 +1014,9 @@ namespace AutoEDM.AddIn
                     title, MessageBoxButtons.YesNo, plan.Warnings.Count == 0 ? MessageBoxIcon.Question : MessageBoxIcon.Warning);
                 if (go != DialogResult.Yes) return;
 
-                PrismaticBuildResult built = PrismaticBuilder.Build((object)ElectrodeAddIn.Current.App, plan, name);
-                string text = PrismaticReport.Format(plan, built, name);
+                PrismaticBuildResult built = PrismaticBuilder.Build((object)ElectrodeAddIn.Current.App, plan, corrections,
+                    name, mesh.PointsMm);
+                string text = PrismaticReport.Format(plan, built, name, rec, corrections);
                 Log.Info(text);
                 MessageBox.Show(text, title, MessageBoxButtons.OK,
                     built.BandsFailed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
