@@ -41,8 +41,12 @@
       Interop redistribuível do Solid Edge (compila sem SE instalado). Usado só onde
       o late binding não basta: montar SAFEARRAY(IDispatch) de Face para o
       CopySurfaces.Add. O resto do núcleo segue late-bound (dynamic).
+
+      NoWarn NU1701: o pacote declara só .NET Framework, mas é metadado de interface COM
+      e roda no net8.0-windows (testes, servidor MCP) sem diferença — o aviso era ruído
+      em toda compilação.
     -->
-    <PackageReference Include="Interop.SolidEdge" Version="219.0.0" />
+    <PackageReference Include="Interop.SolidEdge" Version="219.0.0" NoWarn="NU1701" />
     <!-- Config/AutoEdmConfig.cs (config.json em %LOCALAPPDATA%, revisão A3) -->
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
