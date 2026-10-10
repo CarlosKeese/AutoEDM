@@ -19,8 +19,8 @@
     Onde gravar o ZIP. Padrão: dist\ na raiz do repositório.
 
 .EXAMPLE
-    pwsh tools\pack.ps1
-    pwsh tools\pack.ps1 -Version 2026.8.20
+    powershell -ExecutionPolicy Bypass -File tools\pack.ps1
+    powershell -ExecutionPolicy Bypass -File tools\pack.ps1 -Version 2026.8.20
 #>
 param(
     [string]$Version = (Get-Date -Format 'yyyy.M.d'),

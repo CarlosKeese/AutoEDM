@@ -39,7 +39,7 @@ ferramentas são escritos UMA vez e os dois lados usam o mesmo tipo.
 ```powershell
 dotnet build AutoEDM.sln -c Release -p:Platform=x64
 dotnet test  tests/AutoEDM.Core.Tests/AutoEDM.Core.Tests.csproj -c Release
-pwsh tools\pack.ps1 -Version 2026.9.9                                 # gera dist\AutoEDM-2026.9.9.zip
+powershell -ExecutionPolicy Bypass -File tools\pack.ps1 -Version 2026.9.9                                 # gera dist\AutoEDM-2026.9.9.zip
 src\AutoEDM.Register\bin\x64\Release\net472\AutoEDM.Register.exe      # registra
 src\AutoEDM.Register\bin\x64\Release\net472\AutoEDM.Register.exe /u   # remove
 ```
@@ -426,7 +426,7 @@ malha (raio virado retas) coincide com ela por construção. O veredito do relat
 "EXATO" se o desvio passa E nenhum trecho do contorno é polígono da malha sem correção.
 
 **Próxima ação:**
-1. add-in já instalado (2026-10-10); falta o servidor MCP — `pwsh tools\deploy-dev.ps1
+1. add-in já instalado (2026-10-10); falta o servidor MCP — `powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1
    -Configuration Release -IncludeMcp` com SE e Claude Code fechados — e rodar o botão
    "Malha → sólido" nos corpos 1, 2, 4, 5 e 6;
 2. pernas do corpo 3: perfil de perna que não é reta/arco (spline?) + concordância de canto —

@@ -31,9 +31,9 @@
     trava o próprio exe e o Core.dll ao lado dele.
 
 .EXAMPLE
-    pwsh tools\deploy-dev.ps1
-    pwsh tools\deploy-dev.ps1 -Configuration Release
-    pwsh tools\deploy-dev.ps1 -Configuration Release -IncludeMcp
+    powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1
+    powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 -Configuration Release
+    powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 -Configuration Release -IncludeMcp
 #>
 param(
     [ValidateSet('Debug', 'Release')]

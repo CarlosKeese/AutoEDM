@@ -448,8 +448,8 @@ escrita sem ninguém notar.
 O add-in é COM in-process com registro **por usuário** (`HKCU`), então não há MSI nem `regasm`: o pacote é um **ZIP portátil** que instala sem senha de administrador.
 
 ```powershell
-pwsh tools\pack.ps1                    # versão = data de hoje, ex. dist\AutoEDM-2026.9.9.zip
-pwsh tools\pack.ps1 -Version 2026.9.20
+powershell -ExecutionPolicy Bypass -File tools\pack.ps1                    # versão = data de hoje, ex. dist\AutoEDM-2026.9.9.zip
+powershell -ExecutionPolicy Bypass -File tools\pack.ps1 -Version 2026.9.20
 ```
 
 O script compila em Release, remove `*.pdb`, junta `instalar.cmd` / `desinstalar.cmd` / `LEIAME.txt` (de [`tools/dist/`](tools/dist/)) e zipa. A versão vira `FileVersion`/`InformationalVersion` e aparece na primeira linha do log do add-in — é assim que se descobre, num suporte remoto, qual build a máquina está rodando. A `AssemblyVersion` fica fixa em `1.0.0.0` de propósito: ver [`Directory.Build.props`](Directory.Build.props).

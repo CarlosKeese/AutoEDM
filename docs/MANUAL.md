@@ -426,7 +426,7 @@ Cada botão virou uma ferramenta que chama **o mesmo método do Core**. Só a bo
 1. Definir nome, descrição e `InputSchemaJson` em `Mcp/ToolCatalog.cs`. Marcar `Writes = true` se alterar o modelo ou gravar arquivo.
 2. Declarar o pré-requisito de documento e ambiente na tabela `Requirements` de `SeToolRunner.cs`.
 3. Implementar em `SeToolRunner`. **Nunca deixar exceção subir**; devolver texto que o agente possa agir em cima.
-4. Recompilar **os dois processos**: `pwsh tools\deploy-dev.ps1 -Configuration Release -IncludeMcp`, com a SE **e** o Claude Code fechados. O agente lê o catálogo do **servidor**, não do add-in, e cada um carrega sua própria cópia do `Core` — esquecer o `-IncludeMcp` é a causa nº 1 de "minha ferramenta nova não aparece".
+4. Recompilar **os dois processos**: `powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 -Configuration Release -IncludeMcp`, com a SE **e** o Claude Code fechados. O agente lê o catálogo do **servidor**, não do add-in, e cada um carrega sua própria cópia do `Core` — esquecer o `-IncludeMcp` é a causa nº 1 de "minha ferramenta nova não aparece".
 
 ## 2.5 Testar a ponte sem CAD
 
@@ -887,7 +887,7 @@ Distribuição: `ORingGroove` 30 · `PrimitiveModel` 21 · `McpBridge` 16 · `Sa
 
 ```powershell
 dotnet build AutoEDM.sln -c Release -p:Platform=x64      # x64 é obrigatório
-pwsh tools\pack.ps1 -Version 2026.9.18                   # gera dist\AutoEDM-<versão>.zip
+powershell -ExecutionPolicy Bypass -File tools\pack.ps1 -Version 2026.9.18                   # gera dist\AutoEDM-<versão>.zip
 ```
 
 O ZIP traz `instalar.cmd`, que roda o `AutoEDM.Register`: ele copia tudo para `%LOCALAPPDATA%\AutoEDM\addin` e registra em **HKCU** (sem admin) — `InprocServer32` com `mscoree.dll` e `CodeBase` apontando para a pasta de deploy, `AutoConnect=1`, as categorias de add-in e de ambiente, e o ProgId.
@@ -899,8 +899,8 @@ Se `AutoEDM.AddIn.dll` estiver em uso, o registrador **falha com exit 1** em vez
 ## 5.2 O ciclo de desenvolvimento com a SE
 
 ```powershell
-pwsh tools\deploy-dev.ps1                                 # SE fechada
-pwsh tools\deploy-dev.ps1 -Configuration Release -IncludeMcp   # + Claude Code fechado
+powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1                                 # SE fechada
+powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 -Configuration Release -IncludeMcp   # + Claude Code fechado
 ```
 
 Quatro coisas que custaram rodada de teste:
