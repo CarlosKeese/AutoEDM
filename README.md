@@ -159,7 +159,7 @@ orgânica, ainda diverge e é avisada.
 
 | Comando | Ambiente | O que faz |
 |---|---|---|
-| **Malha → sólido** | qualquer | Lê o corpo de malha (pergunta qual, se houver vários), mostra a identificação e o plano — faixas, contornos, correções, volumes e avisos — e, confirmando, constrói o sólido numa **peça nova ordenada, não salva**, com os esboços ocultos. Termina com o volume e o **desvio geométrico** do sólido contra a malha, e diz se o resultado é exato. |
+| **Malha → sólido** | qualquer | Lista os corpos de malha com caixa de seleção (todos marcados): converte **um ou vários de uma vez**, cada um numa peça nova; com **"reunir numa montagem"**, salva as peças numa pasta (padrão: "&lt;peça&gt; - sólidos" ao lado da peça da malha, nada é sobrescrito) e monta todas numa montagem nova, cada uma na posição original. Para um corpo só, mostra a identificação e o plano — faixas, contornos, correções, volumes e avisos — e, confirmando, constrói o sólido numa **peça nova ordenada, não salva**, com os esboços ocultos. Termina com o volume e o **desvio geométrico** do sólido contra a malha, e diz se o resultado é exato. |
 | **Sonda de malha** | qualquer | Mede, na malha real: corpos de facetas, faces de malha, quantos triângulos leem e por qual método, a caixa envolvente em mm, e **quais membros da API de malha existem nesta versão** — presença conferida por introspecção **antes** de chamar, com o erro exato de tudo que falha. Pergunta antes de incluir o teste de **seccionamento**, o único que escreve (cria esboços, tenta apagá-los, nunca salva) e o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Resultado completo no log. |
 
 ### MCP — qualquer documento (nem precisa de um)

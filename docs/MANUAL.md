@@ -360,7 +360,7 @@ SeToolRunner.Execute                  thread STA da Solid Edge, COM ao vivo
 | `se_planos` | **peça** | — | os `RefPlanes` por índice, com nome e a normal quando legível |
 | `se_log` | nada | `linhas` int 1–2000, **padrão 200** | as últimas N linhas do log desta sessão da SE, e o caminho do arquivo |
 | `se_reconhecer_malha` | **peça** | ver abaixo | abre pela **identificação** (furos/pinos, raios, chanfros/cones, faces inclinadas, agrupados pela medida) e lista planos, cilindros, cones, toros e esferas ajustados sobre os triângulos, cada um com o **RMS do próprio ajuste**; a área que sobra como "livre" |
-| `se_malha_para_solido` | **peça** com corpo de malha | `corpo`, `construir`, `arredondarMm` (0,01; 0 desliga), `toleranciaCilindroMm` (0,005 — suba para malha de scanner) | identificação + plano 2,5D (níveis, contornos, correções de fronteira, volumes, avisos). Com `construir: true` (**exige escrita liberada**) cria a peça nova e devolve volume e **desvio geométrico** nos dois sentidos, com o veredito "exato" ou não |
+| `se_malha_para_solido` | **peça** com corpo de malha | `corpo`, `construir`, `arredondarMm` (0,01; 0 desliga), `toleranciaCilindroMm` (0,005 — suba para malha de scanner); **lote:** `corpos` (lista) ou `todos`, `montagem` (com `construir`: salva as peças e monta), `pasta` | identificação + plano 2,5D (níveis, contornos, correções de fronteira, volumes, avisos). Com `construir: true` (**exige escrita liberada**) cria a peça nova e devolve volume e **desvio geométrico** nos dois sentidos, com o veredito "exato" ou não |
 
 Parâmetros de `se_reconhecer_malha` — todos opcionais e **clampados** na faixa, nunca viram erro:
 
@@ -831,6 +831,15 @@ Receitas da SE provadas para isto (226): revolução por `Profile.SetAxisOfRevol
 **perfil de extrusão desenhado anti-horário nas coordenadas do ESBOÇO** — horário, o `igLeft` do
 recorte é o lado de fora e a feature leva a fatia inteira; feature com falha é apagada, nunca fica
 na árvore.
+
+**Lote e montagem** (`MeshToSolidBatch`): vários corpos de uma vez, cada um numa peça nova. Com
+montagem, cada peça é salva (nome "&lt;peça&gt; - &lt;corpo&gt;.par", nunca sobrescreve — repetido ganha
+" (2)") e fechada, e entra numa montagem nova por `Occurrences.AddByFilename` + `PutMatrix`
+identidade: como cada sólido foi construído nas coordenadas da sua malha, o arranjo original sai
+sem posicionar nada. A montagem é salva na mesma pasta. No botão, um corpo sem montagem mantém o
+fluxo detalhado; vários corpos mostram o plano de todos, pedem uma confirmação e terminam com uma
+linha por corpo (exato ou desvio, volume, arquivo) — o relatório completo vai para o log. Medido:
+as 6 malhas do Rack_Anghinoni em 100 s.
 
 **Limites conhecidos:** cone parcial e cilindro de eixo inclinado são avisados, não corrigidos; uma
 sequência de superfícies não-Z sem canto vivo entre elas só fecha se cada uma tiver a sua região;

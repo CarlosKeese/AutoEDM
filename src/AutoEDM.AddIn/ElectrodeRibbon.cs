@@ -1075,67 +1075,151 @@ namespace AutoEDM.AddIn
             {
                 const string title = "AutoEDM — Malha → sólido";
 
-                var meshes = new System.Collections.Generic.List<int>();
-                var names = new System.Collections.Generic.List<string>();
-                int count = 0;
-                try { count = (int)doc.Models.Count; } catch { }
-                for (int i = 1; i <= count; i++)
-                {
-                    dynamic m = doc.Models.Item(i);
-                    bool facet = false;
-                    try { facet = (bool)m.IsFacetBody; } catch { }
-                    if (!facet) continue;
-                    string nm = "corpo " + i;
-                    try { nm = (string)m.BodyName; } catch { }
-                    meshes.Add(i);
-                    names.Add("[" + i + "] " + nm);
-                }
-                if (meshes.Count == 0)
+                var bodies = MeshToSolidBatch.ListMeshBodies((object)doc);
+                if (bodies.Count == 0)
                 {
                     MessageBox.Show("Esta peça não tem corpo de MALHA (facetas). Importe o STL/OBJ como malha e tente de novo.",
                         title, MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
 
-                int pick = 0;
-                if (meshes.Count > 1)
-                {
-                    pick = PickFromList(title, "A peça tem " + meshes.Count + " corpos de malha. Qual converter?", names);
-                    if (pick < 0) return;
-                }
+                MeshBodyChoice choice = PickMeshBodies(title, bodies, MeshToSolidBatch.DefaultFolder(doc));
+                if (choice == null || choice.Bodies.Count == 0) return;
 
-                dynamic model = doc.Models.Item(meshes[pick]);
-                string name = names[pick];
-                MeshData mesh = MeshReader.Read((object)model.Body, 0.01);
-                if (!mesh.Ok)
+                if (choice.Bodies.Count == 1 && !choice.Assembly)
                 {
-                    MessageBox.Show("Não consegui ler os triângulos: " + mesh.Error, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    ConvertOne(title, doc, choice.Bodies[0]);
                     return;
                 }
 
-                RecognitionResult rec = SurfaceRecognizer.Recognize(mesh.PointsMm, new RecognizerOptions());
-                PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, rec, null);
-                CorrectionPlan corrections = BoundaryCorrections.Plan(mesh.PointsMm, rec, plan);
-                string planText = PrismaticReport.Format(plan, null, name, rec, corrections);
-                Log.Info(planText);
+                object app = ElectrodeAddIn.Current.App;
+                BatchResult planned = MeshToSolidBatch.Run(app, (object)doc, choice.Bodies, false, false, null, null);
+                string ask = MeshToSolidBatch.Summary(planned) + "\nConstruir " + choice.Bodies.Count + " peça(s) nova(s)" +
+                             (choice.Assembly ? ", salvar em\n" + choice.Folder + "\ne reunir todas numa MONTAGEM nova?" : " (ordenadas, não salvas)?");
+                if (MessageBox.Show(ask, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
-                if (plan.Bands.Count == 0)
-                {
-                    MessageBox.Show(planText, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                var go = MessageBox.Show(planText + "\nConstruir este sólido numa PEÇA NOVA (ordenada, não salva)?",
-                    title, MessageBoxButtons.YesNo, plan.Warnings.Count == 0 ? MessageBoxIcon.Question : MessageBoxIcon.Warning);
-                if (go != DialogResult.Yes) return;
-
-                PrismaticBuildResult built = PrismaticBuilder.Build((object)ElectrodeAddIn.Current.App, plan, corrections,
-                    name, mesh.PointsMm);
-                string text = PrismaticReport.Format(plan, built, name, rec, corrections);
+                BatchResult built = MeshToSolidBatch.Run(app, (object)doc, choice.Bodies, true, choice.Assembly, choice.Folder, null);
+                foreach (BatchBodyResult b in built.Bodies)
+                    if (b.Plan != null) Log.Info(PrismaticReport.Format(b.Plan, b.Build, b.Body.Name, b.Recognition, b.Corrections));
+                string text = MeshToSolidBatch.Summary(built) + "\n(O relatório completo de cada corpo está no log.)";
                 Log.Info(text);
                 MessageBox.Show(text, title, MessageBoxButtons.OK,
-                    built.BandsFailed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    built.Bodies.Exists(b => b.Error != null) || built.Messages.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             });
+        }
+
+        /// <summary>Um corpo, sem montagem: o fluxo detalhado de sempre (plano → confirmação →
+        /// peça nova → relatório completo).</summary>
+        private static void ConvertOne(string title, dynamic doc, MeshBody body)
+        {
+            dynamic model = doc.Models.Item(body.Index);
+            string name = "[" + body.Index + "] " + body.Name;
+            MeshData mesh = MeshReader.Read((object)model.Body, 0.01);
+            if (!mesh.Ok)
+            {
+                MessageBox.Show("Não consegui ler os triângulos: " + mesh.Error, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            RecognitionResult rec = SurfaceRecognizer.Recognize(mesh.PointsMm, new RecognizerOptions());
+            PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, rec, null);
+            CorrectionPlan corrections = BoundaryCorrections.Plan(mesh.PointsMm, rec, plan);
+            string planText = PrismaticReport.Format(plan, null, name, rec, corrections);
+            Log.Info(planText);
+
+            if (plan.Bands.Count == 0)
+            {
+                MessageBox.Show(planText, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var go = MessageBox.Show(planText + "\nConstruir este sólido numa PEÇA NOVA (ordenada, não salva)?",
+                title, MessageBoxButtons.YesNo, plan.Warnings.Count == 0 ? MessageBoxIcon.Question : MessageBoxIcon.Warning);
+            if (go != DialogResult.Yes) return;
+
+            PrismaticBuildResult built = PrismaticBuilder.Build((object)ElectrodeAddIn.Current.App, plan, corrections,
+                name, mesh.PointsMm);
+            string text = PrismaticReport.Format(plan, built, name, rec, corrections);
+            Log.Info(text);
+            MessageBox.Show(text, title, MessageBoxButtons.OK,
+                built.BandsFailed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+
+        private sealed class MeshBodyChoice
+        {
+            public System.Collections.Generic.List<MeshBody> Bodies = new System.Collections.Generic.List<MeshBody>();
+            public bool Assembly;
+            public string Folder;
+        }
+
+        /// <summary>Quais corpos converter (todos marcados de início) e se as peças vão para uma
+        /// montagem, com a pasta de saída.</summary>
+        private static MeshBodyChoice PickMeshBodies(string title, System.Collections.Generic.List<MeshBody> bodies, string defaultFolder)
+        {
+            using (var form = new Form())
+            using (var label = new Label())
+            using (var list = new CheckedListBox())
+            using (var all = new CheckBox())
+            using (var asm = new CheckBox())
+            using (var folder = new TextBox())
+            using (var browse = new Button())
+            using (var ok = new Button())
+            using (var cancel = new Button())
+            {
+                form.Text = title;
+                form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                form.StartPosition = FormStartPosition.CenterScreen;
+                form.MinimizeBox = false;
+                form.MaximizeBox = false;
+                form.ClientSize = new System.Drawing.Size(520, 360);
+
+                label.Text = "A peça tem " + bodies.Count + " corpo(s) de malha. Marque os que vão virar sólido — cada um numa peça nova:";
+                label.SetBounds(12, 10, 496, 32);
+                list.SetBounds(12, 46, 496, 170);
+                list.CheckOnClick = true;
+                foreach (MeshBody b in bodies) list.Items.Add("[" + b.Index + "] " + b.Name, true);
+
+                all.Text = "Marcar / desmarcar todos";
+                all.Checked = true;
+                all.SetBounds(12, 222, 300, 22);
+                all.CheckedChanged += (s, e) => { for (int i = 0; i < list.Items.Count; i++) list.SetItemChecked(i, all.Checked); };
+
+                asm.Text = "Salvar as peças e reunir todas numa MONTAGEM nova (cada uma na posição original)";
+                asm.SetBounds(12, 252, 496, 22);
+                folder.SetBounds(30, 280, 390, 24);
+                folder.Text = defaultFolder ?? "";
+                browse.Text = "Pasta…";
+                browse.SetBounds(426, 279, 82, 26);
+                folder.Enabled = browse.Enabled = false;
+                asm.CheckedChanged += (s, e) => folder.Enabled = browse.Enabled = asm.Checked;
+                browse.Click += (s, e) =>
+                {
+                    using (var dlg = new FolderBrowserDialog())
+                    {
+                        dlg.Description = "Pasta das peças convertidas e da montagem";
+                        if (System.IO.Directory.Exists(folder.Text)) dlg.SelectedPath = folder.Text;
+                        if (dlg.ShowDialog(form) == DialogResult.OK) folder.Text = dlg.SelectedPath;
+                    }
+                };
+
+                ok.Text = "OK"; ok.DialogResult = DialogResult.OK; ok.SetBounds(352, 322, 75, 26);
+                cancel.Text = "Cancelar"; cancel.DialogResult = DialogResult.Cancel; cancel.SetBounds(433, 322, 75, 26);
+                form.Controls.AddRange(new Control[] { label, list, all, asm, folder, browse, ok, cancel });
+                form.AcceptButton = ok;
+                form.CancelButton = cancel;
+
+                if (form.ShowDialog() != DialogResult.OK) return null;
+                var choice = new MeshBodyChoice { Assembly = asm.Checked, Folder = folder.Text.Trim() };
+                for (int i = 0; i < list.Items.Count; i++) if (list.GetItemChecked(i)) choice.Bodies.Add(bodies[i]);
+                if (choice.Assembly && string.IsNullOrWhiteSpace(choice.Folder))
+                {
+                    MessageBox.Show("Para montar, informe a pasta onde as peças e a montagem serão salvas " +
+                                    "(a peça da malha ainda não foi salva, então não há pasta ao lado dela).",
+                        title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return null;
+                }
+                return choice;
+            }
         }
 
         /// <summary>Lista simples para escolher um item; −1 se cancelar.</summary>

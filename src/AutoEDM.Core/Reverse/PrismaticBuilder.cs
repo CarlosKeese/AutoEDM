@@ -20,6 +20,9 @@ namespace AutoEDM.Reverse
 
         public string DocumentName;
 
+        /// <summary>O documento da peça criada (COM), para quem precisa salvar ou montar.</summary>
+        public object Document;
+
         /// <summary>Desvio geométrico, quando a malha veio junto: cada vértice da malha até a
         /// superfície do sólido, e cada vértice do sólido (re-tesselado) até a malha. null = não
         /// medido.</summary>
@@ -76,6 +79,7 @@ namespace AutoEDM.Reverse
             dynamic doc = app.Documents.Add("SolidEdge.PartDocument");
             doc.ModelingMode = 2; // ordenado — peça NOVA, criada aqui
             result.DocumentName = doc.Name;
+            result.Document = doc;
             Log.Info($"[ENG.REVERSA] Construção prismática em '{doc.Name}' ({plan.Bands.Count} faixas){(string.IsNullOrEmpty(partName) ? "" : " — " + partName)}.");
 
             for (int i = 0; i < plan.Bands.Count; i++)

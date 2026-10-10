@@ -181,6 +181,10 @@ namespace AutoEDM.Mcp
                 InputSchemaJson =
                     "{\"type\":\"object\",\"properties\":{" +
                     "\"corpo\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Índice do corpo de malha na peça (padrão 1).\"}," +
+                    "\"corpos\":{\"type\":\"array\",\"items\":{\"type\":\"integer\",\"minimum\":1},\"description\":\"LOTE: índices dos corpos de malha a converter, cada um numa peça nova.\"}," +
+                    "\"todos\":{\"type\":\"boolean\",\"description\":\"LOTE: todos os corpos de malha da peça.\"}," +
+                    "\"montagem\":{\"type\":\"boolean\",\"description\":\"Com 'construir': salva cada peça e reúne todas numa MONTAGEM nova, cada uma na posição original. Nenhum arquivo é sobrescrito.\"}," +
+                    "\"pasta\":{\"type\":\"string\",\"description\":\"Pasta das peças e da montagem. Padrão: '<peça> - sólidos' ao lado da peça da malha (que então precisa estar salva).\"}," +
                     "\"construir\":{\"type\":\"boolean\",\"description\":\"true = cria o sólido numa PEÇA NOVA (exige escrita liberada). Padrão false = só o plano.\"}," +
                     "\"arredondarMm\":{\"type\":\"number\",\"description\":\"Passo de arredondamento das medidas reconhecidas. Padrão 0,01; 0 desliga.\"}," +
                     "\"toleranciaCilindroMm\":{\"type\":\"number\",\"description\":\"Desvio radial aceito num cilindro. Padrão 0,005 (STL de CAD); suba para malha de scanner.\"}}," +
@@ -196,7 +200,10 @@ namespace AutoEDM.Mcp
                     "revolução, raio de eixo X/Y e face inclinada viram extrusão ao longo do eixo, cada uma protrusão ou " +
                     "recorte conforme a malha diz que há material. Sem 'construir' é só leitura. Com 'construir': true " +
                     "(escrita liberada) cria uma PEÇA NOVA ordenada (faixas + correções), mede o DESVIO geométrico nos dois " +
-                    "sentidos (malha → sólido e sólido → malha) além do volume, e não salva. A peça da malha não é tocada."
+                    "sentidos (malha → sólido e sólido → malha) além do volume, e não salva. LOTE: 'corpos' (lista) ou 'todos' " +
+                    "converte vários corpos de uma vez; com 'montagem' (e 'construir') salva cada peça na 'pasta' e reúne todas " +
+                    "numa montagem nova, na posição original de cada malha — a resposta traz um resumo por corpo e o detalhe " +
+                    "vai para o log. A peça da malha não é tocada."
             },
 
             // ---------------------------------------------------- escrita (modo ESCRITA)

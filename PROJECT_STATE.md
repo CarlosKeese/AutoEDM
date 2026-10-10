@@ -97,7 +97,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release; depois da fusão com o grupo Molde o botão é o **id 28** e a ribbon `GuiVersion` 19); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 457 passando, 0 falhas |
+| Testes de unidade | ✅ 459 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -451,6 +451,17 @@ concordância de CANTO em volta da ponta R1 (R5 da parede → ponta R1 → face 
 meridianos, nenhum perfil é círculo (resíduo até 0,09 mm, "raio" de 2,7 a 4,7) — forma livre,
 avisada como tal. Corpos 1, 2, 4, 5 e 6 reconferidos, continuam exatos. 457 testes.
 
+### Lote e montagem (Carlos, 2026-10-10)
+
+"Converter mais de um corpo, e todos os convertidos em peças separadas numa única montagem."
+`MeshToSolidBatch`: lista os corpos de malha, converte os escolhidos (cada um numa peça nova) e,
+com montagem, salva cada peça ("&lt;peça&gt; - &lt;corpo&gt;.par" na pasta "&lt;peça&gt; - sólidos" ao lado da
+peça da malha; nada sobrescrito) e monta todas por `AddByFilename` + `PutMatrix` identidade — o
+arranjo original sai sozinho, porque cada sólido nasce nas coordenadas da malha. Botão: lista com
+caixas de seleção + "reunir numa montagem" + pasta; MCP: `corpos`/`todos`/`montagem`/`pasta`.
+Validado por console nas 6 malhas: 6 peças + montagem em 100 s, ocorrências na origem sem rotação.
+459 testes.
+
 **Próxima ação:**
 1. add-in já instalado (2026-10-10); falta o servidor MCP — `powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1
    -Configuration Release -IncludeMcp` com SE e Claude Code fechados — e rodar o botão
@@ -495,6 +506,9 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-10-10 (noite, 2)** — **Malha → sólido em lote, com montagem.** Vários corpos de uma vez;
+  peças salvas e reunidas numa montagem nova na posição original. Validado nas 6 malhas (100 s).
+  459 testes.
 - **2026-10-10 (noite)** — **Pernas do corpo 3 reconhecidas.** Corte de secção fora de vértice,
   faixa plana, disputa entre cilindros, fragmentos coaxiais e raio de concordância por hipótese
   (cilindro/toro tangente a duas superfícies conhecidas). Corpo 3: −1.387 → −58 mm³; sobra só a

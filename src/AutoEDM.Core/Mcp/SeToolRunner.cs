@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using AutoEDM.Com;
@@ -686,6 +687,14 @@ namespace AutoEDM.Mcp
                 return "RECUSADO: 'construir' cria uma peça nova, e a ponte está em SOMENTE-LEITURA. Rode sem 'construir' " +
                        "para ver o plano, ou peça ao Carlos para clicar em \"Liberar escrita\" no grupo MCP da ribbon.";
 
+            bool all = ReadBool(argsJson, "todos", false);
+            bool assembly = ReadBool(argsJson, "montagem", false);
+            List<int> wanted = ReadIntList(argsJson, "corpos");
+            if (assembly && !build)
+                return "RECUSADO: 'montagem' monta as peças CONSTRUÍDAS — use junto com 'construir': true.";
+            if (all || assembly || (wanted != null && wanted.Count > 0))
+                return MeshToSolidBatchTool(app, doc, argsJson, all, wanted, build, assembly);
+
             MeshData mesh; string name, route, error;
             if (!TryReadMesh(doc, argsJson, out mesh, out name, out route, out error)) return error;
 
@@ -701,6 +710,45 @@ namespace AutoEDM.Mcp
 
             return PrismaticReport.Format(plan, result, name, r, corrections) +
                    (build ? "" : "\n(Só o plano. Para construir o sólido numa peça nova: 'construir': true, com a escrita liberada.)");
+        }
+
+        /// <summary>
+        /// Lote: vários corpos ('corpos' ou 'todos'), cada um numa peça nova; com 'montagem', as
+        /// peças são salvas (pasta 'pasta', ou "&lt;peça&gt; - sólidos" ao lado da peça da malha)
+        /// e reunidas numa montagem nova, cada uma na posição identidade. O detalhe de cada
+        /// corpo vai para o log; a resposta traz o resumo e a identificação de cada um.
+        /// </summary>
+        private string MeshToSolidBatchTool(dynamic app, dynamic doc, string argsJson, bool all, List<int> wanted,
+            bool build, bool assembly)
+        {
+            List<MeshBody> bodies = MeshToSolidBatch.ListMeshBodies((object)doc);
+            if (bodies.Count == 0) return "Esta peça não tem corpo de MALHA (facetas).";
+            if (!all)
+            {
+                var missing = wanted.Where(w => bodies.All(b => b.Index != w)).ToList();
+                if (missing.Count > 0)
+                    return "Corpo(s) " + string.Join(", ", missing) + " não são de malha. Corpos de malha: " +
+                           string.Join(", ", bodies.Select(b => b.Index + " = " + b.Name)) + ".";
+                bodies = bodies.Where(b => wanted.Contains(b.Index)).ToList();
+            }
+
+            BatchResult result = MeshToSolidBatch.Run((object)app, (object)doc, bodies, build, assembly,
+                ReadString(argsJson, "pasta"), RecognizerOptionsFrom(argsJson));
+
+            var sb = new StringBuilder(MeshToSolidBatch.Summary(result));
+            foreach (BatchBodyResult b in result.Bodies)
+            {
+                if (b.Plan == null) continue;
+                Log.Info(PrismaticReport.Format(b.Plan, b.Build, b.Body.Name, b.Recognition, b.Corrections));
+                sb.AppendLine();
+                sb.AppendLine("[" + b.Body.Index + "] " + b.Body.Name);
+                sb.Append(SurfaceReport.Identify(b.Recognition));
+            }
+            sb.AppendLine();
+            sb.AppendLine(build
+                ? "(O relatório completo de cada corpo está no log — se_log.)"
+                : "(Só o plano. Para construir: 'construir': true; para reunir numa montagem: 'montagem': true.)");
+            return sb.ToString();
         }
 
         private static RecognizerOptions RecognizerOptionsFrom(string argsJson)
