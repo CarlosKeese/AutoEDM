@@ -47,6 +47,9 @@ namespace AutoEDM.Reverse
     {
         public double Z0, Z1;
         public readonly List<SectionLoop> Loops = new List<SectionLoop>();
+
+        /// <summary>O que a construção teve de ajustar nesta faixa (ex.: furo tangente aberto).</summary>
+        public readonly List<string> Notes = new List<string>();
     }
 
     public sealed class PrismaticPlan
@@ -151,7 +154,8 @@ namespace AutoEDM.Reverse
                 foreach (List<Seg> raw2 in loops)
                 {
                     SectionLoop loop = Exactify(raw2, r, o, plan.Warnings, z0, z1);
-                    if (loop != null) band.Loops.Add(loop);
+                    if (loop == null) continue;
+                    band.Loops.AddRange(SplitTouchingCircles(loop));
                 }
                 if (band.Loops.Count == 0) continue;
 
@@ -230,11 +234,13 @@ namespace AutoEDM.Reverse
             // Encadeia pelo ponto inicial. O ponto de corte de uma aresta é calculado sempre com
             // os vértices na MESMA ordem (EdgeCut), então os dois triângulos que dividem a aresta
             // dão o ponto bit a bit igual — a chave pode ser exata.
-            var byStart = new Dictionary<string, int>(segs.Count);
+            var byStart = new Dictionary<string, List<int>>(segs.Count);
             for (int i = 0; i < segs.Count; i++)
             {
                 string k = Key(segs[i].Ax, segs[i].Ay);
-                if (!byStart.ContainsKey(k)) byStart[k] = i;
+                List<int> list;
+                if (!byStart.TryGetValue(k, out list)) byStart[k] = list = new List<int>(1);
+                list.Add(i);
             }
 
             var used = new bool[segs.Count];
@@ -248,12 +254,41 @@ namespace AutoEDM.Reverse
                 {
                     used[cur] = true;
                     loop.Add(segs[cur]);
-                    int next;
-                    cur = byStart.TryGetValue(Key(segs[cur].Bx, segs[cur].By), out next) ? next : -1;
+                    cur = Next(segs, byStart, used, segs[cur]);
                 }
                 if (loop.Count >= 3) loops.Add(loop);
             }
             return loops;
+        }
+
+        /// <summary>
+        /// Próximo segmento do laço. Num vértice com UMA saída livre, é ela. Com mais de uma —
+        /// dois laços se tocando, o caso do furo tangente à parede do bolsão (malha 6 do
+        /// Rack_Anghinoni, 2026-10-09) — vale a regra de percorrer face de grafo planar: com o
+        /// material sempre à esquerda, segue-se a saída que vira MAIS para a ESQUERDA, e a
+        /// meia-volta por último. Conferido nos dois casos: no canto encostado, ficar no mesmo
+        /// bloco é virar à esquerda (+90°), e a direita (−90°) entra no vizinho; na tangência,
+        /// seguir reto (0°) é o certo, e a meia-volta (180°) entra no furo.
+        /// </summary>
+        private static int Next(List<Seg> segs, Dictionary<string, List<int>> byStart, bool[] used, Seg from)
+        {
+            List<int> cands;
+            if (!byStart.TryGetValue(Key(from.Bx, from.By), out cands)) return -1;
+
+            int best = -1;
+            double bestTurn = double.MinValue;
+            double inX = from.Bx - from.Ax, inY = from.By - from.Ay;
+            foreach (int c in cands)
+            {
+                if (used[c]) continue;
+                double outX = segs[c].Bx - segs[c].Ax, outY = segs[c].By - segs[c].Ay;
+                // Giro com sinal: positivo = para a esquerda. Meia-volta vale −π: a escolha MENOS
+                // preferida, venha o atan2 com +π ou −π.
+                double turn = Math.Atan2(inX * outY - inY * outX, inX * outX + inY * outY);
+                if (Math.Abs(Math.Abs(turn) - Math.PI) < 1e-9) turn = -Math.PI;
+                if (turn > bestTurn) { bestTurn = turn; best = c; }
+            }
+            return best;
         }
 
         private static double[] EdgeCut(double[] p, int a, int b, double z)
@@ -428,10 +463,40 @@ namespace AutoEDM.Reverse
                 }
             }
 
-            // Duas sequências da mesma reta separadas por nada (sobra de malha): descarta trecho
-            // de comprimento zero que a interseção exata produziu.
-            loop.Elements.RemoveAll(e => e.Kind != "circulo" && Dist(e.Start[0], e.Start[1], e.End[0], e.End[1]) < 1e-6);
+            // Duas sequências da mesma reta separadas por nada (sobra de malha): descarta RETA de
+            // comprimento zero que a interseção exata produziu. Arco que volta ao próprio início
+            // NÃO é sobra — é círculo inteiro encostado no laço (ver SplitTouchingCircles).
+            loop.Elements.RemoveAll(e => e.Kind == "reta" && Dist(e.Start[0], e.Start[1], e.End[0], e.End[1]) < 1e-6);
             return loop.Elements.Count >= 2 ? loop : null;
+        }
+
+        /// <summary>
+        /// Furo que TOCA outro contorno num único ponto (o Ø2 tangente à parede do bolsão na malha
+        /// 6 do Rack_Anghinoni) chega como um desvio dentro do laço vizinho: o trecho de cilindro
+        /// sai do vértice de contato e volta a ele. Esse trecho é um círculo inteiro e vira laço
+        /// próprio; o laço vizinho continua fechado, porque o desvio começava e terminava no
+        /// mesmo ponto.
+        /// </summary>
+        private static IEnumerable<SectionLoop> SplitTouchingCircles(SectionLoop loop)
+        {
+            var result = new List<SectionLoop>();
+            for (int i = loop.Elements.Count - 1; i >= 0; i--)
+            {
+                SectionElement e = loop.Elements[i];
+                if (e.Kind != "arco" || Dist(e.Start[0], e.Start[1], e.End[0], e.End[1]) > 1e-6) continue;
+                loop.Elements.RemoveAt(i);
+                var circle = new SectionLoop { SignedAreaMm2 = Math.Sign(loop.SignedAreaMm2) * Math.PI * e.RadiusMm * e.RadiusMm };
+                circle.Elements.Add(new SectionElement
+                {
+                    Kind = "circulo", Center = e.Center, RadiusMm = e.RadiusMm, Region = e.Region, Exact = true
+                });
+                loop.SignedAreaMm2 -= circle.SignedAreaMm2;
+                result.Add(circle);
+            }
+            // Laço de um círculo só (o furo comum) é laço válido; o que não pode sobrar é o
+            // laço vizinho reduzido a menos de dois trechos depois de perder o desvio.
+            if (result.Count == 0 || loop.Elements.Count >= 2) result.Insert(0, loop);
+            return result;
         }
 
         /// <summary>Interseção exata de dois portadores, a mais perto de (qx, qy). Tangência

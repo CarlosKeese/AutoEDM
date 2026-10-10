@@ -61,6 +61,7 @@ namespace AutoEDM.Reverse
                 try
                 {
                     string err = BuildBand(doc, band);
+                    foreach (string note in band.Notes) result.Messages.Add(label + ": " + note);
                     if (err == null) { result.BandsBuilt++; result.Messages.Add(label + ": ok"); }
                     else { result.BandsFailed++; result.Messages.Add(label + ": " + err); }
                 }
@@ -76,13 +77,127 @@ namespace AutoEDM.Reverse
             return result;
         }
 
+        private const int IgFeatureOK = 1216476310;
+
+        /// <summary>Furo = laço de um círculo só, com área negativa (horário: tira material).</summary>
+        private static bool IsHole(SectionLoop l)
+        {
+            return l.Elements.Count == 1 && l.Elements[0].Kind == "circulo" && l.SignedAreaMm2 < 0;
+        }
+
+        /// <summary>
+        /// Uma faixa: protrusão com os contornos (sem os furos), depois os furos como UM recorte
+        /// na mesma altura. Por que separar: furo TANGENTE a outro contorno (o Ø2 encostado na
+        /// parede do bolsão, malha 6 do Rack_Anghinoni) faz o perfil ter laços que se tocam num
+        /// ponto — a protrusão foi criada sem erro e sem material nenhum (−3.216 mm³, a faixa
+        /// inteira). Recorte booleano tolera a tangência, e o furo nasce como feature própria,
+        /// que é como ele foi desenhado.
+        /// </summary>
         private static string BuildBand(dynamic doc, SectionBand band)
         {
-            double z0 = band.Z0;
+            var outlines = band.Loops.FindAll(l => !IsHole(l));
+            var holes = band.Loops.FindAll(IsHole);
+            double depthM = (band.Z1 - band.Z0) / 1000.0;
+
+            if (outlines.Count > 0)
+            {
+                SolidEdgePart.Profile p = Draw(doc, band.Z0, outlines);
+                int end = p.End((SolidEdgePart.ProfileValidationType)IgProfileClosedAllowNested);
+                if (end != 0) return "perfil dos contornos recusado (End = " + end + ")";
+
+                var arr = new SolidEdgePart.Profile[] { p };
+                object models = doc.Models;
+                models.GetType().InvokeMember("AddFiniteExtrudedProtrusion", BindingFlags.InvokeMethod,
+                    null, models, new object[] { 1, arr, IgRight, depthM });
+                // AddFiniteExtrudedProtrusion devolve o MODEL, não a feature: o status se lê na
+                // última protrusão da coleção.
+                dynamic protrusions = doc.Models.Item(1).ExtrudedProtrusions;
+                string bad = Status(protrusions.Item(protrusions.Count), "protrusão");
+                if (bad != null) return bad;
+            }
+
+            if (holes.Count == 0) return null;
+
+            // Todos os furos da faixa num recorte só; se ele falhar, um a um — e o relatório diz
+            // QUAL furo não entrou, em vez de só "falhou".
+            if (CutHoles(doc, band, holes) == null) return null;
+
+            var failed = new List<string>();
+            var widened = new List<string>();
+            foreach (SectionLoop h in holes)
+            {
+                SectionElement c = h.Elements[0];
+                string where = string.Format(CultureInfo.InvariantCulture, "Ø{0:0.00} em ({1:0.00}; {2:0.00})",
+                    2 * c.RadiusMm, c.Center[0], c.Center[1]);
+                if (CutHoles(doc, band, new List<SectionLoop> { h }) == null) continue;
+
+                // Furo TANGENTE a outro contorno (espessura zero entre os dois — o Ø2 encostado
+                // no bolsão da malha 6): o Parasolid recusa o recorte até como booleana. Abrir o
+                // furo +0,002 mm no Ø (5× abaixo do passo de 0,01) é a leitura física de
+                // "espessura zero"; encolher deixaria uma parede de 0,001 mm.
+                if (CutHoles(doc, band, new List<SectionLoop> { Widened(h, TangencyWideningMm) }) == null)
+                    widened.Add(where);
+                else
+                    failed.Add(where);
+            }
+            if (widened.Count > 0)
+                band.Notes.Add("aberto +0,002 mm no Ø por tangência: " + string.Join(", ", widened));
+            return failed.Count == 0 ? null
+                : failed.Count + " de " + holes.Count + " furo(s) não recortaram: " + string.Join(", ", failed);
+        }
+
+        private const double TangencyWideningMm = 0.002;
+
+        private static SectionLoop Widened(SectionLoop hole, double extraDiameterMm)
+        {
+            SectionElement c = hole.Elements[0];
+            var copy = new SectionLoop { SignedAreaMm2 = hole.SignedAreaMm2 };
+            copy.Elements.Add(new SectionElement
+            {
+                Kind = "circulo", Center = c.Center, RadiusMm = c.RadiusMm + extraDiameterMm / 2,
+                Region = c.Region, Exact = false
+            });
+            return copy;
+        }
+
+        /// <summary>Recorta os furos na altura da faixa. Recorte com falha é APAGADO: feature
+        /// falhada que fica na árvore estraga o que vier depois.</summary>
+        private static string CutHoles(dynamic doc, SectionBand band, List<SectionLoop> holes)
+        {
+            SolidEdgePart.Profile p = Draw(doc, band.Z0, holes);
+            int end = p.End((SolidEdgePart.ProfileValidationType)IgProfileClosedAllowNested);
+            if (end != 0) return "perfil dos furos recusado (End = " + end + ")";
+
+            dynamic model = doc.Models.Item(1);
+            dynamic cut = model.ExtrudedCutouts.AddFinite(p, 1 /*igLeft*/, IgRight, (band.Z1 - band.Z0) / 1000.0);
+            string bad = Status(cut, "recorte dos furos");
+            if (bad != null)
+            {
+                try { cut.Delete(); } catch (Exception ex) { Log.Warn("[ENG.REVERSA] apagar recorte falhado: " + ex.GetBaseException().Message); }
+            }
+            return bad;
+        }
+
+        private static string Status(dynamic feature, string what)
+        {
+            if (feature == null) return what + ": a Solid Edge não devolveu feature";
+            try
+            {
+                // ExtrudedProtrusion não tem GetStatusEx (o recorte tem); a propriedade Status
+                // existe nos dois.
+                int st = (int)feature.Status;
+                if (st != IgFeatureOK) return what + ": feature com falha (status " + st + ")";
+            }
+            catch (Exception ex) { Log.Warn("[ENG.REVERSA] status de " + what + ": " + ex.GetBaseException().Message); }
+            return null;
+        }
+
+        private static SolidEdgePart.Profile Draw(dynamic doc, double z0, List<SectionLoop> loops)
+        {
             dynamic profile = SketchAt(doc, z0);
             var typed = (SolidEdgePart.Profile)profile;
 
-            foreach (SectionLoop loop in band.Loops)
+            foreach (SectionLoop loop in loops)
             {
                 var drawn = new List<object>();
                 var kinds = new List<string>();
@@ -125,15 +240,7 @@ namespace AutoEDM.Reverse
                 }
             }
 
-            int end = typed.End((SolidEdgePart.ProfileValidationType)IgProfileClosedAllowNested);
-            if (end != 0) return "perfil recusado (End = " + end + ")";
-
-            var arr = new SolidEdgePart.Profile[] { typed };
-            object models = doc.Models;
-            object feature = models.GetType().InvokeMember("AddFiniteExtrudedProtrusion", BindingFlags.InvokeMethod,
-                null, models, new object[] { 1, arr, IgRight, (band.Z1 - band.Z0) / 1000.0 });
-            if (feature == null) return "a extrusão não devolveu feature";
-            return null;
+            return typed;
         }
 
         /// <summary>Esboço num plano horizontal na altura z (mm).</summary>

@@ -119,6 +119,27 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
+        public void Lacos_que_se_tocam_num_vertice_saem_separados()
+        {
+            // Dois blocos que só se tocam pela aresta vertical em (10; 10): a secção tem dois
+            // quadrados com UM vértice em comum. É a geometria do furo tangente à parede do
+            // bolsão (malha 6 do Rack_Anghinoni), em que o encadeamento ingênuo pulava de um
+            // laço para o outro e a faixa saía com área negativa.
+            double[] mesh = Box(0, 0, 0, 10, 10, 5).Concat(Box(10, 10, 0, 20, 20, 5)).ToArray();
+
+            PrismaticPlan p = PlanOf(mesh);
+
+            SectionBand b = Assert.Single(p.Bands);
+            Assert.Equal(2, b.Loops.Count);
+            Assert.All(b.Loops, l =>
+            {
+                Assert.Equal(4, l.Elements.Count);
+                Assert.Equal(100, l.SignedAreaMm2, 6);
+            });
+            Assert.Equal(1000, p.PlanVolumeMm3, 6);
+        }
+
+        [Fact]
         public void Recusa_reconhecimento_de_outra_malha()
         {
             RecognitionResult r = SurfaceRecognizer.Recognize(Box(0, 0, 0, 10, 10, 10), null);
