@@ -94,7 +94,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Ponte MCP (Claude Code → Solid Edge) | ✅ **validada no SE (2026-09-18)** — 1º run com o CAD aberto: `se_status`, `se_planos`, `se_arvore`, `se_log` e `se_modelar` sobre COM real |
 | Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
 | Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | ✅ **rodado nas 6 malhas reais (2026-10-09)** pelo Core, conferido contra a Eng. Reversa nativa (Ø7,00 e Ø14,00 iguais); plano + cilindro, medidas no centésimo |
-| **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); 🚧 botão e ferramenta MCP compilados, **aguardando instalação** (GuiVersion 17) |
+| **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); 🚧 falta o 1º clique do Carlos no botão |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
 | Testes de unidade | ✅ 398 passando, 0 falhas |
@@ -336,8 +336,8 @@ Resultado nas 6 malhas: **4, 5 e 6 constroem** (corpo = exato); 4 é integralmen
 ângulo de saída e quebra a secção (vértice a 8 mm) — fora do alcance da rota 2,5D reta.
 
 **Próxima ação:**
-1. instalar (SE e Claude Code fechados: `tools\deploy-dev.ps1 -IncludeMcp`) e rodar o botão na
-   malha real;
+1. rodar o botão "Malha → sólido" na malha real (instalado em 2026-10-09; `se_malha_para_solido`
+   aparece na próxima sessão do Claude Code);
 2. raio em aresta horizontal → feature **Round** sobre o canto vivo construído, com o raio
    reconhecido (cilindro de eixo X/Y);
 3. ângulo de saída → extrusão com draft (cone/plano inclinado reconhecido);
