@@ -124,40 +124,42 @@ Corte a fio: preparar os perfis na peça e entregá-los ao programa da máquina 
 
 ### Eng. Reversa — documento de peça
 
-Reconstruir sólido a partir de malha. Hoje o grupo tem **uma sonda de diagnóstico**, e a razão é
-concreta: o dump da typelib mostra que a Solid Edge expõe por COM a leitura da malha
-(`MeshSurface.GetTriangleData`, `Body.GetFacetData`), o remalhamento (`DoRemesh`), a cura com
-fechamento de furo (`HealAndOptimizeWithMeshOptions`), a criação de corpo de facetas
-(`AddBodyByMeshFacets`), o seccionamento com reconhecimento de primitivas
-(`CreateSectionSketches`) e a criação de superfície ajustada (`BSplineSurfaces.Add`) — mas
-**nenhum ajuste de plano/cilindro/cone/esfera sobre região de malha, nenhuma segmentação e
-nenhuma seleção de região**. Os comandos da aba nativa de Engenharia Reversa não estão no modelo
-de objetos, e `Application.StartCommand` só abre o comando interativo (espera o mouse), o que não
-serve para script.
+Converte a **malha** importada (STL/OBJ como corpo de facetas) em **sólido de features**, com furos,
+raios, chanfros e faces inclinadas identificados e reconstruídos em geometria exata. A Solid Edge lê
+malha por COM, mas **não expõe nenhum ajuste de plano/cilindro/cone sobre região de malha, nem
+segmentação** (os comandos da aba nativa de Engenharia Reversa não estão no modelo de objetos), então
+o reconhecimento é do AutoEDM, puro e testável sem a SE.
 
-Ou seja: o ajuste terá de ser nosso. A sonda existe para que a escolha entre a **rota prismática**
-(seccionar por Z, agrupar contornos e reconstruir como features editáveis — extrusão, corte, furo
-com eixo e Ø reais, raio) e um **kernel geral de free-form** seja feita com medida, e não por
-aposta.
+**Reconhecimento** (`se_reconhecer_malha`): quebra a malha pela **quina** e pergunta de cada região
+qual superfície ela é — plano, cilindro, **cone** (chanfro, escareado, saída), **toro** (raio que
+contorna uma curva) e **esfera**. Cada uma sai com o **RMS do próprio ajuste** e medida no centésimo;
+direções a menos de 0,05° de X/Y/Z viram o eixo exato. O relatório abre por uma **identificação
+agrupada pela medida**: furos/pinos, raios, chanfros/cones e faces inclinadas (com o ângulo contra a
+vertical e a horizontal) — 24 chanfros iguais são uma linha.
 
-**A sonda rodou na malha real em 2026-09-18, e o ajuste próprio começou a existir.** O que a
-medida deu: `Body.GetFacetData` lê a malha inteira (4.168 facetas, 12.504 pontos), mas
-**`Body.Faces` é inacessível num corpo de facetas** — não há região pré-segmentada para agarrar,
-a segmentação tem mesmo de sair da sopa de triângulos. O seccionamento falhou, mas **por
-marshaling** (`DISP_E_TYPEMISMATCH`: a typelib pede `SAFEARRAY(IDispatch)*` e foi passado
-`object[]`), o que não é resposta sobre a malha — a chamada nem entrou no comando. Corrigido
-com array tipado, aguardando novo run.
+**Construção** ("Malha → sólido" / `se_malha_para_solido`), sempre numa **peça nova ordenada, não
+salva** — a peça da malha não é tocada:
 
-Daí saiu o **reconhecedor de superfície** (`se_reconhecer_malha`): quebra a malha pela **quina**
-e só então pergunta de cada região se é plano ou cilindro — nessa ordem, porque tentar planos
-primeiro faz cada faixa de um Ø20 tesselado virar uma plaquinha perfeita, e um furo sai como 64
-planos. Cada superfície vem com o **RMS do próprio ajuste**, e o cilindro com eixo, Ø,
-comprimento e **quanto da volta cobre** (é o que separa furo passante de raio de canto). Quando a
-área "plana" é só superfície curva cabendo na tolerância, o relatório marca **MOSAICO e suspende
-o veredito** em vez de imprimir "prismática" logo abaixo do próprio aviso.
+1. **faixas Z**: níveis tirados dos planos horizontais, secção no meio de cada faixa, cada trecho
+   trocado pela geometria exata (parede = reta, cilindro vertical = arco/círculo), uma protrusão por
+   faixa e os furos como recorte;
+2. **correções de fronteira** para o que a extrusão reta não faz: cone → recorte/protrusão
+   **revolvido**; raio de eixo X/Y e face inclinada → **extrusão** ao longo do eixo; toro →
+   revolução **parcial**. Se cada região leva material ou recorte, quem diz é a própria malha
+   (número de enrolamento);
+3. **conferência por desvio geométrico** nos dois sentidos (cada vértice da malha até o sólido, e o
+   sólido re-tesselado até a malha), além do volume. O relatório só chama o sólido de **exato** se o
+   desvio fica abaixo de 0,05 mm **e** nenhum trecho do contorno foi copiado da malha (raio virado
+   retas também encosta na malha — o desvio sozinho não pega).
+
+Medido nas 6 malhas do primeiro caso real (2026-10-10): **5 saem exatas** (desvio máx. 0,04 mm,
+nada copiado da malha), entre elas uma bandeja com rampa a 19,47°, placas com 24 chanfros 0,5×45° e
+1×45° e uma alça com R2,5 contornando as pontas R3 (toro). A sexta, com pernas de concordância
+orgânica, ainda diverge e é avisada.
 
 | Comando | Ambiente | O que faz |
 |---|---|---|
+| **Malha → sólido** | qualquer | Lê o corpo de malha (pergunta qual, se houver vários), mostra a identificação e o plano — faixas, contornos, correções, volumes e avisos — e, confirmando, constrói o sólido numa **peça nova ordenada, não salva**, com os esboços ocultos. Termina com o volume e o **desvio geométrico** do sólido contra a malha, e diz se o resultado é exato. |
 | **Sonda de malha** | qualquer | Mede, na malha real: corpos de facetas, faces de malha, quantos triângulos leem e por qual método, a caixa envolvente em mm, e **quais membros da API de malha existem nesta versão** — presença conferida por introspecção **antes** de chamar, com o erro exato de tudo que falha. Pergunta antes de incluir o teste de **seccionamento**, o único que escreve (cria esboços, tenta apagá-los, nunca salva) e o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Resultado completo no log. |
 
 ### MCP — qualquer documento (nem precisa de um)
@@ -187,9 +189,9 @@ confirmação e não sobrevive a um desligamento. Nenhuma ferramenta MCP consegu
 | **Somente leitura** | Revoga a escrita na hora; as ferramentas de leitura seguem funcionando. |
 | **Desligar ponte** | Derruba o pipe. O agente passa a receber a instrução de pedir a você para religar. |
 
-O catálogo tem 28 ferramentas. As de leitura: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
+O catálogo tem 29 ferramentas. As de leitura: `se_status`, `se_inspecionar_selecao`, `se_arvore`,
 `se_medir_selecao`, `se_analisar_z`, `se_coordenadas`, `se_planos`, `se_reconhecer_malha` e
-`se_log`. As de escrita: `se_modelar`, `se_curvas_superficies` e `se_exportar_perfis_wedm`. Além
+`se_log` — e `se_malha_para_solido`, que só lê sem `construir` e com ele cria uma peça nova. As de escrita: `se_modelar`, `se_curvas_superficies` e `se_exportar_perfis_wedm`. Além
 delas, cada botão da ribbon tem a sua ferramenta (`se_criar_eletrodos`, `se_criar_base`,
 `se_aplicar_gap`, `se_alojamento_oring`...), com as perguntas das janelas viradas em argumentos,
 e `se_trocar_ambiente` alterna a peça entre síncrono e ordenado. Só os botões do grupo MCP ficam
@@ -490,7 +492,7 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Copiar superfícies (Inter-Part Copy) | 🚧 só funciona em edição em contexto (in-place) |
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
 | Ponte MCP (Claude Code dirige a Solid Edge) | ✅ **validada no SE em 2026-09-18** — 1º run com o CAD aberto: leitura, planos, árvore e modelagem por primitivas sobre COM real |
-| Eng. Reversa: malha → sólido | 🚧 sonda rodada na malha real; **reconhecedor de superfície próprio escrito** (planos e cilindros, com RMS), aguardando o 1º run no SE |
+| Eng. Reversa: malha → sólido | ✅ **5 de 6 malhas reais exatas (2026-10-10)** — plano, cilindro, cone, toro e esfera reconhecidos; faixas Z + correções por revolução/extrusão; conferido por desvio geométrico. 🚧 concordância orgânica (forma livre) ainda diverge |
 | Orquestrador completo ("gerar todos os eletrodos") | 📋 planejado |
 
 Legenda: ✅ funcionando · 🚧 em andamento · 📋 planejado.

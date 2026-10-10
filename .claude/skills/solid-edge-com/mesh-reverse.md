@@ -122,3 +122,62 @@ a 10 mm insert silently fails to weld a 2 m part.
 the axis, so anything that needs to know which plane is XY/XZ/YZ must **measure it or take it
 from a validated mapping**, never read the normal. (On a fresh default part the observed
 mapping was plane 1 = XY, plane 2 = XZ.)
+
+## Beyond plane and cylinder: cone, torus, sphere (measured on a real 6-body mesh, 2026-10-10)
+
+- **Three profile points always fit a circle.** A vertical wall plus an inclined face (two
+  planes, 4 triangles) fitted as a "Ø53.57 cylinder, RMS 0". Reject cylinder/cone fits whose
+  **tessellation sagitta** `R·(1 − cos(step/2))` exceeds ~0.1 mm — a real tessellated cylinder
+  sits around 0.02 mm.
+- **Cone**: axis = direction of **least variance** of the normals (every normal makes the same
+  angle with it); **apex** = least-squares point satisfying `n·x = n·c` for every facet — every
+  tangent plane of a cone, and every facet with two vertices on one generator, contains the
+  apex. Half-angle from `ρ = h·tanβ`. Linear, no iteration. A hole chamfer was otherwise
+  shredded into ~20 tilted "cylinders" of 3 triangles.
+- **Torus / sphere**: every normal of a surface of revolution **intersects the axis** — linear in
+  Plücker coordinates of the axis `(d, m)`: `d·(c × n) + n·m = 0`, smallest eigenvector of a 6×6.
+  Two caveats, both measured: with only two meridian strips the system is degenerate (their
+  normals also meet the line through the two profile centres), so fit the **whole connected
+  group**; and on coarse tessellation (15° both ways) facet normals miss the axis by ~13°, so
+  refine by minimising the profile-circle residual of the **vertices** (Nelder–Mead on axis tilt
+  + position, started from the Plücker axis and from the nearest X/Y/Z). Major radius ≈ 0 ⇒
+  sphere.
+- **Seeding cylinders in a mixed region**: take the seed patch plus only the neighbours that
+  suggest the **same axis** (`n_seed × n_neighbour`); a neighbour from another surface (the torus
+  row above a wall facet) poisons the fit forever. Grow with a **refit after every accepted
+  patch** — testing neighbours against the 3-patch fit (R2.51 for an R2.5) rejected the last two
+  facets of the fillet, which then reported as "inclined faces of 7.5° and 22.5°".
+- **Ruledness filter**: inside mixed regions, accept a cylinder/cone only if most vertices share a
+  generator (same angle, different heights). Corner-blend fragments forced into cylinders fail
+  it. Do **not** apply it to a whole crease-bounded surface: CAD exporters sometimes stagger the
+  two rims of a cone.
+- Snap arc **endpoints** to X/Y/Z within ~1°: a 90° fillet fitted as 90.4° becomes two 45.2°
+  corner regions in reconstruction, and one of them fails.
+
+## Mesh → solid: prismatic bands + boundary corrections
+
+Section each Z band at mid-height and extrude with exact lines/arcs; then fix what a straight
+extrusion cannot do, one feature per region. In the plane where the surface becomes a curve
+(meridian of a cone/torus, section ⊥ to a horizontal cylinder axis, vertical section along the
+steepest line of an inclined plane), the curve splits a small region in two, and **the mesh
+decides** which side has material: generalised **winding number** (sum of solid angles of the
+triangles / 4π — no edge cases, tolerant of small holes). Material ⇒ protrusion, empty ⇒ cutout.
+Both are idempotent against the prismatic body, which can only be wrong inside those regions.
+
+- Test points: a grid **inside** the region polygon, ≥ 0.04 mm from its border (above the mesh
+  sagitta). The vertex average of a fillet's corner crescent (0.21 mm thick) falls inside the arc.
+- Snap the cone mouths to recognised planes ⊥ axis: the fitted apex came out 0.0011 mm low and the
+  chamfer cut stopped at 85.999, leaving a 0.001 mm skin over a sharp edge.
+- Revolve recipe (SE 226): `axis = profile.SetAxisOfRevolution(line2d)` then
+  `RevolvedCutouts/RevolvedProtrusions.AddFinite(profile, axis, 2, side, angleRad)`; partial
+  revolve with the sketch at the middle of the arc and `side = 3` (symmetric) avoids guessing the
+  rotation sense.
+- **Draw closed extrusion profiles counter-clockwise in SKETCH coordinates** (read them back with
+  `Convert3DCoordinate`). Clockwise, `ExtrudedCutouts.AddFinite(p, igLeft, …)` removes the
+  OUTSIDE — a 1 060 mm³ wedge cut took 17 700 mm³.
+- API-created features leave their sketches visible: set every `Profile.Visible = false` at the
+  end (`doc.ProfileSets.Item(i).Profiles.Item(k)`).
+- **Verify by geometric deviation, both ways**, not by volume: 24 chamfer cuts and 24 conical
+  collars cancel exactly in volume. And deviation alone does not prove exact geometry either — a
+  contour segment copied from the mesh (a radius turned into 26 lines) lies on the mesh by
+  construction. "Exact" = deviation ≤ ~0.05 mm **and** no mesh-copied segment left uncorrected.

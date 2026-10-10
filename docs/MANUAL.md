@@ -1,4 +1,4 @@
-# AutoEDM — Manual de funcionamento
+﻿# AutoEDM — Manual de funcionamento
 
 > **O que é:** o manual único do projeto — a camada COM, as duas APIs (Core e MCP), a skill `solid-edge-com` e as 25 funcionalidades entregues, com as regras de negócio e seus valores exatos.
 > **Para quem:** quem vai manter ou estender o AutoEDM (pessoa ou agente), e quem precisa saber *por que* um número é aquele antes de mudá-lo.
@@ -295,7 +295,9 @@ Todo namespace do Core é `AutoEDM.<pasta>`. Os pontos de entrada que valem conh
 | Gerar a folha `.xlsx` | `Reporting.ChangeReportXlsx.Build` → `Reporting.Xlsx.XlsxWriter.Save` |
 | Curvas e perfis de corte a fio | `Wedm.SurfaceRimCurveBuilder.Build`; `Wedm.WedmProfileExporter.Export` |
 | Alojamento de vedação | `Sealing.ORingGrooveCalculator.Rank`/`.Compute` → `Sealing.ORingGrooveModeler.Cut` |
-| Reconhecer malha | `Reverse.SurfaceRecognizer.Recognize` (puro, sem COM) |
+| Reconhecer malha | `Reverse.SurfaceRecognizer.Recognize` (puro, sem COM) → `Reverse.SurfaceReport.Format`/`.Identify` |
+| Malha → sólido | `Reverse.PrismaticSection.Plan` → `Reverse.BoundaryCorrections.Plan` → `Reverse.PrismaticBuilder.Build` → `Reverse.PrismaticReport.Format` |
+| Ponto dentro da malha / desvio | `Reverse.MeshSolid.Winding`; `Reverse.MeshDeviation.Compute` (puros) |
 | Introspeccionar objeto vivo | `Com.ComDiagnostics.DumpObject` |
 | Configuração | `Config.AutoEdmConfig.Load()` |
 
@@ -357,7 +359,8 @@ SeToolRunner.Execute                  thread STA da Solid Edge, COM ao vivo
 | `se_coordenadas` | **montagem** | — | por eletrodo selecionado: X, Y, Z em mm, giro Z em graus, Ra e GAP gravados, área de queima em cm² |
 | `se_planos` | **peça** | — | os `RefPlanes` por índice, com nome e a normal quando legível |
 | `se_log` | nada | `linhas` int 1–2000, **padrão 200** | as últimas N linhas do log desta sessão da SE, e o caminho do arquivo |
-| `se_reconhecer_malha` | **peça** | ver abaixo | planos e cilindros ajustados sobre os triângulos, cada um com o **RMS do próprio ajuste**; a área que sobra como "livre" |
+| `se_reconhecer_malha` | **peça** | ver abaixo | abre pela **identificação** (furos/pinos, raios, chanfros/cones, faces inclinadas, agrupados pela medida) e lista planos, cilindros, cones, toros e esferas ajustados sobre os triângulos, cada um com o **RMS do próprio ajuste**; a área que sobra como "livre" |
+| `se_malha_para_solido` | **peça** com corpo de malha | `corpo`, `construir`, `arredondarMm` (0,01; 0 desliga), `toleranciaCilindroMm` (0,005 — suba para malha de scanner) | identificação + plano 2,5D (níveis, contornos, correções de fronteira, volumes, avisos). Com `construir: true` (**exige escrita liberada**) cria a peça nova e devolve volume e **desvio geométrico** nos dois sentidos, com o veredito "exato" ou não |
 
 Parâmetros de `se_reconhecer_malha` — todos opcionais e **clampados** na faixa, nunca viram erro:
 
@@ -453,7 +456,7 @@ O `description` do frontmatter é um gatilho: enumera as tarefas (ler faces, cor
 | `discovery.md` (153 l.) | vai montar a descoberta: dump da typelib, SPY, gravador de ação, tabelas DATA do install |
 | `addin-ribbon.md` (151 l.) | botão dentro da SE: registro, XML da ribbon, ícones, HKCU, pasta de deploy, diálogos modeless, escolher face ou aresta |
 | `edm-electrode.md` (134 l.) | fluxo do eletrodo: cópia da superfície de queima, costura, anexar ao bloco, offset de GAP |
-| `mesh-reverse.md` (124 l.) | malha: ler facetas, o que a SE ajusta e o que não, seccionar, escrever reconhecedor |
+| `mesh-reverse.md` (183 l.) | malha: ler facetas, o que a SE ajusta e o que não, seccionar, escrever reconhecedor (plano, cilindro, cone, toro), malha → sólido por faixas + correções, conferir por desvio |
 | `errors.md` (67 l.) | um HRESULT específico, erro do binder, ou "funcionou e nada aconteceu" |
 
 > `SKILL.md` referencia os apoios como `references/<arquivo>.md`. No repositório eles estão na **raiz** da pasta da skill; a subpasta `references/` só existe dentro do pacote `solid-edge-com.skill`. `OLD/` guarda a versão monolítica anterior (756 linhas num arquivo só).
@@ -497,6 +500,7 @@ A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `S
 | 18 | Curvas das superfícies | WEDM | peça | **SÍNCRONO** |
 | 17 | Exportar perfis (IGES) | WEDM | peça | **SÍNCRONO** |
 | 24 | Sonda de malha | Eng. Reversa | peça | qualquer |
+| 26 | Malha → sólido | Eng. Reversa | peça (com corpo de malha) | qualquer — cria peça nova **ordenada** |
 | 19 / 21 / 22 / 23 / 20 | Ligar ponte / Status / Liberar escrita / Somente leitura / Desligar | MCP | — | — |
 | 6 | Inspecionar seleção | Diagnóstico | qualquer | qualquer |
 | 8 / 9 | Iniciar leitura de ação manual / Gravar log da leitura | Diagnóstico | qualquer | qualquer |
@@ -704,19 +708,80 @@ Captura uma face (cilíndrica = eixo ou furo; plana = vedação de face) e arest
 
 **Filosofia: avisar, não recusar** — quem decide cortar é o operador. Candidato reprovado vai para o fim da fila, mas continua na lista.
 
-## 4.7 Engenharia reversa de malha — id 24
+## 4.7 Engenharia reversa de malha — ids 24 e 26
 
-Sonda **só-leitura** sobre malha importada: quantos corpos e faces de malha existem, quantos triângulos cada rota entrega, a caixa envolvente, e **quais membros da API existem nesta versão da SE** — conferidos por introspecção antes de chamar. O teste de seccionamento (o único que escreve) é opcional e perguntado.
+**Por que o ajuste é nosso:** o dump da typelib provou que a SE **não expõe por COM** nenhum ajuste
+de plano/cilindro/cone sobre região de malha, nem segmentação, nem seleção de região. Ela **lê**
+malha (`Body.GetFacetData`) e **reconstrói** corpo a partir dela, mas não a **entende** por você.
+Num corpo de facetas `Body.Faces` é inacessível: a segmentação sai da sopa de triângulos.
 
-**Por que existe:** o dump da typelib provou que a SE **não expõe por COM** nenhum ajuste de plano ou cilindro sobre região de malha, nem segmentação, nem seleção de região. Ela **lê** malha e **reconstrói** corpo a partir dela, mas não a **entende** por você. Logo o ajuste tem de ser nosso.
+**Sonda de malha (24)** — só-leitura: corpos e faces de malha, triângulos por rota, caixa
+envolvente e quais membros da API existem nesta versão. O teste de seccionamento (o único que
+escreve) é opcional e perguntado.
 
-**A ordem do reconhecimento não é estilo, é correção** (`SurfaceRecognizer.cs:85-101`): solda de vértices → quebra por **quina** (ângulo diedral) → ajuste do componente **inteiro**. Tentar planos primeiro faz cada faceta de um cilindro tesselado virar um "plano" perfeito — um Ø20 sairia como 64 plaquinhas.
+### Reconhecimento (`Reverse.SurfaceRecognizer`)
 
-- Tolerâncias: ângulo de plano **2,0°**, distância ao plano **0,05 mm**, ângulo de quina **35,0°**, mínimo **2 triângulos** por região, cilindro com tolerância relativa `raio × 0,02` e piso de 0,02 mm.
-- Eixo do cilindro = autovetor de menor autovalor de `Σ área·n·nᵀ` — numa superfície cilíndrica toda normal é perpendicular ao eixo.
-- Componente misto (filete tangente, que não gera quina) é **descascado**: crescem-se os planos de dentro e ajusta-se o resto.
-- **Toda superfície sai com o RMS do próprio ajuste** — sem esse número o reconhecimento seria opinião.
-- A **área classificada como livre** é o número que decide se a rota por primitivas basta ou se um kernel free-form é inevitável.
+A ordem é correção, não estilo: solda de vértices → quebra por **quina** (diedral ≥ 35°) → ajuste
+do componente **inteiro** (plano, cilindro, cone). Tentar planos primeiro faz cada faceta de um
+cilindro tesselado virar um "plano" perfeito — um Ø20 sairia como 64 plaquinhas.
+
+| Superfície | Como sai |
+|---|---|
+| Plano | normal média; todo vértice a ≤ 0,05 mm e toda normal a ≤ 2° |
+| Cilindro | eixo = autovetor de menor autovalor de `Σ área·n·nᵀ`; raio por círculo de Kåsa na projeção. Tolerância radial 0,005 mm (relativa 0,1 % com teto de 5×), arco ≥ 5°, **flecha da tesselação ≤ 0,1 mm** (três pontos de perfil sempre cabem num círculo: parede + rampa davam "Ø53,57 de RMS zero") |
+| Cone | eixo = direção de menor variância das normais; **ápice** = ponto que melhor satisfaz `n·x = n·c` de todas as facetas (todo plano tangente de cone passa pelo ápice); semi-ângulo por `ρ = h·tanβ`, a menos de 0,05° de grau inteiro vira inteiro |
+| Toro / esfera | toda normal de superfície de revolução **corta o eixo** — linear em coordenadas de Plücker (sistema 6×6); refino do eixo por Nelder–Mead sobre os **vértices** (a normal da faceta erra ~13° na tesselação a 15°); perfil = círculo no meridiano (ρ, h). Raio maior ~0 = esfera |
+
+**Componente misto** (raio tangente a plano, sem quina): partido em retalhos planos; a semente de
+cilindro só junta vizinhos que concordam no **eixo** (produto vetorial das normais), cresce com
+**reajuste a cada retalho**, e o retalho só entra se o cilindro continuar regrado (vértices em
+geratrizes — fragmento de concordância de canto não passa). O que sobra em cilindros curtos e
+regiões livres é testado como **toro**: primeiro o grupo conectado inteiro (par a par o eixo fica
+indeterminado), depois absorção de vizinho de qualquer tipo enquanto couber.
+
+**Medida de projeto:** offset de plano, Ø e posição do eixo no passo de 0,01 mm; direção a menos
+de 0,05° de X/Y/Z vira o eixo, e componente a menos disso de zero vira zero (parede "vertical" de
+0,02° é vertical); pontas de arco a menos de 1° de X/Y/Z encostam no eixo (raio de 90° não sai de
+90,4°). **Toda superfície sai com o RMS do próprio ajuste** — sem esse número o reconhecimento
+seria opinião.
+
+### Construção — Malha → sólido (26)
+
+Sempre numa **peça nova em modelagem ordenada, não salva** (a peça do usuário nunca tem o ambiente
+trocado). Esboços, CS e planos de referência saem **ocultos**.
+
+1. **Faixas Z** (`PrismaticSection`): níveis dos planos horizontais; secção da malha no meio de cada
+   faixa; cada trecho trocado pela superfície exata (reta, arco, círculo) com os vértices pela
+   interseção exata das vizinhas; uma protrusão por faixa e os furos como recorte.
+2. **Correções de fronteira** (`BoundaryCorrections`): no plano em que a superfície vira curva, ela
+   parte uma região pequena em duas, e a **malha** (número de enrolamento) diz se cada uma tem
+   material → protrusão ou recorte. As duas operações são idempotentes contra o sólido prismático,
+   que só erra dentro dessas regiões.
+
+   | Superfície | Região | Feature |
+   |---|---|---|
+   | Cone de volta inteira | os dois triângulos da caixa (r, h) cortada pela geratriz; bocas encostadas nos planos reconhecidos | revolução 360° |
+   | Cilindro de eixo X/Y | canto entre arco e tangentes + segmento entre arco e corda (arco > 92° em pedaços) | extrusão ao longo do eixo |
+   | Plano inclinado | os dois triângulos da linha de maior declive | extrusão ao longo da horizontal da face |
+   | Toro / esfera | as regiões do arco do perfil, no meridiano | revolução **parcial**, esboço no meio do arco, extensão simétrica |
+
+   Pontos de teste: grade dentro da região, a ≥ 0,04 mm da borda (acima da flecha da malha). Região
+   meio cheia (outra superfície a atravessa) **não** é corrigida — vira aviso. Região em que o
+   prismático já concorda é pulada.
+3. **Conferência**: volume e **desvio geométrico** (`MeshDeviation`, nos dois sentidos, sólido
+   re-tesselado a 0,005 mm). O veredito "**exato**" exige desvio ≤ 0,05 mm **e** nenhum trecho do
+   contorno copiado da malha sem correção — raio que virou retas encosta na malha por construção, e
+   o desvio sozinho não o denuncia.
+
+Receitas da SE provadas para isto (226): revolução por `Profile.SetAxisOfRevolution(linha)` +
+`Revolved{Protrusions,Cutouts}.AddFinite(perfil, eixo, 2, lado, ângulo)` (lado 3 = simétrico);
+**perfil de extrusão desenhado anti-horário nas coordenadas do ESBOÇO** — horário, o `igLeft` do
+recorte é o lado de fora e a feature leva a fatia inteira; feature com falha é apagada, nunca fica
+na árvore.
+
+**Limites conhecidos:** cone parcial e cilindro de eixo inclinado são avisados, não corrigidos; uma
+sequência de superfícies não-Z sem canto vivo entre elas só fecha se cada uma tiver a sua região;
+concordância orgânica (forma livre) fica de fora e o desvio a denuncia.
 
 ## 4.8 Usinabilidade (dentro do "Analisar (Z)")
 

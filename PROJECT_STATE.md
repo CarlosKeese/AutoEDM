@@ -93,11 +93,11 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Lista de modificações (folha de revisões) | 🚧 rodando no SE; escritor .xlsx próprio, miniaturas Z+/Z− com features numeradas |
 | Ponte MCP (Claude Code → Solid Edge) | ✅ **validada no SE (2026-09-18)** — 1º run com o CAD aberto: `se_status`, `se_planos`, `se_arvore`, `se_log` e `se_modelar` sobre COM real |
 | Sonda de malha (Eng. Reversa) | ✅ **rodada na malha real (2026-09-18)** — 4.168 facetas lidas; `Body.Faces` inacessível; seccionamento reprovado por marshaling |
-| Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | ✅ **rodado nas 6 malhas reais (2026-10-09)** pelo Core, conferido contra a Eng. Reversa nativa (Ø7,00 e Ø14,00 iguais); plano + cilindro, medidas no centésimo |
-| **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); 🚧 falta o 1º clique do Carlos no botão |
+| Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | ✅ **rodado nas 6 malhas reais (2026-10-09)** pelo Core, conferido contra a Eng. Reversa nativa (Ø7,00 e Ø14,00 iguais); plano + cilindro, medidas no centésimo; **2026-10-10: + cone, + toro/esfera, + identificação** (furos, raios, chanfros, faces inclinadas), cilindro falso de 3 pontos e fragmento de concordância recusados — ✅ instalado no add-in em 2026-10-10 |
+| **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release, sem mudança de ribbon — GuiVersion continua 17); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 398 passando, 0 falhas |
+| Testes de unidade | ✅ 409 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -335,13 +335,100 @@ Resultado nas 6 malhas: **4, 5 e 6 constroem** (corpo = exato); 4 é integralmen
 3, 5 e 6 têm faixas com raio em aresta horizontal, chanfro ou saída (avisado). A 3 tem paredes com
 ângulo de saída e quebra a secção (vértice a 8 mm) — fora do alcance da rota 2,5D reta.
 
+### Raios, cones e faces inclinadas — correções de fronteira (2026-10-10)
+
+Pedido do Carlos: converter as malhas em sólido **com raios, cilindros e faces inclinadas
+identificados**. Feito por console externo (ROT) com a ponte ligada; as 6 malhas foram
+despejadas em arquivo e o reconhecimento iterado fora da SE.
+
+**Reconhecedor:**
+- **cone** (`TryCone`): eixo = direção de menor variância das normais; ÁPICE = ponto que melhor
+  satisfaz n·x = n·c de todas as facetas (todo plano tangente de cone passa pelo ápice);
+  semi-ângulo por ρ = h·tanβ. Malha 6: 48 chanfros 1×45° Ø4→Ø6 (eram ~20 "cilindros inclinados"
+  de 3 triângulos cada; 1.009 superfícies → 97); malha 5: 24 chanfros 0,5×45°;
+- **cilindro falso de 3 pontos**: parede + rampa davam "Ø53,57 de 39°, RMS 0" (três pontos de
+  perfil sempre cabem num círculo). Agora exige FLECHA de tesselação ≤ 0,1 mm;
+- **fragmento de concordância** (corpo 3: centenas de "R0,09 eixo (−0,097; 0,181; 0,979)"):
+  dentro de componente misto, cilindro/cone só vale se for REGRADO (vértices em geratrizes).
+  Superfície inteira delimitada por quina fica isenta — o chanfro da malha 6 tem tesselação
+  torcida (anéis das bocas em ângulos diferentes) e é provado pelo ajuste;
+- snap parcial de direção (parede de normal (−0,625; −0,781; 0,0003) vira vertical), volta
+  inteira pelo quartil de cima dos vãos (o chanfro saía "346°");
+- `SurfaceReport.Identify`: furos/pinos, raios, chanfros/cones, faces inclinadas (ângulo da
+  vertical e da horizontal), agrupados pela medida (24 chanfros iguais = 1 linha).
+
+**Construção — `BoundaryCorrections` + `PrismaticBuilder`:** no plano em que a superfície vira
+curva, a curva parte uma região pequena em duas, e a MALHA (número de enrolamento,
+`MeshSolid`) diz se cada uma tem material → protrusão ou recorte. As duas são idempotentes
+contra o sólido prismático, que só erra dentro dessas regiões. Cone de volta inteira →
+revolução de 2 triângulos; cilindro de eixo X/Y → canto entre arco e tangentes + segmento
+circular, extrudados no eixo; plano inclinado → 2 triângulos da linha de maior declive,
+extrudados na horizontal da face. Região meio cheia é recusada com aviso; região em que o
+prismático já concorda é pulada.
+
+Receitas provadas na SE 226:
+- revolução: `Profile.SetAxisOfRevolution(linha)` → `RevolvedCutouts/RevolvedProtrusions.AddFinite(
+  perfil, eixo, 2, 2, 2π)` — o chanfro tirou os 7,330 mm³ previstos;
+- **perfil de extrusão tem de ser ANTI-HORÁRIO nas coordenadas do esboço** (lidas por
+  `Convert3DCoordinate`, não nas de U/V): desenhado horário, o `igLeft` do recorte é o lado de
+  FORA e a feature levou a fatia inteira (−17.700 mm³, malha 1);
+- **as bocas do cone encostam nos planos reconhecidos** (< 0,02 mm): o ápice ajustado saiu em
+  Z 82,9989 e o recorte deixava uma pele de 0,001 mm sobre o furo, com a quina viva embaixo.
+
+**Conferência por DESVIO, não só por volume** (`MeshDeviation`, grade uniforme + distância
+ponto-triângulo, nos dois sentidos, re-tesselando o sólido a 0,005 mm). Na malha 6 os 24
+chanfros tiram exatamente o que os 24 colarinhos cônicos põem: o volume bateu com as correções
+ERRADAS. Foi o desvio que achou a pele de 0,001 mm.
+
+| Corpo | Conteúdo | malha→sólido (mm) | sólido→malha (mm) |
+|---|---|---|---|
+| 1 (Desenho_6) | bandeja + rampa 19,47° | 0,005 | 0,023 ✅ |
+| 2 (Desenho_5) | placa + alça (R2,5 eixo Y + toro R2,5 nas pontas R3) | 0,005 | 0,039 ✅ |
+| 3 (Desenho_4) | tampo + 4 pernas com concordância orgânica | 3,98 | 2,02 ❌ |
+| 4 (Desenho_3) | prismática pura | 0,005 | 0,022 ✅ |
+| 5 (Desenho_2) | placa + 24 chanfros 0,5×45° | 0,009 | 0,023 ✅ |
+| 6 (Desenho_1) | bloco + 24 chanfros + 24 colarinhos cônicos | 0,009 | 0,023 ✅ |
+
+**Alça do corpo 2 — "raios identificados como múltiplas linhas" (Carlos, Peça18).** A "cadeia
+R2,51 + 22,5° + 7,5°" era leitura errada: a alça é um oblongo de 6 mm com pontas R3 e as arestas
+de cima arredondadas R2,5, que nas pontas contorna o R3 como TORO (R2,5 a R0,5 do eixo Z, 180°).
+O reconhecedor errava em três pontos, todos corrigidos:
+- a semente do cilindro levava todo vizinho de área parecida; na ponta, cada faceta da parede R3
+  tinha uma faceta do toro por vizinha e o ajuste falhava sempre — a ponta caía em "livre" e o
+  esboço saía com **26 retas por ponta**. Agora a semente só leva vizinhos que concordam no EIXO
+  (produto vetorial das normais);
+- o crescimento testava cada vizinho contra o ajuste dos 3 primeiros retalhos (R2,51), e as 2
+  facetas de baixo do raio viravam "faces inclinadas" de 7,5° e 22,5°. Agora reajusta a cada
+  retalho aceito → R2,50 de 90°; pontas do arco a < 1° de X/Y/Z encostam no eixo (90,4° → 90°,
+  senão o canto virava dois pedaços de 45,2° e o de cima falhava na SE);
+- **toro e esfera** (`TryTorus`, `MergeIntoTori`): toda normal de superfície de revolução corta o
+  eixo — linear em Plücker (6×6, Jacobi); como a tesselação a 15° erra o eixo em ~13°, refino por
+  Nelder–Mead sobre os VÉRTICES (círculo do perfil no meridiano), partindo do Plücker e do eixo
+  X/Y/Z mais próximo. Ajustar par a par não serve (as normais de duas faixas cortam também a reta
+  dos centros dos perfis): primeiro o grupo conectado inteiro, depois absorção de vizinho de
+  qualquer tipo se a união ainda couber. Raio maior ~0 = esfera. Resultado na malha 2: R2,500 a
+  R0,500, 180°, RMS 0,000002 mm; 78 → 50 superfícies.
+- correção do toro = revolução PARCIAL, esboço no meio do arco, extensão simétrica (`igSymmetric`);
+- pontos de teste da região: a média dos vértices caía do lado de dentro do arco na meia-lua de
+  0,21 mm do canto do R2,5 (região "meio cheia"). Agora grade dentro do polígono, a ≥ 0,04 mm da
+  borda (acima da flecha da malha).
+Peça construída: 50 faces = 12 planos + 36 cilindros + **2 toros**, nenhuma faceta.
+
+**Esboços ocultos** (pedido do Carlos): feature criada pela API deixa o perfil aceso — a Peça7
+tinha 32 de 32 perfis visíveis. No fim da construção todo `Profile.Visible = false` (Peça8: 0 de
+32). CS e plano de referência já nasciam ocultos.
+
+**Furo na conferência, fechado:** desvio ≤ 0,05 mm NÃO prova geometria exata — trecho copiado da
+malha (raio virado retas) coincide com ela por construção. O veredito do relatório agora só diz
+"EXATO" se o desvio passa E nenhum trecho do contorno é polígono da malha sem correção.
+
 **Próxima ação:**
-1. rodar o botão "Malha → sólido" na malha real (instalado em 2026-10-09; `se_malha_para_solido`
-   aparece na próxima sessão do Claude Code);
-2. raio em aresta horizontal → feature **Round** sobre o canto vivo construído, com o raio
-   reconhecido (cilindro de eixo X/Y);
-3. ângulo de saída → extrusão com draft (cone/plano inclinado reconhecido);
-4. furo fora de Z → recorte num segundo eixo;
+1. add-in já instalado (2026-10-10); falta o servidor MCP — `pwsh tools\deploy-dev.ps1
+   -Configuration Release -IncludeMcp` com SE e Claude Code fechados — e rodar o botão
+   "Malha → sólido" nos corpos 1, 2, 4, 5 e 6;
+2. pernas do corpo 3: perfil de perna que não é reta/arco (spline?) + concordância de canto —
+   medir antes de escolher rota;
+4. cone parcial e cilindro de eixo inclinado (hoje avisados, não corrigidos);
 5. toro (nervura com raio ao longo de arco) no reconhecedor.
 
 ### Eng. Reversa — por que começou por uma sonda
@@ -378,6 +465,17 @@ apagá-los, nunca salva). Confere presença de membro por introspecção **antes
 e registra o erro exato do que falha — que é o dado que ela existe para trazer.
 
 ## Histórico
+
+- **2026-10-10 (tarde)** — **Alça do corpo 2 exata.** Raio que saía em retas: semente de
+  cilindro por eixo, crescimento com reajuste, pontas de arco nos eixos, TORO/ESFERA reconhecidos
+  (Plücker + Nelder–Mead nos vértices) e corrigidos por revolução parcial; amostragem da região
+  por grade interna. Veredito "exato" passa a exigir zero trecho copiado da malha. 5 de 6 corpos
+  exatos. 409 testes. Add-in instalado; README, MANUAL e skill atualizados.
+- **2026-10-10** — **Raios, cones e faces inclinadas identificados e construídos.** Reconhecedor
+  ganhou cone, identificação agrupada e recusa de cilindro falso/fragmento; `BoundaryCorrections`
+  corrige o sólido 2,5D por revolução/extrusão decidida pela malha; `MeshDeviation` confere o
+  sólido nos dois sentidos. Corpos 1, 4, 5 e 6 do Rack_Anghinoni saem exatos (≤ 0,023 mm);
+  2 (alça em cadeia) e 3 (pernas orgânicas) ainda divergem. 407 testes. Não instalado.
 
 - **2026-10-09** — **Eng. Reversa: malha vira sólido.** 1º run do reconhecedor nas 6 malhas do
   Rack_Anghinoni, conferido contra a Eng. Reversa nativa. Rota B-spline por polos testada e
