@@ -6,7 +6,7 @@ namespace AutoEDM.Reverse
     /// <summary>Uma região da malha que foi reconhecida como superfície geométrica.</summary>
     public sealed class RecognizedSurface
     {
-        /// <summary>"plano", "cilindro" ou "livre" (não coube em primitiva).</summary>
+        /// <summary>"plano", "cilindro", "cone" ou "livre" (não coube em primitiva).</summary>
         public string Kind;
         public int TriangleCount;
         public double AreaMm2;
@@ -25,8 +25,35 @@ namespace AutoEDM.Reverse
         /// <summary>Cilindro: comprimento medido ao longo do eixo.</summary>
         public double LengthMm;
 
-        /// <summary>Cilindro: quanto da volta a região cobre, em graus (360 = furo/pino inteiro).</summary>
+        /// <summary>Cilindro/cone: quanto da volta a região cobre, em graus (360 = furo/pino inteiro).</summary>
         public double SweepDeg;
+
+        /// <summary>Cilindro em ARCO (volta &lt; 360°): direções radiais unitárias do início e do
+        /// fim do arco, perpendiculares ao eixo, com o arco correndo do início ao fim no sentido
+        /// anti-horário em volta de <see cref="AxisMm"/>. null no cilindro de volta inteira.</summary>
+        public double[] ArcFrom;
+        public double[] ArcTo;
+
+        /// <summary>Toro: raio MAIOR — distância do eixo ao centro do círculo do perfil. O raio
+        /// cotado (o do perfil) fica em <see cref="RadiusMm"/>; <see cref="PointMm"/> é o centro
+        /// do toro no eixo, na altura do centro do perfil.</summary>
+        public double MajorRadiusMm;
+
+        /// <summary>Toro: o trecho do círculo do perfil que a superfície cobre, em graus, no
+        /// meridiano (ρ = distância ao eixo, h = altura ao longo do eixo), anti-horário de
+        /// <see cref="TubeFromDeg"/> a <see cref="TubeToDeg"/>, medido a partir de +ρ.</summary>
+        public double TubeFromDeg, TubeToDeg;
+
+        /// <summary>Cone: semi-ângulo do vértice, em graus (45 = chanfro a 45°; ângulo de saída
+        /// de 1° numa parede de revolução = 1).</summary>
+        public double HalfAngleDeg;
+
+        /// <summary>Cone: o vértice (ápice), em mm. O eixo aponta do ápice para a abertura.</summary>
+        public double[] ApexMm;
+
+        /// <summary>Cone: raio na ponta mais próxima e na mais distante do ápice, em mm.</summary>
+        public double RadiusMinMm;
+        public double RadiusMaxMm;
 
         /// <summary>Desvio RMS dos vértices em relação à primitiva ajustada, em mm. É o número que
         /// separa "isto é um cilindro Ø12" de "isto se parece com um cilindro".</summary>
@@ -91,6 +118,11 @@ namespace AutoEDM.Reverse
         /// <summary>Arco mínimo para uma região ser cilindro, em graus. Abaixo disso a curvatura
         /// não é mensurável e a região é tratada como plana/mista.</summary>
         public double MinCylinderSweepDeg = 5.0;
+
+        /// <summary>Flecha máxima entre vértices vizinhos de um cilindro tesselado, em mm. Furo
+        /// Ø12,3 em 36 segmentos dá 0,023; duas faces planas em ângulo, ajustadas como "cilindro",
+        /// davam ~1 mm na malha real.</summary>
+        public double MaxSagittaMm = 0.1;
 
         /// <summary>Normal de plano ou eixo de cilindro a menos disto de X, Y ou Z vira EXATAMENTE
         /// esse eixo. Sem isso, um plano "horizontal" sairia com normal (0,00001; 0; 1) e a peça
@@ -230,7 +262,8 @@ namespace AutoEDM.Reverse
                 // Região inteira de uma vez: é o caso comum (face de caixa, tampa, parede de furo).
                 RecognizedSurface whole = TryPlaneWhole(comp, nx, ny, nz, area, pointsMm, cosPlane,
                                                         o.PlaneDistanceToleranceMm)
-                                          ?? TryCylinder(comp, nx, ny, nz, area, pointsMm, o);
+                                          ?? TryCylinder(comp, nx, ny, nz, area, pointsMm, o)
+                                          ?? TryCone(comp, nx, ny, nz, area, pointsMm, o);
                 if (whole != null)
                 {
                     foreach (int t in comp) region[t] = result.Surfaces.Count;
@@ -244,6 +277,8 @@ namespace AutoEDM.Reverse
                 SplitMixed(comp, neighbours, region, component, nx, ny, nz, cx, cy, cz, area,
                            pointsMm, cosPlane, cosCrease, o, result);
             }
+
+            MergeIntoTori(result, region, neighbours, nx, ny, nz, area, pointsMm, o);
 
             foreach (RecognizedSurface s in result.Surfaces) Snap(s, o);
 
@@ -284,6 +319,9 @@ namespace AutoEDM.Reverse
             else if (s.Kind == "cilindro" && s.AxisMm != null && s.PointMm != null)
             {
                 s.AxisMm = SnapDirection(s.AxisMm, o.SnapAngleDeg);
+                s.ArcFrom = SnapDirection(Perpendicularize(s.ArcFrom, s.AxisMm), ArcEndSnapDeg);
+                s.ArcTo = SnapDirection(Perpendicularize(s.ArcTo, s.AxisMm), ArcEndSnapDeg);
+                ResweepArc(s);
                 if (o.RoundToMm > 0)
                 {
                     // Ø arredondado no passo (é o Ø que a ferramentaria cota), e o raio sai dele.
@@ -300,11 +338,70 @@ namespace AutoEDM.Reverse
                     }
                 }
             }
+            else if ((s.Kind == "toro" || s.Kind == "esfera") && s.AxisMm != null && s.PointMm != null)
+            {
+                s.AxisMm = SnapDirection(s.AxisMm, o.SnapAngleDeg);
+                s.ArcFrom = SnapDirection(Perpendicularize(s.ArcFrom, s.AxisMm), ArcEndSnapDeg);
+                s.ArcTo = SnapDirection(Perpendicularize(s.ArcTo, s.AxisMm), ArcEndSnapDeg);
+                if (o.RoundToMm > 0)
+                {
+                    // O raio do perfil é o que se cota (R2,5); o raio maior também sai do desenho
+                    // (R3 da ponta − R2,5 = 0,5). Os dois no passo, como o Ø do cilindro.
+                    s.RadiusMm = Round(2 * s.RadiusMm, o.RoundToMm) / 2.0;
+                    s.MajorRadiusMm = Round(2 * s.MajorRadiusMm, o.RoundToMm) / 2.0;
+                    int along = AlignedAxis(s.AxisMm);
+                    var c = (double[])s.PointMm.Clone();
+                    for (int k = 0; k < 3; k++) c[k] = Round(c[k], o.RoundToMm);
+                    if (along >= 0) s.PointMm = c;
+                }
+                s.TubeFromDeg = Math.Round(s.TubeFromDeg, 1);
+                s.TubeToDeg = Math.Round(s.TubeToDeg, 1);
+            }
+            else if (s.Kind == "cone" && s.AxisMm != null && s.ApexMm != null)
+            {
+                s.AxisMm = SnapDirection(s.AxisMm, o.SnapAngleDeg);
+                // Semi-ângulo de projeto é grau redondo (45°, 30°, 1° de saída): a menos de 0,05°
+                // dele, vira ele; senão fica no centésimo de grau.
+                double whole = Math.Round(s.HalfAngleDeg);
+                s.HalfAngleDeg = Math.Abs(s.HalfAngleDeg - whole) <= 0.05 ? whole : Math.Round(s.HalfAngleDeg, 2);
+                if (o.RoundToMm > 0)
+                {
+                    s.RadiusMinMm = Round(2 * s.RadiusMinMm, o.RoundToMm) / 2.0;
+                    s.RadiusMaxMm = Round(2 * s.RadiusMaxMm, o.RoundToMm) / 2.0;
+                    s.RadiusMm = Round(2 * s.RadiusMm, o.RoundToMm) / 2.0;
+                    int along = AlignedAxis(s.AxisMm);
+                    if (along >= 0)
+                    {
+                        var c = (double[])s.ApexMm.Clone();
+                        for (int k = 0; k < 3; k++) if (k != along) c[k] = Round(c[k], o.RoundToMm);
+                        s.ApexMm = c;
+                        var q = (double[])s.PointMm.Clone();
+                        for (int k = 0; k < 3; k++) if (k != along) q[k] = c[k];
+                        s.PointMm = q;
+                    }
+                }
+            }
+        }
+
+        /// <summary>Ponta de arco a menos disto de X/Y/Z vira exatamente o eixo: o raio de 90° da
+        /// alça da malha 2 saía de 90,4° e virava dois cantos de 45,2° na construção.</summary>
+        private const double ArcEndSnapDeg = 1.0;
+
+        /// <summary>Volta do arco recalculada depois de as pontas serem alinhadas.</summary>
+        private static void ResweepArc(RecognizedSurface s)
+        {
+            if (s.ArcFrom == null || s.ArcTo == null || s.AxisMm == null) return;
+            double[] g = Cross(s.AxisMm, s.ArcFrom);
+            double c = s.ArcTo[0] * s.ArcFrom[0] + s.ArcTo[1] * s.ArcFrom[1] + s.ArcTo[2] * s.ArcFrom[2];
+            double sn = s.ArcTo[0] * g[0] + s.ArcTo[1] * g[1] + s.ArcTo[2] * g[2];
+            double a = Math.Atan2(sn, c);
+            if (a <= 0) a += 2 * Math.PI;
+            s.SweepDeg = a * 180 / Math.PI;
         }
 
         private static double[] SnapDirection(double[] v, double snapDeg)
         {
-            if (snapDeg <= 0) return v;
+            if (v == null || snapDeg <= 0) return v;
             double cosSnap = Math.Cos(snapDeg * Math.PI / 180.0);
             for (int k = 0; k < 3; k++)
                 if (Math.Abs(v[k]) >= cosSnap)
@@ -313,7 +410,18 @@ namespace AutoEDM.Reverse
                     e[k] = Math.Sign(v[k]);
                     return e;
                 }
-            return v;
+
+            // Fora dos eixos, ainda assim: parede "vertical" de normal (−0,625; −0,781; 0,0003)
+            // é vertical — a componente que está a menos do ângulo de snap de zero vira zero, e
+            // não aparece como "saída de 0,02°" (corpo 3 do Rack_Anghinoni).
+            double sinSnap = Math.Sin(snapDeg * Math.PI / 180.0);
+            var w = (double[])v.Clone();
+            bool changed = false;
+            for (int k = 0; k < 3; k++)
+                if (w[k] != 0 && Math.Abs(w[k]) < sinSnap) { w[k] = 0; changed = true; }
+            if (!changed) return v;
+            double len = Math.Sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+            return new[] { w[0] / len, w[1] / len, w[2] / len };
         }
 
         /// <summary>Índice do eixo do sistema ao qual a direção é EXATAMENTE paralela, ou -1.</summary>
@@ -588,31 +696,43 @@ namespace AutoEDM.Reverse
             {
                 if (owner[seedPatch] >= 0 || adj[seedPatch].Count == 0) continue;
 
-                var cluster = new List<int> { seedPatch };
-                foreach (int q in adj[seedPatch])
-                    if (owner[q] < 0 && patchArea[q] <= 4.0 * patchArea[seedPatch] + 1e-9) cluster.Add(q);
-                if (cluster.Count < 3) continue;
+                List<int> cluster = SeedCluster(seedPatch, adj, owner, patches, patchArea, nx, ny, nz, area);
+                if (cluster == null) continue;
 
-                RecognizedSurface cyl = TryCylinder(Gather(cluster, patches), nx, ny, nz, area, p, o);
+                RecognizedSurface cyl = TryCylinder(Gather(cluster, patches), nx, ny, nz, area, p, o, true);
                 if (cyl == null) continue;
 
+                // Crescimento com REAJUSTE: o ajuste de 3 retalhos erra o raio no centésimo (o R2,5
+                // da alça da malha 2 saía R2,51), e testar cada vizinho contra esse ajuste velho
+                // recusava justamente as duas facetas de baixo do raio, que viravam "faces
+                // inclinadas" de 7,5° e 22,5°. Agora o vizinho entra se o cilindro REAJUSTADO com
+                // ele continua cabendo; o teste rápido (tolerância folgada) só poupa o reajuste.
                 var inCluster = new HashSet<int>(cluster);
+                var members = new List<int>(cluster);
                 var frontier = new Queue<int>(cluster);
+                var loose = new RecognizerOptions
+                {
+                    CylinderAbsoluteToleranceMm = 5 * o.CylinderAbsoluteToleranceMm,
+                    CylinderRelativeTolerance = 5 * o.CylinderRelativeTolerance,
+                    PlaneAngleToleranceDeg = 3 * o.PlaneAngleToleranceDeg
+                };
                 while (frontier.Count > 0)
                 {
                     int c = frontier.Dequeue();
                     foreach (int q in adj[c])
                     {
                         if (owner[q] >= 0 || inCluster.Contains(q)) continue;
-                        if (!FitsCylinder(patches[q], cyl, nx, ny, nz, p, o)) continue;
+                        if (!FitsCylinder(patches[q], cyl, nx, ny, nz, p, loose)) continue;
+                        members.Add(q);
+                        RecognizedSurface refit = TryCylinder(Gather(members, patches), nx, ny, nz, area, p, o, true);
+                        if (refit == null) { members.RemoveAt(members.Count - 1); continue; }
+                        cyl = refit;
                         inCluster.Add(q);
                         frontier.Enqueue(q);
                     }
                 }
 
-                var members = new List<int>(inCluster);
-                RecognizedSurface final = TryCylinder(Gather(members, patches), nx, ny, nz, area, p, o);
-                if (final == null) continue;
+                RecognizedSurface final = cyl;
 
                 int id = result.Surfaces.Count;
                 foreach (int m in members)
@@ -666,12 +786,519 @@ namespace AutoEDM.Reverse
                 }
 
                 List<int> tris = Gather(chain, patches);
-                RecognizedSurface s = TryCylinder(tris, nx, ny, nz, area, p, o) ?? MakeFreeForm(tris, area, p);
+                RecognizedSurface s = TryCylinder(tris, nx, ny, nz, area, p, o, true)
+                                      ?? TryCone(tris, nx, ny, nz, area, p, o, true)
+                                      ?? MakeFreeForm(tris, area, p);
                 int sid = result.Surfaces.Count;
                 foreach (int t in tris) region[t] = sid;
                 if (s.Kind == "livre") result.FreeFormAreaMm2 += s.AreaMm2;
                 result.Surfaces.Add(s);
             }
+        }
+
+        // ------------------------------------------------------------------ toro
+
+        /// <summary>
+        /// Junta em TORO os pedaços que o crescimento de cilindro deixou picados. O raio que
+        /// contorna uma curva (o R2,5 do topo da alça da malha 2 dando a volta na ponta R3) é um
+        /// toro, e cada faixa de meridiano dele cabe sozinha num "cilindro" curto de eixo
+        /// deitado — a ponta saía em ~12 cilindros R2,495 de eixos diferentes, mais retalhos
+        /// livres. Candidato: cilindro CURTO (comprimento menor que o raio) ou região livre;
+        /// vizinhos candidatos entram no grupo enquanto a união ainda couber num toro.
+        /// </summary>
+        private static void MergeIntoTori(RecognitionResult result, int[] region, List<int>[] neighbours,
+            double[] nx, double[] ny, double[] nz, double[] area, double[] p, RecognizerOptions o)
+        {
+            int ns = result.Surfaces.Count;
+            var tris = new List<int>[ns];
+            for (int i = 0; i < ns; i++) tris[i] = new List<int>();
+            for (int t = 0; t < region.Length; t++) if (region[t] >= 0) tris[region[t]].Add(t);
+
+            var candidate = new bool[ns];
+            for (int i = 0; i < ns; i++)
+            {
+                RecognizedSurface s = result.Surfaces[i];
+                candidate[i] = s.Kind == "livre" || (s.Kind == "cilindro" && s.SweepDeg < 360 && s.LengthMm < s.RadiusMm);
+            }
+
+            var adj = new HashSet<int>[ns];
+            var anyAdj = new HashSet<int>[ns];
+            for (int i = 0; i < ns; i++) { adj[i] = new HashSet<int>(); anyAdj[i] = new HashSet<int>(); }
+            for (int t = 0; t < region.Length; t++)
+            {
+                if (region[t] < 0) continue;
+                foreach (int nb in neighbours[t])
+                {
+                    if (region[nb] < 0 || region[nb] == region[t]) continue;
+                    anyAdj[region[t]].Add(region[nb]);
+                    if (candidate[region[t]] && candidate[region[nb]]) adj[region[t]].Add(region[nb]);
+                }
+            }
+
+            var used = new bool[ns];
+            var order = new List<int>();
+            for (int i = 0; i < ns; i++) if (candidate[i]) order.Add(i);
+            order.Sort((a, b) => result.Surfaces[b].AreaMm2.CompareTo(result.Surfaces[a].AreaMm2));
+
+            var removed = new bool[ns];
+            var added = new List<Tuple<RecognizedSurface, List<int>>>();
+            // 1º o grupo CONECTADO inteiro de uma vez. Ajustar par a par não serve: as normais de
+            // duas faixas de meridiano cortam também a reta que liga os centros dos dois perfis,
+            // e o eixo sai indeterminado (a malha 2 dava eixos "(0,92; −0,39; −0,07)").
+            foreach (int seed in order)
+            {
+                if (used[seed]) continue;
+                var compGroup = new List<int>();
+                var q0 = new Queue<int>();
+                q0.Enqueue(seed);
+                var seenC = new HashSet<int> { seed };
+                while (q0.Count > 0)
+                {
+                    int c = q0.Dequeue();
+                    compGroup.Add(c);
+                    foreach (int r in adj[c]) if (!used[r] && seenC.Add(r)) q0.Enqueue(r);
+                }
+                if (compGroup.Count < 3) continue;
+                var allC = new List<int>();
+                foreach (int g in compGroup) allC.AddRange(tris[g]);
+                RecognizedSurface whole = TryTorus(allC, nx, ny, nz, area, p, o);
+                if (whole == null) continue;
+                foreach (int g in compGroup) { used[g] = true; removed[g] = true; }
+                added.Add(Tuple.Create(whole, allC));
+            }
+
+            // 2º, o que sobrou: cresce a partir de uma semente que já começa com os vizinhos
+            // até 4 pedaços, para o primeiro ajuste já ter eixo determinado.
+            foreach (int seed in order)
+            {
+                if (used[seed]) continue;
+                var group = new List<int> { seed };
+                var tried = new HashSet<int> { seed };
+                var ring = new Queue<int>(adj[seed]);
+                while (ring.Count > 0 && group.Count < 4)
+                {
+                    int q = ring.Dequeue();
+                    if (used[q] || !tried.Add(q)) continue;
+                    group.Add(q);
+                    foreach (int r in adj[q]) if (!tried.Contains(r)) ring.Enqueue(r);
+                }
+                if (group.Count < 4) continue;
+                var all = new List<int>();
+                foreach (int g in group) all.AddRange(tris[g]);
+                RecognizedSurface torus = TryTorus(all, nx, ny, nz, area, p, o);
+                if (torus == null) continue;
+                var frontier = new Queue<int>(ring);
+                while (frontier.Count > 0)
+                {
+                    int q = frontier.Dequeue();
+                    if (used[q] || !tried.Add(q)) continue;
+                    var union = new List<int>(all);
+                    union.AddRange(tris[q]);
+                    RecognizedSurface fit = TryTorus(union, nx, ny, nz, area, p, o);
+                    if (fit == null) continue;
+                    torus = fit;
+                    all = union;
+                    group.Add(q);
+                    foreach (int r in adj[q]) if (!tried.Contains(r)) frontier.Enqueue(r);
+                }
+                if (torus == null || group.Count < 2) continue;
+
+                foreach (int g in group) { used[g] = true; removed[g] = true; }
+                added.Add(Tuple.Create(torus, all));
+            }
+            if (added.Count == 0) return;
+
+            // Absorção: vizinho de QUALQUER tipo (a fileira de perto do eixo, quase plana, saía
+            // como "cone" e "planos" pequenos) entra no toro se a união ainda couber nele. Face
+            // plana de verdade não cabe — os vértices dela saem do toro — e fica de fora.
+            for (int k = 0; k < added.Count; k++)
+            {
+                var all = added[k].Item2;
+                var mine = new HashSet<int>();
+                for (int i = 0; i < ns; i++) if (removed[i]) foreach (int t in tris[i]) if (all.Contains(t)) { mine.Add(i); break; }
+                bool grew = true;
+                while (grew)
+                {
+                    grew = false;
+                    var around = new HashSet<int>();
+                    foreach (int i in mine) foreach (int q in anyAdj[i]) if (!removed[q]) around.Add(q);
+                    foreach (int q in around)
+                    {
+                        if (result.Surfaces[q].AreaMm2 > added[k].Item1.AreaMm2) continue;
+                        var union = new List<int>(all);
+                        union.AddRange(tris[q]);
+                        RecognizedSurface fit = TryTorus(union, nx, ny, nz, area, p, o);
+                        if (fit == null) continue;
+                        removed[q] = true;
+                        mine.Add(q);
+                        all = union;
+                        added[k] = Tuple.Create(fit, all);
+                        grew = true;
+                    }
+                }
+            }
+
+            // Compacta: tira os pedaços absorvidos, põe os toros, e refaz o mapa triângulo → superfície.
+            var map = new int[ns];
+            var kept = new List<RecognizedSurface>();
+            for (int i = 0; i < ns; i++)
+            {
+                if (removed[i])
+                {
+                    map[i] = -1;
+                    if (result.Surfaces[i].Kind == "livre") result.FreeFormAreaMm2 -= result.Surfaces[i].AreaMm2;
+                    continue;
+                }
+                map[i] = kept.Count;
+                kept.Add(result.Surfaces[i]);
+            }
+            for (int t = 0; t < region.Length; t++) if (region[t] >= 0) region[t] = map[region[t]];
+            foreach (var a in added)
+            {
+                foreach (int t in a.Item2) region[t] = kept.Count;
+                kept.Add(a.Item1);
+            }
+            result.Surfaces.Clear();
+            result.Surfaces.AddRange(kept);
+        }
+
+        /// <summary>
+        /// Ajuste de TORO (superfície de revolução de perfil circular). Toda normal de uma
+        /// superfície de revolução CORTA o eixo, e "a reta L corta a reta da normal" é linear nas
+        /// coordenadas de Plücker de L: d·(c × n) + n·m = 0. O eixo é o vetor singular de menor
+        /// valor do sistema 6×6 (Pottmann). Com o eixo, cada vértice vai para o meridiano
+        /// (ρ, h), e o perfil é um círculo (Kåsa): o centro dá o raio maior, o raio do círculo é
+        /// o RAIO que o projetista cotou. Devolve null se não couber na tolerância.
+        /// </summary>
+        public static RecognizedSurface TryTorus(List<int> tris, double[] nx, double[] ny, double[] nz,
+            double[] area, double[] p, RecognizerOptions o)
+        {
+            if (tris.Count < 6) return null;
+
+            var ata = new double[6, 6];
+            foreach (int t in tris)
+            {
+                double cxT = 0, cyT = 0, czT = 0;
+                for (int k = 0; k < 3; k++)
+                {
+                    int b = t * 9 + k * 3;
+                    cxT += p[b] / 3.0; cyT += p[b + 1] / 3.0; czT += p[b + 2] / 3.0;
+                }
+                double[] n = { nx[t], ny[t], nz[t] };
+                double[] cn = Cross(new[] { cxT, cyT, czT }, n);
+                double[] row = { cn[0], cn[1], cn[2], n[0], n[1], n[2] };
+                double w = area[t];
+                for (int i = 0; i < 6; i++)
+                    for (int j = 0; j < 6; j++) ata[i, j] += w * row[i] * row[j];
+            }
+
+            double[] x = SmallestEigenvectorN(ata, 6);
+            if (x == null) return null;
+            double[] d = { x[0], x[1], x[2] }, m = { x[3], x[4], x[5] };
+            double dl = Math.Sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (dl < 1e-9) return null;
+            d[0] /= dl; d[1] /= dl; d[2] /= dl;
+            m[0] /= dl; m[1] /= dl; m[2] /= dl;
+            double[] p0 = Cross(d, m); // pé da perpendicular da origem ao eixo
+            int dom = Math.Abs(d[0]) >= Math.Abs(d[1]) ? (Math.Abs(d[0]) >= Math.Abs(d[2]) ? 0 : 2) : (Math.Abs(d[1]) >= Math.Abs(d[2]) ? 1 : 2);
+            if (d[dom] < 0) { d[0] = -d[0]; d[1] = -d[1]; d[2] = -d[2]; }
+
+            // Refino pelos VÉRTICES: na tesselação grossa (15° nas duas direções, malha 2) a
+            // normal da faceta não passa exatamente pelo eixo e o Plücker erra uns 10°; os
+            // vértices estão SOBRE o toro. Nelder–Mead em 4 parâmetros (inclinação do eixo e
+            // posição dele), partindo do Plücker e do eixo X/Y/Z mais próximo dele.
+            var verts = new List<double[]>();
+            foreach (int t in tris)
+                for (int k = 0; k < 3; k++) { int b = t * 9 + k * 3; verts.Add(new[] { p[b], p[b + 1], p[b + 2] }); }
+            double bestRms = double.MaxValue;
+            double[] bestD = d, bestP = p0;
+            var starts = new List<double[]> { d };
+            double[] aligned = new double[3];
+            aligned[dom] = 1;
+            starts.Add(aligned);
+            foreach (double[] d0 in starts)
+            {
+                double[] u1 = Perpendicular(d0), u2 = Cross(d0, u1);
+                // p0 levado para o pé da perpendicular ao longo do novo eixo
+                double along = p0[0] * d0[0] + p0[1] * d0[1] + p0[2] * d0[2];
+                double[] base0 = { p0[0] - along * d0[0], p0[1] - along * d0[1], p0[2] - along * d0[2] };
+                Func<double[], double> cost = q =>
+                {
+                    double[] dd = { d0[0] + q[0] * u1[0] + q[1] * u2[0], d0[1] + q[0] * u1[1] + q[1] * u2[1], d0[2] + q[0] * u1[2] + q[1] * u2[2] };
+                    double l = Math.Sqrt(dd[0] * dd[0] + dd[1] * dd[1] + dd[2] * dd[2]);
+                    dd[0] /= l; dd[1] /= l; dd[2] /= l;
+                    double[] pp = { base0[0] + q[2] * u1[0] + q[3] * u2[0], base0[1] + q[2] * u1[1] + q[3] * u2[1], base0[2] + q[2] * u1[2] + q[3] * u2[2] };
+                    return ProfileCircleRms(verts, dd, pp);
+                };
+                double[] xb = NelderMead(cost, new double[4], new[] { 0.05, 0.05, 0.5, 0.5 }, 600);
+                double c = cost(xb);
+                if (c < bestRms)
+                {
+                    bestRms = c;
+                    double[] dd = { d0[0] + xb[0] * u1[0] + xb[1] * u2[0], d0[1] + xb[0] * u1[1] + xb[1] * u2[1], d0[2] + xb[0] * u1[2] + xb[1] * u2[2] };
+                    double l = Math.Sqrt(dd[0] * dd[0] + dd[1] * dd[1] + dd[2] * dd[2]);
+                    bestD = new[] { dd[0] / l, dd[1] / l, dd[2] / l };
+                    bestP = new[] { base0[0] + xb[2] * u1[0] + xb[3] * u2[0], base0[1] + xb[2] * u1[1] + xb[3] * u2[1], base0[2] + xb[2] * u1[2] + xb[3] * u2[2] };
+                }
+            }
+            d = bestD;
+            p0 = bestP;
+            dom = Math.Abs(d[0]) >= Math.Abs(d[1]) ? (Math.Abs(d[0]) >= Math.Abs(d[2]) ? 0 : 2) : (Math.Abs(d[1]) >= Math.Abs(d[2]) ? 1 : 2);
+            if (d[dom] < 0) { d[0] = -d[0]; d[1] = -d[1]; d[2] = -d[2]; }
+
+            double[] e1 = Perpendicular(d);
+            double[] e2 = Cross(d, e1);
+            var rs = new List<double>();
+            var hs = new List<double>();
+            var around = new List<double>();
+            foreach (int t in tris)
+                for (int k = 0; k < 3; k++)
+                {
+                    int b = t * 9 + k * 3;
+                    double vx = p[b] - p0[0], vy = p[b + 1] - p0[1], vz = p[b + 2] - p0[2];
+                    double h = vx * d[0] + vy * d[1] + vz * d[2];
+                    double rx = vx - h * d[0], ry = vy - h * d[1], rz = vz - h * d[2];
+                    rs.Add(Math.Sqrt(rx * rx + ry * ry + rz * rz));
+                    hs.Add(h);
+                    around.Add(Math.Atan2(rx * e2[0] + ry * e2[1] + rz * e2[2], rx * e1[0] + ry * e1[1] + rz * e1[2]));
+                }
+
+            // Kåsa no meridiano (ρ, h).
+            int nPts = rs.Count;
+            double su = 0, sv = 0, suu = 0, svv = 0, suv = 0, sr = 0, sru = 0, srv = 0;
+            for (int i = 0; i < nPts; i++)
+            {
+                double u = rs[i], v = hs[i], rr = u * u + v * v;
+                su += u; sv += v; suu += u * u; svv += v * v; suv += u * v;
+                sr += rr; sru += rr * u; srv += rr * v;
+            }
+            double[] sol = Solve3(new[,] { { suu, suv, su }, { suv, svv, sv }, { su, sv, nPts } }, new[] { -sru, -srv, -sr });
+            if (sol == null) return null;
+            double r0 = -sol[0] / 2, h0 = -sol[1] / 2;
+            double rsq = r0 * r0 + h0 * h0 - sol[2];
+            if (rsq <= 1e-12) return null;
+            double minor = Math.Sqrt(rsq);
+
+            double sq = 0;
+            var tube = new List<double>(nPts);
+            for (int i = 0; i < nPts; i++)
+            {
+                double du = rs[i] - r0, dv = hs[i] - h0;
+                double dd = Math.Sqrt(du * du + dv * dv) - minor;
+                sq += dd * dd;
+                tube.Add(Math.Atan2(dv, du));
+            }
+            double rms = Math.Sqrt(sq / nPts);
+            if (rms > CylinderTolerance(minor, o)) return null;
+            if (r0 < -1e-6) return null;
+
+            double sweep = SweepDegrees(around);
+            double tubeSweep = SweepDegrees(tube);
+            if (sweep < o.MinCylinderSweepDeg || tubeSweep < o.MinCylinderSweepDeg) return null;
+
+            double[] min = { double.MaxValue, double.MaxValue, double.MaxValue };
+            double[] max = { double.MinValue, double.MinValue, double.MinValue };
+            double areaSum = 0;
+            foreach (int t in tris)
+            {
+                areaSum += area[t];
+                for (int k = 0; k < 3; k++) { int b = t * 9 + k * 3; Span(min, max, p[b], p[b + 1], p[b + 2]); }
+            }
+
+            double[] arcFrom = null, arcTo = null;
+            if (sweep < 360.0)
+            {
+                double f, tt;
+                ArcEnds(around, out f, out tt);
+                arcFrom = Combine(e1, e2, Math.Cos(f), Math.Sin(f));
+                arcTo = Combine(e1, e2, Math.Cos(tt), Math.Sin(tt));
+            }
+            double tf, tto;
+            ArcEnds(tube, out tf, out tto);
+
+            // Raio maior zero: o perfil passa pelo eixo e a superfície é uma ESFERA.
+            bool sphere = r0 < Math.Max(0.01, 0.005 * minor);
+            return new RecognizedSurface
+            {
+                Kind = sphere ? "esfera" : "toro",
+                TriangleCount = tris.Count,
+                AreaMm2 = areaSum,
+                AxisMm = d,
+                PointMm = new[] { p0[0] + h0 * d[0], p0[1] + h0 * d[1], p0[2] + h0 * d[2] },
+                RadiusMm = minor,
+                MajorRadiusMm = sphere ? 0 : r0,
+                SweepDeg = sweep,
+                ArcFrom = arcFrom,
+                ArcTo = arcTo,
+                TubeFromDeg = tf * 180 / Math.PI,
+                TubeToDeg = tto * 180 / Math.PI,
+                LengthMm = 0,
+                FitRmsMm = rms,
+                MinMm = min,
+                MaxMm = max
+            };
+        }
+
+        /// <summary>RMS do círculo (Kåsa) que melhor passa pelos vértices no meridiano (ρ, h) do
+        /// eixo dado — o custo do refino do toro.</summary>
+        private static double ProfileCircleRms(List<double[]> verts, double[] d, double[] p0)
+        {
+            int n = verts.Count;
+            var rs = new double[n];
+            var hs = new double[n];
+            double su = 0, sv = 0, suu = 0, svv = 0, suv = 0, sr = 0, sru = 0, srv = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double vx = verts[i][0] - p0[0], vy = verts[i][1] - p0[1], vz = verts[i][2] - p0[2];
+                double h = vx * d[0] + vy * d[1] + vz * d[2];
+                double rx = vx - h * d[0], ry = vy - h * d[1], rz = vz - h * d[2];
+                double u = Math.Sqrt(rx * rx + ry * ry + rz * rz);
+                rs[i] = u; hs[i] = h;
+                double rr = u * u + h * h;
+                su += u; sv += h; suu += u * u; svv += h * h; suv += u * h;
+                sr += rr; sru += rr * u; srv += rr * h;
+            }
+            double[] sol = Solve3(new[,] { { suu, suv, su }, { suv, svv, sv }, { su, sv, n } }, new[] { -sru, -srv, -sr });
+            if (sol == null) return double.MaxValue;
+            double r0 = -sol[0] / 2, h0 = -sol[1] / 2, rsq = r0 * r0 + h0 * h0 - sol[2];
+            if (rsq <= 0) return double.MaxValue;
+            double r = Math.Sqrt(rsq), sq = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double dd = Math.Sqrt((rs[i] - r0) * (rs[i] - r0) + (hs[i] - h0) * (hs[i] - h0)) - r;
+                sq += dd * dd;
+            }
+            return Math.Sqrt(sq / n);
+        }
+
+        /// <summary>Nelder–Mead simples (sem dependência externa: 4 parâmetros não justificam uma).</summary>
+        private static double[] NelderMead(Func<double[], double> f, double[] x0, double[] step, int iterations)
+        {
+            int n = x0.Length;
+            var pts = new double[n + 1][];
+            var val = new double[n + 1];
+            for (int i = 0; i <= n; i++)
+            {
+                pts[i] = (double[])x0.Clone();
+                if (i > 0) pts[i][i - 1] += step[i - 1];
+                val[i] = f(pts[i]);
+            }
+            for (int it = 0; it < iterations; it++)
+            {
+                Array.Sort(val, pts);
+                if (Math.Abs(val[n] - val[0]) < 1e-12) break;
+                var c = new double[n];
+                for (int i = 0; i < n; i++) for (int k = 0; k < n; k++) c[k] += pts[i][k] / n;
+                Func<double, double[]> along = a => { var x = new double[n]; for (int k = 0; k < n; k++) x[k] = c[k] + a * (pts[n][k] - c[k]); return x; };
+                double[] xr = along(-1); double fr = f(xr);
+                if (fr < val[0])
+                {
+                    double[] xe = along(-2); double fe = f(xe);
+                    if (fe < fr) { pts[n] = xe; val[n] = fe; } else { pts[n] = xr; val[n] = fr; }
+                }
+                else if (fr < val[n - 1]) { pts[n] = xr; val[n] = fr; }
+                else
+                {
+                    double[] xc = along(0.5); double fc = f(xc);
+                    if (fc < val[n]) { pts[n] = xc; val[n] = fc; }
+                    else
+                        for (int i = 1; i <= n; i++)
+                        {
+                            for (int k = 0; k < n; k++) pts[i][k] = pts[0][k] + 0.5 * (pts[i][k] - pts[0][k]);
+                            val[i] = f(pts[i]);
+                        }
+                }
+            }
+            Array.Sort(val, pts);
+            return pts[0];
+        }
+
+        /// <summary>Autovetor do menor autovalor de uma simétrica n×n (Jacobi cíclico).</summary>
+        public static double[] SmallestEigenvectorN(double[,] m, int n)
+        {
+            var a = (double[,])m.Clone();
+            var v = new double[n, n];
+            for (int i = 0; i < n; i++) v[i, i] = 1;
+            for (int sweep = 0; sweep < 64; sweep++)
+            {
+                double off = 0;
+                for (int i = 0; i < n; i++) for (int j = i + 1; j < n; j++) off += a[i, j] * a[i, j];
+                if (off < 1e-30) break;
+                for (int pI = 0; pI < n - 1; pI++)
+                    for (int q = pI + 1; q < n; q++)
+                    {
+                        if (Math.Abs(a[pI, q]) < 1e-300) continue;
+                        double theta = (a[q, q] - a[pI, pI]) / (2 * a[pI, q]);
+                        double tt = Math.Sign(theta == 0 ? 1 : theta) / (Math.Abs(theta) + Math.Sqrt(theta * theta + 1));
+                        double c = 1 / Math.Sqrt(tt * tt + 1), s = tt * c;
+                        for (int k = 0; k < n; k++)
+                        {
+                            double akp = a[k, pI], akq = a[k, q];
+                            a[k, pI] = c * akp - s * akq; a[k, q] = s * akp + c * akq;
+                        }
+                        for (int k = 0; k < n; k++)
+                        {
+                            double apk = a[pI, k], aqk = a[q, k];
+                            a[pI, k] = c * apk - s * aqk; a[q, k] = s * apk + c * aqk;
+                        }
+                        for (int k = 0; k < n; k++)
+                        {
+                            double vkp = v[k, pI], vkq = v[k, q];
+                            v[k, pI] = c * vkp - s * vkq; v[k, q] = s * vkp + c * vkq;
+                        }
+                    }
+            }
+            int best = 0;
+            for (int i = 1; i < n; i++) if (a[i, i] < a[best, best]) best = i;
+            var e = new double[n];
+            for (int k = 0; k < n; k++) e[k] = v[k, best];
+            return e;
+        }
+
+        /// <summary>
+        /// Semente de cilindro: o retalho e os vizinhos que concordam com ele no EIXO. O eixo que
+        /// dois retalhos de um mesmo cilindro sugerem é o produto vetorial das normais deles; um
+        /// vizinho de OUTRA superfície sugere outro eixo. Antes a semente levava todo vizinho de
+        /// área parecida — e na ponta da alça da malha 2 toda faceta da parede R3 tinha por
+        /// vizinha uma faceta do toro de cima, o ajuste falhava sempre e a ponta inteira caía em
+        /// "livre", virando 26 retas no esboço.
+        /// </summary>
+        private static List<int> SeedCluster(int seed, HashSet<int>[] adj, int[] owner, List<List<int>> patches,
+            double[] patchArea, double[] nx, double[] ny, double[] nz, double[] area)
+        {
+            double[] ns = PatchNormal(patches[seed], nx, ny, nz, area);
+            var axes = new List<Tuple<int, double[]>>();
+            foreach (int q in adj[seed])
+            {
+                if (owner[q] >= 0 || patchArea[q] > 4.0 * patchArea[seed] + 1e-9) continue;
+                double[] nq = PatchNormal(patches[q], nx, ny, nz, area);
+                double[] ax = Cross(ns, nq);
+                double len = Math.Sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+                if (len < Math.Sin(0.5 * Math.PI / 180)) continue; // coplanar: não diz eixo
+                axes.Add(Tuple.Create(q, new[] { ax[0] / len, ax[1] / len, ax[2] / len }));
+            }
+
+            List<int> best = null;
+            double cosTol = Math.Cos(5.0 * Math.PI / 180);
+            foreach (var a in axes)
+            {
+                var group = new List<int> { seed };
+                foreach (var b in axes)
+                {
+                    double d = Math.Abs(a.Item2[0] * b.Item2[0] + a.Item2[1] * b.Item2[1] + a.Item2[2] * b.Item2[2]);
+                    if (d >= cosTol) group.Add(b.Item1);
+                }
+                if (best == null || group.Count > best.Count) best = group;
+            }
+            return best != null && best.Count >= 3 ? best : null;
+        }
+
+        private static double[] PatchNormal(List<int> tris, double[] nx, double[] ny, double[] nz, double[] area)
+        {
+            double x = 0, y = 0, z = 0;
+            foreach (int t in tris) { x += nx[t] * area[t]; y += ny[t] * area[t]; z += nz[t] * area[t]; }
+            double l = Math.Sqrt(x * x + y * y + z * z);
+            return l <= 1e-12 ? new double[] { 0, 0, 1 } : new[] { x / l, y / l, z / l };
         }
 
         private static List<int> Gather(List<int> patchIds, List<List<int>> patches)
@@ -774,7 +1401,7 @@ namespace AutoEDM.Reverse
         /// Devolve null quando o resíduo não cabe na tolerância: NÃO reconhecer é um resultado.
         /// </summary>
         private static RecognizedSurface TryCylinder(List<int> tris, double[] nx, double[] ny, double[] nz,
-            double[] area, double[] p, RecognizerOptions o)
+            double[] area, double[] p, RecognizerOptions o, bool requireRuled = false)
         {
             if (tris.Count < o.MinTrianglesPerRegion) return null;
 
@@ -854,6 +1481,25 @@ namespace AutoEDM.Reverse
             double sweepDeg = SweepDegrees(angles);
             if (sweepDeg < o.MinCylinderSweepDeg) return null;
 
+            // Plano + plano disfarçados: TRÊS pontos de perfil sempre cabem num círculo, então
+            // duas faces planas em ângulo (parede + face inclinada) davam "cilindro" de RMS zero
+            // (malha real: Ø53,57 com volta de 39° no corpo 1 do Rack_Anghinoni). Tesselação de
+            // cilindro de verdade tem FLECHA pequena entre vértices vizinhos; duas faces planas
+            // têm flecha de milímetro.
+            if (MaxSagittaMm(angles, radius) > o.MaxSagittaMm) return null;
+
+            if (requireRuled)
+            {
+                var heights = new List<double>(n);
+                foreach (int t in tris)
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int b = t * 9 + k * 3;
+                        heights.Add(p[b] * axis[0] + p[b + 1] * axis[1] + p[b + 2] * axis[2]);
+                    }
+                if (!IsRuled(angles, heights, CylinderTolerance(radius, o) / radius)) return null;
+            }
+
             // Centro do eixo, de volta ao mundo, na altura média da região.
             double wMid = (axMin + axMax) / 2.0;
             double[] centre =
@@ -876,9 +1522,20 @@ namespace AutoEDM.Reverse
                 }
             }
 
+            double[] arcFrom = null, arcTo = null;
+            if (sweepDeg < 360.0)
+            {
+                double from, to;
+                ArcEnds(angles, out from, out to);
+                arcFrom = Combine(e1, e2, Math.Cos(from), Math.Sin(from));
+                arcTo = Combine(e1, e2, Math.Cos(to), Math.Sin(to));
+            }
+
             return new RecognizedSurface
             {
                 Kind = "cilindro",
+                ArcFrom = arcFrom,
+                ArcTo = arcTo,
                 TriangleCount = tris.Count,
                 AreaMm2 = areaSum,
                 AxisMm = axis,
@@ -890,6 +1547,187 @@ namespace AutoEDM.Reverse
                 MinMm = min,
                 MaxMm = max
             };
+        }
+
+        /// <summary>
+        /// Ajuste de CONE — chanfro de furo, escareado, ressalto com ângulo de saída. Sem ele,
+        /// o chanfro 1×45° de cada um dos 24 furos da malha 6 saía picado em ~20 "cilindros
+        /// inclinados" de três triângulos.
+        ///
+        /// Duas propriedades do cone fazem o ajuste ser linear, sem iteração:
+        ///   1. toda normal faz o MESMO ângulo com o eixo, então o eixo é a direção em que as
+        ///      normais menos VARIAM (autovetor de menor autovalor da covariância das normais —
+        ///      no cilindro é a mesma conta com a média zero);
+        ///   2. todo plano tangente passa pelo ÁPICE — e a faceta da tesselação também, porque
+        ///      ela tem dois vértices numa geratriz. O ápice é o ponto que melhor satisfaz
+        ///      n·x = n·c de todas as facetas (mínimos quadrados 3×3).
+        /// Com eixo e ápice, o semi-ângulo sai de ρ = h·tanβ e o RMS é a distância de cada vértice
+        /// à geratriz. Devolve null quando não cabe: plano e cilindro já foram tentados antes.
+        /// </summary>
+        private static RecognizedSurface TryCone(List<int> tris, double[] nx, double[] ny, double[] nz,
+            double[] area, double[] p, RecognizerOptions o, bool requireRuled = false)
+        {
+            if (tris.Count < 3) return null;
+
+            double sumA = 0, mx = 0, my = 0, mz = 0;
+            foreach (int t in tris)
+            {
+                sumA += area[t];
+                mx += nx[t] * area[t]; my += ny[t] * area[t]; mz += nz[t] * area[t];
+            }
+            if (sumA <= 0) return null;
+            mx /= sumA; my /= sumA; mz /= sumA;
+
+            var cov = new double[3, 3];
+            var nn = new double[3, 3];
+            var rhs = new double[3];
+            foreach (int t in tris)
+            {
+                double a = area[t];
+                double[] d = { nx[t] - mx, ny[t] - my, nz[t] - mz };
+                double[] n = { nx[t], ny[t], nz[t] };
+                double cxT = 0, cyT = 0, czT = 0;
+                for (int k = 0; k < 3; k++)
+                {
+                    int b = t * 9 + k * 3;
+                    cxT += p[b] / 3.0; cyT += p[b + 1] / 3.0; czT += p[b + 2] / 3.0;
+                }
+                double off = n[0] * cxT + n[1] * cyT + n[2] * czT;
+                for (int i = 0; i < 3; i++)
+                {
+                    rhs[i] += a * n[i] * off;
+                    for (int j = 0; j < 3; j++)
+                    {
+                        cov[i, j] += a * d[i] * d[j];
+                        nn[i, j] += a * n[i] * n[j];
+                    }
+                }
+            }
+
+            double[] axis = SmallestEigenvector(cov);
+            if (axis == null) return null;
+            double[] apex = Solve3(nn, rhs);
+            if (apex == null) return null;
+
+            // Eixo do ápice para a abertura: a altura média dos vértices tem de ser positiva.
+            double hSum = 0;
+            int count = 0;
+            foreach (int t in tris)
+                for (int k = 0; k < 3; k++)
+                {
+                    int b = t * 9 + k * 3;
+                    hSum += (p[b] - apex[0]) * axis[0] + (p[b + 1] - apex[1]) * axis[1] + (p[b + 2] - apex[2]) * axis[2];
+                    count++;
+                }
+            if (hSum < 0) { axis[0] = -axis[0]; axis[1] = -axis[1]; axis[2] = -axis[2]; }
+
+            double[] e1 = Perpendicular(axis);
+            double[] e2 = Cross(axis, e1);
+
+            var hs = new List<double>(count);
+            var rhos = new List<double>(count);
+            var angles = new List<double>(count);
+            double shr = 0, shh = 0;
+            foreach (int t in tris)
+                for (int k = 0; k < 3; k++)
+                {
+                    int b = t * 9 + k * 3;
+                    double vx = p[b] - apex[0], vy = p[b + 1] - apex[1], vz = p[b + 2] - apex[2];
+                    double h = vx * axis[0] + vy * axis[1] + vz * axis[2];
+                    double rx = vx - h * axis[0], ry = vy - h * axis[1], rz = vz - h * axis[2];
+                    double rho = Math.Sqrt(rx * rx + ry * ry + rz * rz);
+                    hs.Add(h);
+                    rhos.Add(rho);
+                    angles.Add(Math.Atan2(rx * e2[0] + ry * e2[1] + rz * e2[2], rx * e1[0] + ry * e1[1] + rz * e1[2]));
+                    shr += h * rho; shh += h * h;
+                }
+            if (shh <= 1e-12) return null;
+
+            double beta = Math.Atan(shr / shh);
+            double betaDeg = beta * 180.0 / Math.PI;
+            // Abaixo de 0,5° é cilindro (que já recusou); acima de 89,5° é plano.
+            if (betaDeg < 0.5 || betaDeg > 89.5) return null;
+
+            double cb = Math.Cos(beta), sb = Math.Sin(beta);
+            double sq = 0, hMin = double.MaxValue, hMax = double.MinValue, rMax = 0;
+            for (int i = 0; i < hs.Count; i++)
+            {
+                if (hs[i] <= 0) return null; // vértice atrás do ápice: não é UMA folha de cone
+                double d = rhos[i] * cb - hs[i] * sb;
+                sq += d * d;
+                if (hs[i] < hMin) hMin = hs[i];
+                if (hs[i] > hMax) hMax = hs[i];
+                if (rhos[i] > rMax) rMax = rhos[i];
+            }
+            double rms = Math.Sqrt(sq / hs.Count);
+            if (rms > CylinderTolerance(rMax, o)) return null;
+
+            double sweepDeg = SweepDegrees(angles);
+            if (sweepDeg < o.MinCylinderSweepDeg) return null;
+            if (MaxSagittaMm(angles, rMax) > o.MaxSagittaMm) return null;
+            if (requireRuled && !IsRuled(angles, hs, CylinderTolerance(rMax, o) / Math.Max(rMax, 1e-6))) return null;
+
+            double tanB = Math.Tan(beta);
+            double hMid = (hMin + hMax) / 2.0;
+            double[] min = { double.MaxValue, double.MaxValue, double.MaxValue };
+            double[] max = { double.MinValue, double.MinValue, double.MinValue };
+            foreach (int t in tris)
+                for (int k = 0; k < 3; k++)
+                {
+                    int b = t * 9 + k * 3;
+                    Span(min, max, p[b], p[b + 1], p[b + 2]);
+                }
+
+            return new RecognizedSurface
+            {
+                Kind = "cone",
+                TriangleCount = tris.Count,
+                AreaMm2 = sumA,
+                AxisMm = axis,
+                ApexMm = apex,
+                PointMm = new[] { apex[0] + hMid * axis[0], apex[1] + hMid * axis[1], apex[2] + hMid * axis[2] },
+                HalfAngleDeg = betaDeg,
+                RadiusMm = hMid * tanB,
+                RadiusMinMm = hMin * tanB,
+                RadiusMaxMm = hMax * tanB,
+                LengthMm = hMax - hMin,
+                SweepDeg = sweepDeg,
+                FitRmsMm = rms,
+                MinMm = min,
+                MaxMm = max
+            };
+        }
+
+        /// <summary>Início e fim do arco (radianos no referencial do ajuste): o arco é o
+        /// complemento do MAIOR vão, correndo no sentido anti-horário do fim do vão ao começo
+        /// dele.</summary>
+        private static void ArcEnds(List<double> angles, out double from, out double to)
+        {
+            var sorted = new List<double>(angles);
+            sorted.Sort();
+            double bestGap = (sorted[0] + 2 * Math.PI) - sorted[sorted.Count - 1];
+            from = sorted[0];
+            to = sorted[sorted.Count - 1];
+            for (int i = 1; i < sorted.Count; i++)
+            {
+                double g = sorted[i] - sorted[i - 1];
+                if (g > bestGap) { bestGap = g; from = sorted[i]; to = sorted[i - 1]; }
+            }
+        }
+
+        private static double[] Combine(double[] e1, double[] e2, double c, double s)
+        {
+            return new[] { c * e1[0] + s * e2[0], c * e1[1] + s * e2[1], c * e1[2] + s * e2[2] };
+        }
+
+        /// <summary>Tira de v a componente ao longo do eixo e normaliza.</summary>
+        private static double[] Perpendicularize(double[] v, double[] axis)
+        {
+            if (v == null) return null;
+            double d = v[0] * axis[0] + v[1] * axis[1] + v[2] * axis[2];
+            double[] w = { v[0] - d * axis[0], v[1] - d * axis[1], v[2] - d * axis[2] };
+            double len = Math.Sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+            return len <= 1e-12 ? v : new[] { w[0] / len, w[1] / len, w[2] / len };
         }
 
         /// <summary>Quanto da volta a região cobre. Mede pelo MAIOR vão vazio entre ângulos
@@ -918,12 +1756,83 @@ namespace AutoEDM.Reverse
             // Furo inteiro tesselado em N segmentos tem TODOS os vãos iguais a 360°/N — o maior
             // vão não é abertura, é só o passo da tesselação (a malha real dava "345°" para furo
             // inteiro). Abertura de verdade é um vão que se destaca dos outros.
+            // O passo de referência é o QUARTIL de cima, não a mediana: o cone do chanfro tem os
+            // anéis das duas bocas com vértices em ângulos diferentes, os vãos alternam curto e
+            // longo, e a mediana (curta) fazia o furo inteiro sair "346°".
             gaps.Sort();
-            double median = gaps[gaps.Count / 2];
-            if (gaps.Count >= 6 && biggestGap <= 1.5 * median) return 360.0;
+            double upper = gaps[(gaps.Count * 3) / 4];
+            if (gaps.Count >= 6 && biggestGap <= 1.5 * upper) return 360.0;
 
             double sweep = (2 * Math.PI - biggestGap) * 180.0 / Math.PI;
             return sweep < 0 ? 0 : sweep;
+        }
+
+        /// <summary>
+        /// Cilindro e cone são superfícies REGRADAS: a tesselação põe os vértices em GERATRIZES
+        /// (mesmo ângulo em volta do eixo, alturas diferentes). Fragmento de superfície de dupla
+        /// curvatura — concordância de canto, toro, esfera — forçado num cilindro tem os vértices
+        /// espalhados, um por ângulo. Foi o que encheu o corpo 3 do Rack_Anghinoni de "R0,09 com
+        /// eixo (−0,097; 0,181; 0,979)": centenas de cilindros de três triângulos na concordância
+        /// das pernas. Exige que a maioria dos vértices esteja numa geratriz com outro vértice.
+        /// Só vale para RETALHOS dentro de componente misto: superfície inteira delimitada por
+        /// quina pode vir com tesselação torcida (os anéis das bocas do chanfro da malha 6 têm
+        /// vértices em ângulos diferentes) e já é provada pelo ajuste.
+        /// </summary>
+        public static bool IsRuled(List<double> angles, List<double> heights, double angleTolRad)
+        {
+            int n = angles.Count;
+            if (n < 4) return false;
+            var idx = new List<int>(n);
+            for (int i = 0; i < n; i++) idx.Add(i);
+            idx.Sort((a, b) => angles[a].CompareTo(angles[b]));
+
+            double tol = Math.Max(angleTolRad, 1e-6);
+            double hMin = double.MaxValue, hMax = double.MinValue;
+            foreach (double h in heights) { if (h < hMin) hMin = h; if (h > hMax) hMax = h; }
+            double minRise = Math.Max(1e-3, 0.05 * (hMax - hMin));
+
+            int onGeneratrix = 0;
+            int start = 0;
+            while (start < n)
+            {
+                int end = start;
+                while (end + 1 < n && angles[idx[end + 1]] - angles[idx[end]] <= tol) end++;
+                double lo = double.MaxValue, hi = double.MinValue;
+                for (int i = start; i <= end; i++)
+                {
+                    double h = heights[idx[i]];
+                    if (h < lo) lo = h;
+                    if (h > hi) hi = h;
+                }
+                if (hi - lo >= minRise) onGeneratrix += end - start + 1;
+                start = end + 1;
+            }
+            return onGeneratrix >= 0.6 * n;
+        }
+
+        /// <summary>Maior flecha da tesselação: R·(1 − cos(vão/2)) no maior vão entre ângulos
+        /// vizinhos DENTRO do arco (a abertura do arco, se houver, não conta).</summary>
+        public static double MaxSagittaMm(List<double> angles, double radiusMm)
+        {
+            if (angles == null || angles.Count < 2) return 0;
+            var sorted = new List<double>(angles);
+            sorted.Sort();
+            var gaps = new List<double>();
+            for (int i = 1; i < sorted.Count; i++)
+            {
+                double g = sorted[i] - sorted[i - 1];
+                if (g > 1e-9) gaps.Add(g);
+            }
+            double wrap = (sorted[0] + 2 * Math.PI) - sorted[sorted.Count - 1];
+            if (wrap > 1e-9) gaps.Add(wrap);
+            if (gaps.Count < 2) return 0;
+
+            // O maior vão é a abertura do arco — a não ser que o arco seja a volta inteira
+            // (todos os vãos iguais), e aí ele também é passo de tesselação.
+            gaps.Sort();
+            double largest = gaps[gaps.Count - 1];
+            double step = SweepDegrees(angles) >= 360.0 ? largest : gaps[gaps.Count - 2];
+            return radiusMm * (1 - Math.Cos(step / 2));
         }
 
         private static RecognizedSurface MakeFreeForm(List<int> tris, double[] area, double[] p)

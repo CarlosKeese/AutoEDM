@@ -126,9 +126,12 @@ namespace AutoEDM.Core.Tests
             RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
             string texto = SurfaceReport.Format(r, "teste", "Esfera");
 
+            // Desde o ajuste de superfície de revolução (2026-10-10) a esfera é RECONHECIDA como
+            // esfera — o que importa continua: ninguém a chama de prismática.
             bool mosaico = texto.Contains("MOSAICO");
             bool livre = texto.Contains("FORMA LIVRE");
-            Assert.True(mosaico || livre,
+            bool esfera = r.Surfaces.Any(q => q.Kind == "esfera" && Math.Abs(q.RadiusMm - 25) < 0.05);
+            Assert.True(mosaico || livre || esfera,
                 "a esfera não foi marcada nem como mosaico nem como forma livre:\n" + texto);
             Assert.DoesNotContain("é PRISMÁTICA", texto);
         }
@@ -333,7 +336,147 @@ namespace AutoEDM.Core.Tests
             Assert.Equal(0.00001, s.AxisMm[1]);
         }
 
+        // ------------------------------------------------------------------ cone
+
+        [Fact]
+        public void Chanfro_de_furo_sai_como_cone_de_45_graus_com_os_dois_diametros()
+        {
+            // Chanfro 1×45° na boca de um furo Ø4: tronco de cone de Ø4 (z = 0) a Ø6 (z = 1).
+            double[] mesh = Frustum(2, 3, 1, 36);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
+
+            RecognizedSurface cone = Assert.Single(r.Surfaces);
+            Assert.Equal("cone", cone.Kind);
+            Assert.Equal(45, cone.HalfAngleDeg);
+            Assert.Equal(2.0, cone.RadiusMinMm, 6);
+            Assert.Equal(3.0, cone.RadiusMaxMm, 6);
+            Assert.Equal(360, cone.SweepDeg);
+            Assert.Equal(1.0, Math.Abs(cone.AxisMm[2]), 9);
+            // Ápice na extensão do cone: raio zero dois milímetros abaixo da boca do Ø4.
+            Assert.Equal(-2.0, cone.ApexMm[2], 3);
+        }
+
+        [Fact]
+        public void Ressalto_com_saida_de_um_grau_da_cone_de_um_grau()
+        {
+            double h = 30, rBase = 10, rTop = rBase - h * Math.Tan(Math.PI / 180);
+            double[] mesh = Frustum(rBase, rTop, h, 72);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
+
+            RecognizedSurface cone = Assert.Single(r.Surfaces);
+            Assert.Equal("cone", cone.Kind);
+            Assert.Equal(1, cone.HalfAngleDeg);
+            Assert.Equal(rTop, cone.RadiusMinMm, 2);
+            Assert.Equal(rBase, cone.RadiusMaxMm, 2);
+            // O ápice fica acima do topo (o cone se fecha para cima), e o eixo aponta para baixo.
+            Assert.True(cone.ApexMm[2] > h);
+            Assert.Equal(-1.0, cone.AxisMm[2], 9);
+        }
+
+        [Fact]
+        public void Parede_e_rampa_em_angulo_nao_viram_cilindro_de_tres_pontos()
+        {
+            // Malha real (corpo 1 do Rack_Anghinoni): parede Y = 60 de z −2 a 1 e rampa até
+            // (Y 65, z 15,142). Três pontos de perfil cabem num círculo de RMS zero — era
+            // reconhecido como "cilindro Ø53,57 de 39°".
+            var pts = new List<double>();
+            double[] a0 = { 0, 60, -2 }, a1 = { 30, 60, -2 };
+            double[] b0 = { 0, 60, 1 }, b1 = { 30, 60, 1 };
+            double[] c0 = { 0, 65, 15.142 }, c1 = { 30, 65, 15.142 };
+            Push(pts, a0, b1, a1); Push(pts, a0, b0, b1);
+            Push(pts, b0, c1, b1); Push(pts, b0, c0, c1);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(pts.ToArray(), null);
+
+            Assert.Equal(2, r.Surfaces.Count);
+            Assert.All(r.Surfaces, s => Assert.Equal("plano", s.Kind));
+            RecognizedSurface ramp = r.Surfaces.Single(s => Math.Abs(s.Normal[2]) > 0.1);
+            Assert.Equal(Math.Atan2(5, 14.142) * 180 / Math.PI, Math.Acos(Math.Abs(ramp.Normal[1])) * 180 / Math.PI, 1);
+        }
+
+        // ------------------------------------------------------------------ toro
+
+        [Fact]
+        public void Raio_contornando_ponta_arredondada_sai_como_um_toro_e_nao_como_cilindros()
+        {
+            // A ponta da alça da malha 2: R2,5 de perfil (quarto de volta), a R0,5 do eixo Z,
+            // meia volta em torno dele, tesselado a 15° nas duas direções.
+            double[] mesh = TorusPatch(0.5, 2.5, -Math.PI / 2, Math.PI / 2, 12, 0, Math.PI / 2, 6);
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(mesh, null);
+
+            RecognizedSurface t = Assert.Single(r.Surfaces);
+            Assert.Equal("toro", t.Kind);
+            Assert.Equal(2.5, t.RadiusMm, 6);
+            Assert.Equal(0.5, t.MajorRadiusMm, 6);
+            Assert.Equal(180, t.SweepDeg, 1);
+            Assert.Equal(1.0, Math.Abs(t.AxisMm[2]), 9);
+        }
+
+        [Fact]
+        public void Raio_de_noventa_graus_tesselado_sai_inteiro_e_com_as_pontas_nos_eixos()
+        {
+            // Quarto de cilindro R2,5 de eixo Y em 6 facetas: as duas de baixo saíam como "faces
+            // inclinadas" de 7,5° e 22,5° (alça da malha 2).
+            var pts = new List<double>();
+            for (int i = 0; i < 6; i++)
+            {
+                double a0 = Math.PI / 2 * i / 6, a1 = Math.PI / 2 * (i + 1) / 6;
+                double[] p00 = { 2.5 * Math.Cos(a0), 0, 2.5 * Math.Sin(a0) }, p10 = { 2.5 * Math.Cos(a1), 0, 2.5 * Math.Sin(a1) };
+                double[] p01 = { p00[0], 40, p00[2] }, p11 = { p10[0], 40, p10[2] };
+                Push(pts, p00, p11, p10);
+                Push(pts, p00, p01, p11);
+            }
+
+            RecognitionResult r = SurfaceRecognizer.Recognize(pts.ToArray(), null);
+
+            RecognizedSurface c = Assert.Single(r.Surfaces);
+            Assert.Equal("cilindro", c.Kind);
+            Assert.Equal(2.5, c.RadiusMm, 6);
+            Assert.Equal(90, c.SweepDeg, 6);
+        }
+
         // ------------------------------------------------------------------ malhas de teste
+
+        /// <summary>Retalho de toro de eixo Z: raio maior R, do perfil r; φ em volta do eixo,
+        /// θ no perfil (0 = para fora, π/2 = para cima).</summary>
+        private static double[] TorusPatch(double R, double r, double phi0, double phi1, int nPhi,
+            double th0, double th1, int nTh)
+        {
+            var pts = new List<double>();
+            Func<double, double, double[]> at = (ph, th) => new[]
+            {
+                (R + r * Math.Cos(th)) * Math.Cos(ph), (R + r * Math.Cos(th)) * Math.Sin(ph), r * Math.Sin(th)
+            };
+            for (int i = 0; i < nPhi; i++)
+                for (int j = 0; j < nTh; j++)
+                {
+                    double pa = phi0 + (phi1 - phi0) * i / nPhi, pb = phi0 + (phi1 - phi0) * (i + 1) / nPhi;
+                    double ta = th0 + (th1 - th0) * j / nTh, tb = th0 + (th1 - th0) * (j + 1) / nTh;
+                    Push(pts, at(pa, ta), at(pb, ta), at(pb, tb));
+                    Push(pts, at(pa, ta), at(pb, tb), at(pa, tb));
+                }
+            return pts.ToArray();
+        }
+
+        /// <summary>Tronco de cone de eixo Z: raio r0 em z = 0 e r1 em z = h, sem tampas.</summary>
+        private static double[] Frustum(double r0, double r1, double h, int segments)
+        {
+            var pts = new List<double>();
+            for (int i = 0; i < segments; i++)
+            {
+                double a0 = 2 * Math.PI * i / segments, a1 = 2 * Math.PI * (i + 1) / segments;
+                double[] p00 = { r0 * Math.Cos(a0), r0 * Math.Sin(a0), 0 };
+                double[] p10 = { r0 * Math.Cos(a1), r0 * Math.Sin(a1), 0 };
+                double[] p01 = { r1 * Math.Cos(a0), r1 * Math.Sin(a0), h };
+                double[] p11 = { r1 * Math.Cos(a1), r1 * Math.Sin(a1), h };
+                Push(pts, p00, p10, p11);
+                Push(pts, p00, p11, p01);
+            }
+            return pts.ToArray();
+        }
 
         /// <summary>Prisma de eixo Z sobre um polígono CONVEXO (anti-horário), base em z = 0:
         /// paredes de dois triângulos por aresta e tampas em leque a partir do centroide.</summary>
