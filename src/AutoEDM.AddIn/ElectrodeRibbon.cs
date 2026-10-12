@@ -1096,11 +1096,13 @@ namespace AutoEDM.AddIn
                 BatchResult planned = MeshToSolidBatch.Run(app, (object)doc, choice.Bodies, false, false, null, null);
                 string ask = MeshToSolidBatch.Summary(planned) + "\nConstruir " + choice.Bodies.Count + " peça(s) nova(s)" +
                              (choice.Assembly ? ", salvar em\n" + choice.Folder + "\ne reunir todas numa MONTAGEM nova?" : " (ordenadas, não salvas)?");
-                if (MessageBox.Show(ask, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                bool anyOut = planned.Bodies.Exists(b => b.Whole != null && b.Whole.OutOfScope);
+                if (MessageBox.Show(ask, title, MessageBoxButtons.YesNo, anyOut ? MessageBoxIcon.Warning : MessageBoxIcon.Question,
+                        anyOut ? MessageBoxDefaultButton.Button2 : MessageBoxDefaultButton.Button1) != DialogResult.Yes) return;
 
                 BatchResult built = MeshToSolidBatch.Run(app, (object)doc, choice.Bodies, true, choice.Assembly, choice.Folder, null);
                 foreach (BatchBodyResult b in built.Bodies)
-                    if (b.Plan != null) Log.Info(PrismaticReport.Format(b.Plan, b.Build, b.Body.Name, b.Recognition, b.Corrections));
+                    if (b.Whole != null) Log.Info(PrismaticReport.Format(b.Whole, b.Build, b.Body.Name, b.Recognition));
                 string text = MeshToSolidBatch.Summary(built) + "\n(O relatório completo de cada corpo está no log.)";
                 Log.Info(text);
                 MessageBox.Show(text, title, MessageBoxButtons.OK,
@@ -1122,26 +1124,33 @@ namespace AutoEDM.AddIn
             }
 
             RecognitionResult rec = SurfaceRecognizer.Recognize(mesh.PointsMm, new RecognizerOptions());
-            PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, rec, null);
-            CorrectionPlan corrections = BoundaryCorrections.Plan(mesh.PointsMm, rec, plan);
-            string planText = PrismaticReport.Format(plan, null, name, rec, corrections);
+            MeshToSolidPlan whole = MeshToSolidPlanner.Plan(mesh.PointsMm, rec, null);
+            PrismaticPlan plan = whole.Plan;
+            string planText = PrismaticReport.Format(whole, null, name, rec);
             Log.Info(planText);
 
             if (plan.Bands.Count == 0)
             {
-                MessageBox.Show(planText, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(PrismaticReport.Summary(whole, null, name), title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            var go = MessageBox.Show(planText + "\nConstruir este sólido numa PEÇA NOVA (ordenada, não salva)?",
-                title, MessageBoxButtons.YesNo, plan.Warnings.Count == 0 ? MessageBoxIcon.Question : MessageBoxIcon.Warning);
+            // Só o RESUMO na janela: o relatório inteiro (centenas de linhas de aviso) empurrava os
+            // botões Sim/Não para fora da tela. O completo já foi para o log acima.
+            // Fora do alcance: a pergunta diz isso e o padrão é NÃO — Enter não constrói um sólido
+            // que a previsão já sabe que não se parece com a peça.
+            var go = whole.OutOfScope
+                ? MessageBox.Show(PrismaticReport.Summary(whole, null, name) + "\nConstruir MESMO ASSIM numa peça nova?",
+                    title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2)
+                : MessageBox.Show(PrismaticReport.Summary(whole, null, name) + "\nConstruir este sólido numa PEÇA NOVA (ordenada, não salva)?",
+                    title, MessageBoxButtons.YesNo, plan.Warnings.Count == 0 ? MessageBoxIcon.Question : MessageBoxIcon.Warning);
             if (go != DialogResult.Yes) return;
 
-            PrismaticBuildResult built = PrismaticBuilder.Build((object)ElectrodeAddIn.Current.App, plan, corrections,
+            PrismaticBuildResult built = PrismaticBuilder.Build((object)ElectrodeAddIn.Current.App, plan, whole.Corrections,
                 name, mesh.PointsMm);
-            string text = PrismaticReport.Format(plan, built, name, rec, corrections);
+            string text = PrismaticReport.Format(whole, built, name, rec);
             Log.Info(text);
-            MessageBox.Show(text, title, MessageBoxButtons.OK,
+            MessageBox.Show(PrismaticReport.Summary(whole, built, name), title, MessageBoxButtons.OK,
                 built.BandsFailed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }
 

@@ -140,7 +140,10 @@ vertical e a horizontal) — 24 chanfros iguais são uma linha.
 **Construção** ("Malha → sólido" / `se_malha_para_solido`), sempre numa **peça nova ordenada, não
 salva** — a peça da malha não é tocada:
 
-1. **faixas Z**: níveis tirados dos planos horizontais, secção no meio de cada faixa, cada trecho
+0. **direção de extrusão**: Z por padrão; se a **previsão** do sólido contra a malha (feita antes de
+   construir, por pontos) acusar erro de forma em Z, vence X ou Y — uma peça dobrada como canal em U
+   sai em Y, o perfil lateral;
+1. **faixas**: níveis tirados dos planos perpendiculares à direção, secção no meio de cada faixa, cada trecho
    trocado pela geometria exata (parede = reta, cilindro vertical = arco/círculo), uma protrusão por
    faixa e os furos como recorte;
 2. **correções de fronteira** para o que a extrusão reta não faz: cone → recorte/protrusão

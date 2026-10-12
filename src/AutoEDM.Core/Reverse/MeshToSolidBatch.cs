@@ -21,6 +21,9 @@ namespace AutoEDM.Reverse
     {
         public MeshBody Body;
         public RecognitionResult Recognition;
+
+        /// <summary>O plano inteiro (direção, faixas, correções, previsão).</summary>
+        public MeshToSolidPlan Whole;
         public PrismaticPlan Plan;
         public CorrectionPlan Corrections;
         public PrismaticBuildResult Build;
@@ -103,9 +106,10 @@ namespace AutoEDM.Reverse
                     MeshData mesh = MeshReader.Read((object)doc.Models.Item(b.Index).Body, 0.01);
                     if (!mesh.Ok) { r.Error = "malha ilegível: " + mesh.Error; continue; }
                     r.Recognition = SurfaceRecognizer.Recognize(mesh.PointsMm, options ?? new RecognizerOptions());
-                    r.Plan = PrismaticSection.Plan(mesh.PointsMm, r.Recognition, null);
-                    r.Corrections = BoundaryCorrections.Plan(mesh.PointsMm, r.Recognition, r.Plan);
-                    if (r.Plan.Bands.Count == 0) { r.Error = "nenhuma faixa: a malha não fecha secção em Z"; continue; }
+                    r.Whole = MeshToSolidPlanner.Plan(mesh.PointsMm, r.Recognition, null);
+                    r.Plan = r.Whole.Plan;
+                    r.Corrections = r.Whole.Corrections;
+                    if (r.Plan.Bands.Count == 0) { r.Error = "nenhuma faixa: a malha não fecha secção em X, Y nem Z"; continue; }
                     if (!build) continue;
 
                     r.Build = PrismaticBuilder.Build(application, r.Plan, r.Corrections, b.Name, mesh.PointsMm);
@@ -261,8 +265,10 @@ namespace AutoEDM.Reverse
                 if (b.Error != null) { sb.AppendLine(head + b.Error); continue; }
                 if (b.Build == null)
                 {
-                    sb.AppendLine(head + string.Format(CultureInfo.InvariantCulture, "plano com {0} faixa(s) e {1} correção(ões); volume exato {2:0.0} mm³ (malha {3:0.0}).",
-                        b.Plan.Bands.Count, b.Corrections.Regions.Count, b.Plan.ExactVolumeMm3, b.Plan.MeshVolumeMm3));
+                    if (b.Whole != null && b.Whole.OutOfScope) head += "FORA DO ALCANCE (o sólido não vai se parecer com a malha) — ";
+                    sb.AppendLine(head + string.Format(CultureInfo.InvariantCulture, "plano em {4} com {0} faixa(s) e {1} correção(ões); volume exato {2:0.0} mm³ (malha {3:0.0}); erro de forma previsto {5:0.#} mm³.",
+                        b.Plan.Bands.Count, b.Corrections.Regions.Count, b.Plan.ExactVolumeMm3, b.Plan.MeshVolumeMm3,
+                        b.Plan.Frame.AxisName, b.Whole != null && b.Whole.Evaluation != null ? b.Whole.Evaluation.FarErrorMm3 : 0));
                     continue;
                 }
                 double worst = Math.Max(b.Build.MeshToSolid?.MaxMm ?? double.NaN, b.Build.SolidToMesh?.MaxMm ?? double.NaN);
@@ -270,7 +276,7 @@ namespace AutoEDM.Reverse
                     : worst <= PrismaticBuilder.DeviationLimitMm ? "EXATO" : string.Format(CultureInfo.InvariantCulture, "diverge {0:0.###} mm", worst);
                 sb.AppendLine(head + string.Format(CultureInfo.InvariantCulture,
                     "{0} — volume {1:0.0} mm³ (malha {2:0.0}), {3}/{4} faixa(s), {5} correção(ões){6}.",
-                    verdict, b.Build.BodyVolumeMm3, b.Plan.MeshVolumeMm3, b.Build.BandsBuilt,
+                    verdict, b.Build.BodyVolumeMm3, b.Whole != null ? b.Whole.RealMeshVolumeMm3 : b.Plan.MeshVolumeMm3, b.Build.BandsBuilt,
                     b.Build.BandsBuilt + b.Build.BandsFailed, b.Build.CorrectionsBuilt,
                     b.Build.CorrectionsFailed > 0 ? ", " + b.Build.CorrectionsFailed + " com falha" : "") +
                     (b.SavedPath != null ? "  → " + Path.GetFileName(b.SavedPath) : "  (" + b.Build.DocumentName + ", não salva)"));

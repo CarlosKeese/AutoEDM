@@ -307,6 +307,9 @@ namespace AutoEDM.Reverse
         /// O RMS do ajuste NÃO é recalculado: ele continua dizendo quão bem a malha coube na
         /// primitiva, que é a informação que o arredondamento não pode esconder.
         /// </summary>
+        /// <summary>Eixo de cone a menos disto de X, Y ou Z vira o eixo (ver <see cref="Snap"/>).</summary>
+        private const double ConeSnapDeg = 0.5;
+
         public static void Snap(RecognizedSurface s, RecognizerOptions o)
         {
             if (s == null || o == null) return;
@@ -364,7 +367,21 @@ namespace AutoEDM.Reverse
             }
             else if (s.Kind == "cone" && s.AxisMm != null && s.ApexMm != null)
             {
-                s.AxisMm = SnapDirection(s.AxisMm, o.SnapAngleDeg);
+                // O eixo do cone sai do ajuste com mais erro que o do cilindro — o recorte cônico
+                // em U da alça do stack-container (meio cone) saiu 0,27° fora de Y, e assim nem
+                // era "deitado" para a correção. A menos de ConeSnapDeg de um eixo, vira ele, mas
+                // GIRANDO EM VOLTA DO MEIO DA SUPERFÍCIE (não do ápice, a 13 mm dali): o giro
+                // mexe na superfície só o braço de meia largura × o ângulo (~0,006 mm ali).
+                double[] old = s.AxisMm;
+                double[] snapped = SnapDirection(old, Math.Max(o.SnapAngleDeg, ConeSnapDeg));
+                if (s.PointMm != null && (snapped[0] != old[0] || snapped[1] != old[1] || snapped[2] != old[2]))
+                {
+                    double hMid = (s.PointMm[0] - s.ApexMm[0]) * old[0] + (s.PointMm[1] - s.ApexMm[1]) * old[1] + (s.PointMm[2] - s.ApexMm[2]) * old[2];
+                    s.ApexMm = new[] { s.PointMm[0] - hMid * snapped[0], s.PointMm[1] - hMid * snapped[1], s.PointMm[2] - hMid * snapped[2] };
+                }
+                s.AxisMm = snapped;
+                if (s.ArcFrom != null) s.ArcFrom = SnapDirection(Perpendicularize(s.ArcFrom, s.AxisMm), ArcEndSnapDeg);
+                if (s.ArcTo != null) s.ArcTo = SnapDirection(Perpendicularize(s.ArcTo, s.AxisMm), ArcEndSnapDeg);
                 // Semi-ângulo de projeto é grau redondo (45°, 30°, 1° de saída): a menos de 0,05°
                 // dele, vira ele; senão fica no centésimo de grau.
                 double whole = Math.Round(s.HalfAngleDeg);
@@ -652,6 +669,22 @@ namespace AutoEDM.Reverse
         ///   3. o que sobra vira plano — exceto a cadeia de faixas estreitas que nenhum cilindro
         ///      explicou (cone, toro, esfera), que vai para "livre" em vez de virar mosaico.
         /// </summary>
+        /// <summary>
+        /// Superfície curva que dispensa o teste de "regrada": arco de 90° ou mais com 12
+        /// triângulos ou mais. O teste existe contra o cilindro falso feito de retalho de
+        /// concordância (pequeno, de poucos graus); mas STL de fatiador costuma ter a tesselação
+        /// TORCIDA — os vértices da boca de dentro e da de fora em ângulos diferentes —, e o recorte
+        /// cônico da alça do stack-container (172°, 50 triângulos, RMS 0,001 mm, 2026-10-11) saía
+        /// "livre" e virava facetas no sólido.
+        /// </summary>
+        private static RecognizedSurface Broad(RecognizedSurface s, List<int> tris)
+        {
+            return s != null && s.SweepDeg >= 90 && tris.Count >= 12 ? s : null;
+        }
+
+        /// <summary>Ângulo máximo entre duas faixas vizinhas da mesma cadeia de superfície curva.</summary>
+        private static readonly double CosChainJoint = Math.Cos(25.0 * Math.PI / 180.0);
+
         private static void SplitMixed(List<int> comp, List<int>[] neighbours, int[] region, int[] component,
             double[] nx, double[] ny, double[] nz, double[] cx, double[] cy, double[] cz, double[] area,
             double[] p, double cosPlane, double cosCrease, RecognizerOptions o, RecognitionResult result)
@@ -827,6 +860,10 @@ namespace AutoEDM.Reverse
                     continue;
                 }
 
+                // A cadeia só junta faixas de ângulo de TESSELAÇÃO entre si (até 25°): o ressalto de
+                // encaixe da Enclosure Bottom (2026-10-11) tem a face de baixo e as duas pontas
+                // triangulares a 41° umas das outras — faces distintas, não facetas de uma curva —,
+                // e juntas viravam uma região "livre" que nem parede nem correção tratavam.
                 var chain = new List<int>();
                 var queue = new Queue<int>();
                 queue.Enqueue(i);
@@ -834,11 +871,48 @@ namespace AutoEDM.Reverse
                 {
                     int c = queue.Dequeue();
                     chain.Add(c);
+                    double[] nc = PatchNormal(patches[c], nx, ny, nz, area);
                     foreach (int q in adj[c])
                     {
                         if (owner[q] >= 0 || seenPatch[q] || !strip[q]) continue;
+                        double[] nq = PatchNormal(patches[q], nx, ny, nz, area);
+                        if (nc[0] * nq[0] + nc[1] * nq[1] + nc[2] * nq[2] < CosChainJoint) continue;
                         seenPatch[q] = true;
                         queue.Enqueue(q);
+                    }
+                }
+
+                // Cadeia com faixas muito maiores que as outras (as laterais planas do recorte em U
+                // da alça do stack-container, tangentes ao cone): sem elas o resto pode ser UMA
+                // superfície curva; elas viram plano cada uma.
+                if (chain.Count >= 6)
+                {
+                    var areas = chain.ConvertAll(c => patchArea[c]);
+                    areas.Sort();
+                    double median = areas[areas.Count / 2];
+                    var core = chain.FindAll(c => patchArea[c] <= 3 * median);
+                    if (core.Count < chain.Count)
+                    {
+                        List<int> coreTris = Gather(core, patches);
+                        RecognizedSurface curved = coreTris.Count >= 12
+                            ? (TryCylinder(coreTris, nx, ny, nz, area, p, o, true) ?? TryCone(coreTris, nx, ny, nz, area, p, o, true)
+                               ?? Broad(TryCylinder(coreTris, nx, ny, nz, area, p, o), coreTris)
+                               ?? Broad(TryCone(coreTris, nx, ny, nz, area, p, o), coreTris))
+                            : null;
+                        if (curved != null)
+                        {
+                            int cid = result.Surfaces.Count;
+                            foreach (int t in coreTris) region[t] = cid;
+                            result.Surfaces.Add(curved);
+                            foreach (int c in chain)
+                            {
+                                if (core.Contains(c)) continue;
+                                int pid = result.Surfaces.Count;
+                                foreach (int t in patches[c]) region[t] = pid;
+                                result.Surfaces.Add(MakePlane(patches[c], nx, ny, nz, area, p));
+                            }
+                            continue;
+                        }
                     }
                 }
 
@@ -847,6 +921,8 @@ namespace AutoEDM.Reverse
                 // Z 4 a 40) é plano, não forma livre.
                 RecognizedSurface s = TryCylinder(tris, nx, ny, nz, area, p, o, true)
                                       ?? TryCone(tris, nx, ny, nz, area, p, o, true)
+                                      ?? Broad(TryCylinder(tris, nx, ny, nz, area, p, o), tris)
+                                      ?? Broad(TryCone(tris, nx, ny, nz, area, p, o), tris)
                                       ?? TryPlaneWhole(tris, nx, ny, nz, area, p, cosPlane, o.PlaneDistanceToleranceMm)
                                       ?? MakeFreeForm(tris, area, p);
                 int sid = result.Surfaces.Count;
@@ -923,9 +999,14 @@ namespace AutoEDM.Reverse
             // 1º o grupo CONECTADO inteiro de uma vez. Ajustar par a par não serve: as normais de
             // duas faixas de meridiano cortam também a reta que liga os centros dos dois perfis,
             // e o eixo sai indeterminado (a malha 2 dava eixos "(0,92; −0,39; −0,07)").
+            // Componente que NÃO coube num toro não muda depois: o que vira toro some inteiro, então
+            // nenhum vizinho dele é consumido pela metade. Sem esta marca, cada semente de um
+            // componente grande refazia o mesmo ajuste — com centenas de raios R0,5 encostados uns
+            // nos outros (vector_v2-6, 65 mil triângulos) eram quase 2 minutos aqui.
+            var failed = new bool[ns];
             foreach (int seed in order)
             {
-                if (used[seed]) continue;
+                if (used[seed] || failed[seed]) continue;
                 var compGroup = new List<int>();
                 var q0 = new Queue<int>();
                 q0.Enqueue(seed);
@@ -940,7 +1021,7 @@ namespace AutoEDM.Reverse
                 var allC = new List<int>();
                 foreach (int g in compGroup) allC.AddRange(tris[g]);
                 RecognizedSurface whole = TryTorus(allC, nx, ny, nz, area, p, o);
-                if (whole == null) continue;
+                if (whole == null) { foreach (int g in compGroup) failed[g] = true; continue; }
                 foreach (int g in compGroup) { used[g] = true; removed[g] = true; }
                 added.Add(Tuple.Create(whole, allC));
             }
@@ -992,8 +1073,9 @@ namespace AutoEDM.Reverse
             for (int k = 0; k < added.Count; k++)
             {
                 var all = added[k].Item2;
+                var inAll = new HashSet<int>(all);
                 var mine = new HashSet<int>();
-                for (int i = 0; i < ns; i++) if (removed[i]) foreach (int t in tris[i]) if (all.Contains(t)) { mine.Add(i); break; }
+                for (int i = 0; i < ns; i++) if (removed[i]) foreach (int t in tris[i]) if (inAll.Contains(t)) { mine.Add(i); break; }
                 bool grew = true;
                 while (grew)
                 {
@@ -1085,9 +1167,8 @@ namespace AutoEDM.Reverse
             // normal da faceta não passa exatamente pelo eixo e o Plücker erra uns 10°; os
             // vértices estão SOBRE o toro. Nelder–Mead em 4 parâmetros (inclinação do eixo e
             // posição dele), partindo do Plücker e do eixo X/Y/Z mais próximo dele.
-            var verts = new List<double[]>();
-            foreach (int t in tris)
-                for (int k = 0; k < 3; k++) { int b = t * 9 + k * 3; verts.Add(new[] { p[b], p[b + 1], p[b + 2] }); }
+            var verts = new double[tris.Count * 9];
+            for (int i = 0; i < tris.Count; i++) Array.Copy(p, tris[i] * 9, verts, i * 9, 9);
             double bestRms = double.MaxValue;
             double[] bestD = d, bestP = p0;
             var starts = new List<double[]> { d };
@@ -1219,19 +1300,19 @@ namespace AutoEDM.Reverse
 
         /// <summary>RMS do círculo (Kåsa) que melhor passa pelos vértices no meridiano (ρ, h) do
         /// eixo dado — o custo do refino do toro.</summary>
-        private static double ProfileCircleRms(List<double[]> verts, double[] d, double[] p0)
+        private static double ProfileCircleRms(double[] verts, double[] d, double[] p0)
         {
-            int n = verts.Count;
-            var rs = new double[n];
-            var hs = new double[n];
+            // Duas passadas sobre os vértices em vez de guardar (ρ, h): é a função que o
+            // Nelder–Mead chama milhares de vezes, e alocar por chamada dominava o tempo.
+            int n = verts.Length / 3;
+            double dx = d[0], dy = d[1], dz = d[2], ox = p0[0], oy = p0[1], oz = p0[2];
             double su = 0, sv = 0, suu = 0, svv = 0, suv = 0, sr = 0, sru = 0, srv = 0;
             for (int i = 0; i < n; i++)
             {
-                double vx = verts[i][0] - p0[0], vy = verts[i][1] - p0[1], vz = verts[i][2] - p0[2];
-                double h = vx * d[0] + vy * d[1] + vz * d[2];
-                double rx = vx - h * d[0], ry = vy - h * d[1], rz = vz - h * d[2];
+                double vx = verts[3 * i] - ox, vy = verts[3 * i + 1] - oy, vz = verts[3 * i + 2] - oz;
+                double h = vx * dx + vy * dy + vz * dz;
+                double rx = vx - h * dx, ry = vy - h * dy, rz = vz - h * dz;
                 double u = Math.Sqrt(rx * rx + ry * ry + rz * rz);
-                rs[i] = u; hs[i] = h;
                 double rr = u * u + h * h;
                 su += u; sv += h; suu += u * u; svv += h * h; suv += u * h;
                 sr += rr; sru += rr * u; srv += rr * h;
@@ -1243,7 +1324,11 @@ namespace AutoEDM.Reverse
             double r = Math.Sqrt(rsq), sq = 0;
             for (int i = 0; i < n; i++)
             {
-                double dd = Math.Sqrt((rs[i] - r0) * (rs[i] - r0) + (hs[i] - h0) * (hs[i] - h0)) - r;
+                double vx = verts[3 * i] - ox, vy = verts[3 * i + 1] - oy, vz = verts[3 * i + 2] - oz;
+                double h = vx * dx + vy * dy + vz * dz;
+                double rx = vx - h * dx, ry = vy - h * dy, rz = vz - h * dz;
+                double u = Math.Sqrt(rx * rx + ry * ry + rz * rz);
+                double dd = Math.Sqrt((u - r0) * (u - r0) + (h - h0) * (h - h0)) - r;
                 sq += dd * dd;
             }
             return Math.Sqrt(sq / n);
@@ -1756,9 +1841,22 @@ namespace AutoEDM.Reverse
                     Span(min, max, p[b], p[b + 1], p[b + 2]);
                 }
 
+            // Cone em ARCO: as pontas, como no cilindro — é o que deixa a correção revolver só o
+            // trecho que existe (o recorte em U cônico da alça do stack-container, 179°).
+            double[] coneFrom = null, coneTo = null;
+            if (sweepDeg < 360.0)
+            {
+                double f0, t0;
+                ArcEnds(angles, out f0, out t0);
+                coneFrom = Combine(e1, e2, Math.Cos(f0), Math.Sin(f0));
+                coneTo = Combine(e1, e2, Math.Cos(t0), Math.Sin(t0));
+            }
+
             return new RecognizedSurface
             {
                 Kind = "cone",
+                ArcFrom = coneFrom,
+                ArcTo = coneTo,
                 TriangleCount = tris.Count,
                 AreaMm2 = sumA,
                 AxisMm = axis,

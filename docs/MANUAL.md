@@ -360,7 +360,7 @@ SeToolRunner.Execute                  thread STA da Solid Edge, COM ao vivo
 | `se_planos` | **peça** | — | os `RefPlanes` por índice, com nome e a normal quando legível |
 | `se_log` | nada | `linhas` int 1–2000, **padrão 200** | as últimas N linhas do log desta sessão da SE, e o caminho do arquivo |
 | `se_reconhecer_malha` | **peça** | ver abaixo | abre pela **identificação** (furos/pinos, raios, chanfros/cones, faces inclinadas, agrupados pela medida) e lista planos, cilindros, cones, toros e esferas ajustados sobre os triângulos, cada um com o **RMS do próprio ajuste**; a área que sobra como "livre" |
-| `se_malha_para_solido` | **peça** com corpo de malha | `corpo`, `construir`, `arredondarMm` (0,01; 0 desliga), `toleranciaCilindroMm` (0,005 — suba para malha de scanner); **lote:** `corpos` (lista) ou `todos`, `montagem` (com `construir`: salva as peças e monta), `pasta` | identificação + plano 2,5D (níveis, contornos, correções de fronteira, volumes, avisos). Com `construir: true` (**exige escrita liberada**) cria a peça nova e devolve volume e **desvio geométrico** nos dois sentidos, com o veredito "exato" ou não |
+| `se_malha_para_solido` | **peça** com corpo de malha | `corpo`, `construir`, `arredondarMm` (0,01; 0 desliga), `toleranciaCilindroMm` (0,005 — suba para malha de scanner), `direcao` (`auto`/`X`/`Y`/`Z`); **lote:** `corpos` (lista) ou `todos`, `montagem` (com `construir`: salva as peças e monta), `pasta` | identificação + direção de extrusão escolhida + plano 2,5D (níveis, contornos, correções de fronteira, volumes, **previsão do erro de forma**, avisos). Com `construir: true` (**exige escrita liberada**) cria a peça nova e devolve volume e **desvio geométrico** nos dois sentidos, com o veredito "exato" ou não |
 
 Parâmetros de `se_reconhecer_malha` — todos opcionais e **clampados** na faixa, nunca viram erro:
 
@@ -775,7 +775,10 @@ cilindro tesselado virar um "plano" perfeito — um Ø20 sairia como 64 plaquinh
 | Cone | eixo = direção de menor variância das normais; **ápice** = ponto que melhor satisfaz `n·x = n·c` de todas as facetas (todo plano tangente de cone passa pelo ápice); semi-ângulo por `ρ = h·tanβ`, a menos de 0,05° de grau inteiro vira inteiro |
 | Toro / esfera | toda normal de superfície de revolução **corta o eixo** — linear em coordenadas de Plücker (sistema 6×6); refino do eixo por Nelder–Mead sobre os **vértices** (a normal da faceta erra ~13° na tesselação a 15°); perfil = círculo no meridiano (ρ, h). Raio maior ~0 = esfera |
 
-**Componente misto** (raio tangente a plano, sem quina): partido em retalhos planos; a semente de
+**Componente misto** (raio tangente a plano, sem quina): partido em retalhos planos — faixas
+estreitas que sobram só formam "cadeia de superfície curva" se as vizinhas estiverem a até 25°
+(passo de tesselação); a 41° são faces distintas (ressalto de encaixe) e cada uma é testada como
+plano; a semente de
 cilindro só junta vizinhos que concordam no **eixo** (produto vetorial das normais), cresce com
 **reajuste a cada retalho**, e o retalho só entra se o cilindro continuar regrado (vértices em
 geratrizes — fragmento de concordância de canto não passa). O que sobra em cilindros curtos e
@@ -802,10 +805,36 @@ seria opinião.
 Sempre numa **peça nova em modelagem ordenada, não salva** (a peça do usuário nunca tem o ambiente
 trocado). Esboços, CS e planos de referência saem **ocultos**.
 
-1. **Faixas Z** (`PrismaticSection`): níveis dos planos horizontais; secção da malha no meio de cada
+0. **Direção de extrusão** (`MeshToSolidPlanner`, `ExtrusionFrame`): Z por padrão. Se a
+   **previsão** em Z (abaixo) acusar erro de forma acima de 0,5% do volume, X e Y também são
+   planejadas — e também as normais dos 4 maiores grupos de planos FORA dos eixos (peça girada no
+   espaço: as tampas de uma extrusão têm a normal na direção dela) — e vence a de menor erro
+   previsto (quase empatadas — até 1 mm³ ou 0,1% do volume —, vence a de menos faixas e menos
+   trechos copiados da malha); `direcao` impõe X, Y ou Z. **Fora do alcance**: se mesmo a melhor
+   direção prevê erro de forma acima de 2% do volume, o relatório e o resumo dizem isso no topo
+   ("o sólido NÃO vai se parecer com a peça") e no botão a resposta padrão vira "Não". Direção fora dos eixos usa base ortonormal, e no frame
+   local componente < 1e-5 vira zero (o ajuste da face girada traz erro de 1e-7). A troca de direção é uma
+   **permutação cíclica dos eixos** aplicada à malha e às superfícies reconhecidas (rotação
+   própria: normal para fora continua para fora, e normal arredondada em ±Y vira ±Z exata) — a
+   secção e as correções rodam sem mudança no frame local, e só o construtor volta ao mundo
+   (matriz do sistema de coordenadas com os eixos locais). Medido na vector_v2-6 (canal em U
+   dobrado, 65 mil triângulos): Z previa ~3.200 mm³ de erro, X ~4.800, **Y ~29**. No
+   frame-fidget-mini-claw-machine, quatro corpos girados 30° em volta de Y saem na normal das
+   tampas com 0–7,5 mm³ previstos e o volume construído a menos de 1 mm³ da malha.
+1. **Faixas** (`PrismaticSection`): níveis dos planos perpendiculares à direção **e o alto e o
+   baixo de todo cilindro deitado** (eixo perpendicular à direção, volta inteira ou arco ≥ 180°
+   passando por ali) — sem isso, um pino atravessando um vão era cortado no meio da faixa e virava
+   uma ponte da espessura inteira — **e o começo e o fim de toda face inclinada** de 2 mm² ou mais
+   (o ressalto de encaixe da Enclosure Bottom: sem nível no alto da rampa, a faixa da parede era
+   cortada abaixo dele e saía lisa); secção da malha no meio de cada
    faixa, afastada 0,1 µm de qualquer altura de vértice (corte exatamente num vértice perde o
    segmento e o laço pula trechos); cada trecho trocado pela superfície exata (reta, arco, círculo) com os vértices pela
-   interseção exata das vizinhas; uma protrusão por faixa e os furos como recorte.
+   interseção exata das vizinhas; uma protrusão por faixa e os furos como recorte. Trecho que não
+   é parede reconhecida sai como polilinha da malha **simplificada** (Douglas–Peucker, 0,005 mm —
+   abaixo da flecha da tesselação; na vector_v2-6, 6.855 → 2.881 trechos de esboço). Reta exata
+   que sai **andando para trás** em relação à malha (retalho de tesselação reconhecido como plano
+   à parte entre duas paredes) é tirada e as vizinhas se encontram direto; contorno que ainda se
+   **cruza** é denunciado no plano — a SE recusa a faixa sem dizer onde.
 2. **Correções de fronteira** (`BoundaryCorrections`): no plano em que a superfície vira curva, ela
    parte uma região pequena em duas, e a **malha** (número de enrolamento) diz se cada uma tem
    material → protrusão ou recorte. As duas operações são idempotentes contra o sólido prismático,
@@ -817,11 +846,36 @@ trocado). Esboços, CS e planos de referência saem **ocultos**.
    | Cilindro de eixo X/Y | canto entre arco e tangentes + segmento entre arco e corda (arco > 92° em pedaços) | extrusão ao longo do eixo |
    | Plano inclinado | os dois triângulos da linha de maior declive | extrusão ao longo da horizontal da face |
    | Toro / esfera | as regiões do arco do perfil, no meridiano | revolução **parcial**, esboço no meio do arco, extensão simétrica |
+   | Cone **deitado** (eixo ⟂ à extrusão, de volta inteira ou não) | anel entre as bocas (revolvido pelo arco); miolo dentro da boca menor e cantos fora da maior | revolução parcial + extrusões ao longo do eixo |
+   | Cilindro deitado em arco ≥ 180° | também o leque do centro até o arco (fundo de rasgo em U) | extrusão ao longo do eixo |
+   | **Degrau de faixa** (cilindro deitado e plano inclinado) | em cada faixa, entre o arco/reta e a borda REAL da faixa (vertical tirada dos contornos dela), partido onde se cruzam; entra só se deixar ≥ 0,5 mm³ fora das outras correções | extrusão ao longo do eixo / da horizontal da face |
 
    Pontos de teste: grade dentro da região, a ≥ 0,04 mm da borda (acima da flecha da malha). Região
    meio cheia (outra superfície a atravessa) **não** é corrigida — vira aviso. Região em que o
    prismático já concorda é pulada.
-3. **Conferência**: volume e **desvio geométrico** (`MeshDeviation`, nos dois sentidos, sólido
+
+   Por que o degrau (tool-organizer_v2, 2026-10-12): canto, segmento e os triângulos da rampa
+   só cobrem o erro quando a faixa termina dentro deles. Nas divisórias (rampa de 45° + R20 até o
+   topo) sobrava um triângulo de material acima da tangente e a rampa da fileira de cima ficava em
+   degrau — os 5 pontos de teste dos triângulos caíam do lado que a faixa já acerta, "igual"; na
+   parede da frente (rebaixo para os dedos, R20 → R32 → R36 → R513 em Y) sobravam blocos de até
+   3,4 mm acima da curva. A cobertura do degrau pelas outras correções é medida por grade densa
+   (não pelos 5 pontos), e o "dentro da malha?" dos degraus usa a grade de colunas da previsão
+   (o enrolamento exato em 65 mil triângulos custava 91 s na vector_v2-6). Pontas de degrau a
+   menos de 0,001 mm do nível vão ao nível, e as extensões ao longo do eixo vão às faces planas
+   reconhecidas — sem isso ficavam frestas e lâminas de 1e-5 a 4e-4 mm no sólido. Junção de
+   parede reconhecida com trecho copiado da malha é levada **à parede** (até 0,05 mm).
+
+   Plano que precisa de degrau não é "Z limpo": as outras direções são avaliadas e o desempate
+   (menos faixas) decide — o tool-organizer_v2 sai em Y (15 faixas, 82 correções) e não em Z
+   (18 faixas, 123).
+3. **Previsão, antes de construir** (`PlanEvaluator`, conferida contra o construído no
+   frame-fidget: previsto 19,3 / 16 / 4,7 mm³ além de 0,05 / 0,1 / 0,3 mm, medido 20 / 16,8 / 4,5): 60 mil pontos na caixa; "dentro da malha"
+   por enrolamento numa grade de colunas (casca sobreposta conta como material, como na SE) contra
+   "dentro do sólido previsto" (faixa + correções na ordem). A
+   discordância a mais de 0,3 mm da superfície é o **erro de forma**, com os aglomerados (onde).
+   Nos corpos exatos do Rack dá 0; é ela que escolhe a direção e entra no relatório.
+4. **Conferência**: volume e **desvio geométrico** (`MeshDeviation`, nos dois sentidos, sólido
    re-tesselado a 0,005 mm). O veredito "**exato**" exige desvio ≤ 0,05 mm **e** nenhum trecho do
    contorno copiado da malha sem correção — raio que virou retas encosta na malha por construção, e
    o desvio sozinho não o denuncia.
@@ -830,7 +884,12 @@ Receitas da SE provadas para isto (226): revolução por `Profile.SetAxisOfRevol
 `Revolved{Protrusions,Cutouts}.AddFinite(perfil, eixo, 2, lado, ângulo)` (lado 3 = simétrico);
 **perfil de extrusão desenhado anti-horário nas coordenadas do ESBOÇO** — horário, o `igLeft` do
 recorte é o lado de fora e a feature leva a fatia inteira; feature com falha é apagada, nunca fica
-na árvore.
+na árvore. Feature recusada (status igFeatureFailed, sem descrição) é tentada de novo em
+variantes que não mudam o que ela faz: **cantos arco–reta chanfrados em 0,05 mm** (o enchimento do
+R20 das divisórias tem as pontas do arco TANGENTES ao topo e à rampa — 10 de 16 recusados; aparar
+o arco mantendo o vértice no ponto de tangência não basta) e, no recorte, **passando 0,01 mm das
+faces** ao longo da extrusão (pontas coplanares com a parede). Reta de comprimento zero no perfil
+(borda da faixa passando pela ponta do arco) dava End = −103 e é tirada antes de desenhar.
 
 **Lote e montagem** (`MeshToSolidBatch`): vários corpos de uma vez, cada um numa peça nova. Com
 montagem, cada peça é salva (nome "&lt;peça&gt; - &lt;corpo&gt;.par", nunca sobrescreve — repetido ganha
@@ -841,7 +900,16 @@ fluxo detalhado; vários corpos mostram o plano de todos, pedem uma confirmaçã
 linha por corpo (exato ou desvio, volume, arquivo) — o relatório completo vai para o log. Medido:
 as 6 malhas do Rack_Anghinoni em 100 s.
 
-**Limites conhecidos:** cone parcial e cilindro de eixo inclinado são avisados, não corrigidos; uma
+**Desempenho** (2026-10-11): o reconhecimento da vector_v2-6 caiu de 177 s para 68 s com o mesmo
+resultado — o grupo que não coube num toro não é mais reajustado a cada semente dele. A
+construção na SE custa pelo número de trechos de esboço e de features: é por isso que os trechos
+copiados da malha são simplificados.
+
+**Limites conhecidos:** cone parcial e cilindro de eixo inclinado em relação à direção escolhida
+são avisados, não corrigidos (na direção Y da vector_v2-6 o eixo da perna inclinada fica
+perpendicular, e é corrigido); arredondamento pequeno (R0,5 em centenas de arestas) sai como
+polilinha da malha — uma "quina viva" que os troque pela interseção das faces vizinhas foi
+tentada por cirurgia na malha e deixada de lado (criava retalhos e pontos fora); uma
 sequência de superfícies não-Z sem canto vivo entre elas só fecha se cada uma tiver a sua região;
 concordância orgânica (forma livre) fica de fora e o desvio a denuncia.
 

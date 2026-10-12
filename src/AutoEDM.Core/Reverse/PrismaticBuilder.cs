@@ -82,13 +82,14 @@ namespace AutoEDM.Reverse
             result.Document = doc;
             Log.Info($"[ENG.REVERSA] Construção prismática em '{doc.Name}' ({plan.Bands.Count} faixas){(string.IsNullOrEmpty(partName) ? "" : " — " + partName)}.");
 
+            ExtrusionFrame frame = plan.Frame ?? ExtrusionFrame.Z;
             for (int i = 0; i < plan.Bands.Count; i++)
             {
                 SectionBand band = plan.Bands[i];
-                string label = string.Format(CultureInfo.InvariantCulture, "faixa {0} (Z {1:0.00} → {2:0.00})", i + 1, band.Z0, band.Z1);
+                string label = string.Format(CultureInfo.InvariantCulture, "faixa {0} ({3} {1:0.00} → {2:0.00})", i + 1, band.Z0, band.Z1, frame.AxisName);
                 try
                 {
-                    string err = BuildBand(doc, band);
+                    string err = BuildBand(doc, frame, band);
                     foreach (string note in band.Notes) result.Messages.Add(label + ": " + note);
                     if (err == null) { result.BandsBuilt++; result.Messages.Add(label + ": ok"); }
                     else { result.BandsFailed++; result.Messages.Add(label + ": " + err); }
@@ -101,7 +102,7 @@ namespace AutoEDM.Reverse
                 }
             }
 
-            if (corrections != null && result.BandsBuilt > 0) ApplyCorrections(doc, corrections, result);
+            if (corrections != null && result.BandsBuilt > 0) ApplyCorrections(doc, corrections, frame, result);
 
             HideSketches(doc, result);
             ReadBody(doc, result);
@@ -118,15 +119,16 @@ namespace AutoEDM.Reverse
         /// previstos) ou por extrusão ao longo da normal do esboço. Feature com falha é apagada e
         /// relatada — nunca fica na árvore estragando a seguinte.
         /// </summary>
-        private static void ApplyCorrections(dynamic doc, CorrectionPlan plan, PrismaticBuildResult result)
+        private static void ApplyCorrections(dynamic doc, CorrectionPlan plan, ExtrusionFrame frame, PrismaticBuildResult result)
         {
             dynamic model = doc.Models.Item(1);
-            foreach (CorrectionRegion c in plan.Regions)
+            foreach (CorrectionRegion local in plan.Regions)
             {
+                CorrectionRegion c = InWorld(local, frame);
                 string label = (c.Add ? "+ " : "− ") + c.Label;
                 try
                 {
-                    string err = c.Kind == "revolucao" ? Revolve(doc, model, c) : Extrude(doc, model, c);
+                    string err = Build(doc, model, c);
                     if (err == null) result.CorrectionsBuilt++;
                     else { result.CorrectionsFailed++; result.Messages.Add("correção " + label + ": " + err); }
                 }
@@ -137,6 +139,199 @@ namespace AutoEDM.Reverse
                     Log.Warn("[ENG.REVERSA] correção " + label + ": " + ex.GetBaseException());
                 }
             }
+        }
+
+        /// <summary>A região com origem e eixos do esboço no MUNDO. O perfil (u, v) é do próprio
+        /// esboço e não muda; W = U × V acompanha, porque a troca de frame é rotação própria.</summary>
+        private static CorrectionRegion InWorld(CorrectionRegion c, ExtrusionFrame frame)
+        {
+            if (frame.IsIdentity) return c;
+            var w = new CorrectionRegion
+            {
+                Kind = c.Kind, Add = c.Add, Surface = c.Surface, Label = c.Label,
+                Origin = frame.ToWorld(c.Origin), U = frame.ToWorld(c.U), V = frame.ToWorld(c.V),
+                DepthMm = c.DepthMm, VolumeMm3 = c.VolumeMm3, SweepRad = c.SweepRad
+            };
+            w.Edges.AddRange(c.Edges);
+            return w;
+        }
+
+        /// <summary>
+        /// Tenta a feature e, se a SE a recusar, variantes que contornam o Parasolid sem mudar o
+        /// que a correção faz (tool-organizer_v2, 2026-10-11 — status igFeatureFailed, sem
+        /// descrição):
+        ///   - pontas dos arcos chanfradas (<see cref="WithArcTipsCut"/>): o enchimento do R20 no
+        ///     topo das divisórias tem as pontas do arco TANGENTES ao topo e à rampa de 45°, e 10
+        ///     de 16 foram recusados; chanfrado em 0,05 mm, entram todos;
+        ///   - recorte passando <see cref="CutOvershootMm"/> de cada lado ao longo da extrusão:
+        ///     com as pontas na face da parede (exatas, para não deixar lâmina de 1e-5 mm), 3 dos
+        ///     degraus da rampa foram recusados por faces coplanares.
+        /// </summary>
+        private static string Build(dynamic doc, dynamic model, CorrectionRegion c)
+        {
+            string err = Try(doc, model, c);
+            if (err == null) return null;
+            var variants = new List<Tuple<string, CorrectionRegion>>();
+            CorrectionRegion trimmed = WithArcTipsCut(c);
+            if (trimmed != null) variants.Add(Tuple.Create("com as pontas dos arcos chanfradas", trimmed));
+            if (c.Kind == "extrusao" && !c.Add)
+            {
+                variants.Add(Tuple.Create("passando " + CutOvershootMm.ToString(CultureInfo.InvariantCulture) + " mm das faces", Overshoot(c)));
+                if (trimmed != null) variants.Add(Tuple.Create("chanfrada e passando das faces", Overshoot(trimmed)));
+            }
+            var tried = new List<string>();
+            foreach (var v in variants)
+            {
+                string again = Try(doc, model, v.Item2);
+                if (again == null)
+                {
+                    Log.Info("[ENG.REVERSA] correção " + (c.Add ? "+ " : "− ") + c.Label + ": entrou " + v.Item1 + " (" + err + ")");
+                    return null;
+                }
+                tried.Add(v.Item1 + ": " + again);
+            }
+            return tried.Count == 0 ? err : err + "; " + string.Join("; ", tried);
+        }
+
+        private static string Try(dynamic doc, dynamic model, CorrectionRegion c)
+        {
+            return c.Kind == "revolucao" ? Revolve(doc, model, c) : Extrude(doc, model, c);
+        }
+
+        /// <summary>Quanto (mm) o recorte que falhou passa de cada lado, na nova tentativa.</summary>
+        public const double CutOvershootMm = 0.01;
+
+        /// <summary>A mesma região, começando <see cref="CutOvershootMm"/> antes e terminando o
+        /// mesmo tanto depois, ao longo da extrusão.</summary>
+        public static CorrectionRegion Overshoot(CorrectionRegion c)
+        {
+            double[] w = c.W;
+            var o = new CorrectionRegion
+            {
+                Kind = c.Kind, Add = c.Add, Surface = c.Surface, Label = c.Label,
+                Origin = new[] { c.Origin[0] - CutOvershootMm * w[0], c.Origin[1] - CutOvershootMm * w[1], c.Origin[2] - CutOvershootMm * w[2] },
+                U = c.U, V = c.V, DepthMm = c.DepthMm + 2 * CutOvershootMm, VolumeMm3 = c.VolumeMm3, SweepRad = c.SweepRad
+            };
+            o.Edges.AddRange(c.Edges);
+            return o;
+        }
+
+        /// <summary>Quanto (mm) cada canto de ponta de arco recua, no arco e na reta vizinha.</summary>
+        public const double ArcCornerMm = 0.05;
+
+        /// <summary>
+        /// Cópia da região com cada canto ARCO–RETA chanfrado: o vértice V sai, entram o ponto do
+        /// arco a <see cref="ArcCornerMm"/> de V e o da reta a <see cref="ArcCornerMm"/> de V,
+        /// ligados por uma reta. O triângulo perdido tem lados de 0,05 mm — a correção fica um
+        /// pouco MENOR, nunca passa da malha. Aparar só o arco e manter V não basta: a SE recusou
+        /// igual, porque o vértice continua no ponto de tangência. null = nenhum canto assim.
+        /// </summary>
+        public static CorrectionRegion WithArcTipsCut(CorrectionRegion c)
+        {
+            int n = c.Edges.Count;
+            var copy = new CorrectionRegion
+            {
+                Kind = c.Kind, Add = c.Add, Surface = c.Surface, Label = c.Label,
+                Origin = c.Origin, U = c.U, V = c.V, DepthMm = c.DepthMm, VolumeMm3 = c.VolumeMm3, SweepRad = c.SweepRad
+            };
+            if (n < 2) return null;
+
+            // Novos inícios e fins de cada aresta; o canto k fica entre a aresta k e a k+1.
+            var starts = new double[n][];
+            var ends = new double[n][];
+            var mids = new double[n][];
+            for (int k = 0; k < n; k++) { starts[k] = c.Edges[k].Start; ends[k] = c.Edges[k].End; mids[k] = c.Edges[k].Mid; }
+            var bevel = new bool[n];
+            bool any = false;
+            for (int k = 0; k < n; k++)
+            {
+                ProfileEdge e = c.Edges[k], f = c.Edges[(k + 1) % n];
+                if ((e.Kind == "arco") == (f.Kind == "arco")) continue;
+                ProfileEdge arc = e.Kind == "arco" ? e : f, line = e.Kind == "arco" ? f : e;
+                double[] center = Circumcenter(arc.Start, arc.Mid, arc.End);
+                if (center == null) continue;
+                double r = Math.Sqrt(Sq(arc.Start[0] - center[0]) + Sq(arc.Start[1] - center[1]));
+                double lineLength = Math.Sqrt(Sq(line.End[0] - line.Start[0]) + Sq(line.End[1] - line.Start[1]));
+                double d = ArcCornerMm / r;
+                if (lineLength < 3 * ArcCornerMm || ArcSweep(arc, center) < 3 * d) continue;
+
+                // Ponto no arco a ArcCornerMm do vértice, andando PARA DENTRO do arco.
+                double[] v = e.End;
+                // Sentido do arco de Start a End (passando por Mid); do vértice para dentro dele.
+                double a0 = Math.Atan2(arc.Start[1] - center[1], arc.Start[0] - center[0]);
+                double dir = Ccw(a0, Math.Atan2(arc.Mid[1] - center[1], arc.Mid[0] - center[0])) <
+                             Ccw(a0, Math.Atan2(arc.End[1] - center[1], arc.End[0] - center[0])) ? 1 : -1;
+                double toward = arc == f ? dir : -dir;
+                double av = Math.Atan2(v[1] - center[1], v[0] - center[0]);
+                double[] pa = { center[0] + r * Math.Cos(av + toward * d), center[1] + r * Math.Sin(av + toward * d) };
+
+                // Ponto na reta a ArcCornerMm do vértice.
+                double[] far = line == e ? line.Start : line.End;
+                double[] pl = { v[0] + (far[0] - v[0]) * ArcCornerMm / lineLength, v[1] + (far[1] - v[1]) * ArcCornerMm / lineLength };
+
+                ends[k] = arc == e ? pa : pl;
+                starts[(k + 1) % n] = arc == f ? pa : pl;
+                bevel[k] = true;
+                any = true;
+            }
+            if (!any) return null;
+            for (int k = 0; k < n; k++)
+            {
+                ProfileEdge e = c.Edges[k];
+                double[] mid = mids[k];
+                if (e.Kind == "arco")
+                {
+                    // O meio original pode ter ficado fora do arco aparado se ele era curto; o
+                    // meio do arco aparado é recalculado do centro.
+                    double[] center = Circumcenter(e.Start, e.Mid, e.End);
+                    mid = MidOnArc(center, starts[k], e.Mid, ends[k]);
+                }
+                copy.Edges.Add(new ProfileEdge { Kind = e.Kind, Start = starts[k], Mid = mid, End = ends[k] });
+                if (bevel[k]) copy.Edges.Add(new ProfileEdge { Kind = "reta", Start = ends[k], End = starts[(k + 1) % n] });
+            }
+            return copy;
+        }
+
+        /// <summary>Varredura (rad) do arco de Start a End passando por Mid.</summary>
+        private static double ArcSweep(ProfileEdge arc, double[] center)
+        {
+            double a0 = Math.Atan2(arc.Start[1] - center[1], arc.Start[0] - center[0]);
+            double toMid = Ccw(a0, Math.Atan2(arc.Mid[1] - center[1], arc.Mid[0] - center[0]));
+            double toEnd = Ccw(a0, Math.Atan2(arc.End[1] - center[1], arc.End[0] - center[0]));
+            return toMid < toEnd ? toEnd : 2 * Math.PI - toEnd;
+        }
+
+        /// <summary>Ponto do meio do arco de s a e no mesmo sentido do arco original (que passava
+        /// por oldMid).</summary>
+        private static double[] MidOnArc(double[] center, double[] s, double[] oldMid, double[] e)
+        {
+            double r = Math.Sqrt(Sq(s[0] - center[0]) + Sq(s[1] - center[1]));
+            double a0 = Math.Atan2(s[1] - center[1], s[0] - center[0]);
+            double toMid = Ccw(a0, Math.Atan2(oldMid[1] - center[1], oldMid[0] - center[0]));
+            double toEnd = Ccw(a0, Math.Atan2(e[1] - center[1], e[0] - center[0]));
+            double half = toMid < toEnd ? toEnd / 2 : -(2 * Math.PI - toEnd) / 2;
+            return new[] { center[0] + r * Math.Cos(a0 + half), center[1] + r * Math.Sin(a0 + half) };
+        }
+
+        private static double Sq(double x) { return x * x; }
+
+        /// <summary>Ângulo anti-horário de a até b, em [0, 2π).</summary>
+        private static double Ccw(double a, double b)
+        {
+            double d = (b - a) % (2 * Math.PI);
+            return d < 0 ? d + 2 * Math.PI : d;
+        }
+
+        private static double[] Circumcenter(double[] a, double[] b, double[] c)
+        {
+            double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+            if (Math.Abs(d) < 1e-12) return null;
+            double a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+            return new[]
+            {
+                (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d,
+                (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d
+            };
         }
 
         private static string Revolve(dynamic doc, dynamic model, CorrectionRegion c)
@@ -284,7 +479,7 @@ namespace AutoEDM.Reverse
         /// inteira). Recorte booleano tolera a tangência, e o furo nasce como feature própria,
         /// que é como ele foi desenhado.
         /// </summary>
-        private static string BuildBand(dynamic doc, SectionBand band)
+        private static string BuildBand(dynamic doc, ExtrusionFrame frame, SectionBand band)
         {
             var outlines = band.Loops.FindAll(l => !IsHole(l));
             var holes = band.Loops.FindAll(IsHole);
@@ -292,7 +487,7 @@ namespace AutoEDM.Reverse
 
             if (outlines.Count > 0)
             {
-                SolidEdgePart.Profile p = Draw(doc, band.Z0, outlines);
+                SolidEdgePart.Profile p = Draw(doc, frame, band.Z0, outlines);
                 int end = p.End((SolidEdgePart.ProfileValidationType)IgProfileClosedAllowNested);
                 if (end != 0) return "perfil dos contornos recusado (End = " + end + ")";
 
@@ -301,7 +496,10 @@ namespace AutoEDM.Reverse
                 models.GetType().InvokeMember("AddFiniteExtrudedProtrusion", BindingFlags.InvokeMethod,
                     null, models, new object[] { 1, arr, IgRight, depthM });
                 // AddFiniteExtrudedProtrusion devolve o MODEL, não a feature: o status se lê na
-                // última protrusão da coleção.
+                // última protrusão da coleção. Na 1ª faixa a SE pode aceitar o perfil (End = 0) e
+                // não criar corpo nenhum (corpo 8 do frame-fidget-mini-claw-machine, 2026-10-11):
+                // aí não há Models.Item(1) para ler.
+                if ((int)doc.Models.Count == 0) return "protrusão não criada: a SE aceitou o perfil e não fez corpo";
                 dynamic protrusions = doc.Models.Item(1).ExtrudedProtrusions;
                 string bad = Status(protrusions.Item(protrusions.Count), "protrusão");
                 if (bad != null) return bad;
@@ -311,7 +509,7 @@ namespace AutoEDM.Reverse
 
             // Todos os furos da faixa num recorte só; se ele falhar, um a um — e o relatório diz
             // QUAL furo não entrou, em vez de só "falhou".
-            if (CutHoles(doc, band, holes) == null) return null;
+            if (CutHoles(doc, frame, band, holes) == null) return null;
 
             var failed = new List<string>();
             var widened = new List<string>();
@@ -320,13 +518,13 @@ namespace AutoEDM.Reverse
                 SectionElement c = h.Elements[0];
                 string where = string.Format(CultureInfo.InvariantCulture, "Ø{0:0.00} em ({1:0.00}; {2:0.00})",
                     2 * c.RadiusMm, c.Center[0], c.Center[1]);
-                if (CutHoles(doc, band, new List<SectionLoop> { h }) == null) continue;
+                if (CutHoles(doc, frame, band, new List<SectionLoop> { h }) == null) continue;
 
                 // Furo TANGENTE a outro contorno (espessura zero entre os dois — o Ø2 encostado
                 // no bolsão da malha 6): o Parasolid recusa o recorte até como booleana. Abrir o
                 // furo +0,002 mm no Ø (5× abaixo do passo de 0,01) é a leitura física de
                 // "espessura zero"; encolher deixaria uma parede de 0,001 mm.
-                if (CutHoles(doc, band, new List<SectionLoop> { Widened(h, TangencyWideningMm) }) == null)
+                if (CutHoles(doc, frame, band, new List<SectionLoop> { Widened(h, TangencyWideningMm) }) == null)
                     widened.Add(where);
                 else
                     failed.Add(where);
@@ -353,9 +551,9 @@ namespace AutoEDM.Reverse
 
         /// <summary>Recorta os furos na altura da faixa. Recorte com falha é APAGADO: feature
         /// falhada que fica na árvore estraga o que vier depois.</summary>
-        private static string CutHoles(dynamic doc, SectionBand band, List<SectionLoop> holes)
+        private static string CutHoles(dynamic doc, ExtrusionFrame frame, SectionBand band, List<SectionLoop> holes)
         {
-            SolidEdgePart.Profile p = Draw(doc, band.Z0, holes);
+            SolidEdgePart.Profile p = Draw(doc, frame, band.Z0, holes);
             int end = p.End((SolidEdgePart.ProfileValidationType)IgProfileClosedAllowNested);
             if (end != 0) return "perfil dos furos recusado (End = " + end + ")";
 
@@ -383,9 +581,9 @@ namespace AutoEDM.Reverse
             return null;
         }
 
-        private static SolidEdgePart.Profile Draw(dynamic doc, double z0, List<SectionLoop> loops)
+        private static SolidEdgePart.Profile Draw(dynamic doc, ExtrusionFrame frame, double z0, List<SectionLoop> loops)
         {
-            dynamic profile = SketchAt(doc, z0);
+            dynamic profile = SketchAt(doc, frame, z0);
             var typed = (SolidEdgePart.Profile)profile;
 
             foreach (SectionLoop loop in loops)
@@ -399,15 +597,15 @@ namespace AutoEDM.Reverse
                 {
                     if (e.Kind == "circulo")
                     {
-                        double[] c = To2D(typed, e.Center, z0);
+                        double[] c = To2D(typed, frame, e.Center, z0);
                         typed.Circles2d.AddByCenterRadius(c[0], c[1], e.RadiusMm / 1000.0);
                         continue;
                     }
 
-                    double[] s = To2D(typed, e.Start, z0), en = To2D(typed, e.End, z0);
+                    double[] s = To2D(typed, frame, e.Start, z0), en = To2D(typed, frame, e.End, z0);
                     if (e.Kind == "arco")
                     {
-                        double[] m = To2D(typed, e.Mid, z0);
+                        double[] m = To2D(typed, frame, e.Mid, z0);
                         drawn.Add(typed.Arcs2d.AddByStartAlongEnd(s[0], s[1], m[0], m[1], en[0], en[1]));
                     }
                     else
@@ -434,10 +632,20 @@ namespace AutoEDM.Reverse
             return typed;
         }
 
-        /// <summary>Esboço num plano horizontal na altura z (mm).</summary>
-        private static dynamic SketchAt(dynamic doc, double zMm)
+        /// <summary>Esboço no plano perpendicular à direção de extrusão, na altura z (mm) do frame:
+        /// as linhas da matriz são os eixos LOCAIS escritos no mundo, e a normal do plano (o "+Z"
+        /// do igRight) é a direção de extrusão.</summary>
+        private static dynamic SketchAt(dynamic doc, ExtrusionFrame frame, double zMm)
         {
-            Array m = new double[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, zMm / 1000.0, 1 };
+            double[] ex = frame.LocalAxisInWorld(0), ey = frame.LocalAxisInWorld(1), ez = frame.LocalAxisInWorld(2);
+            double t = zMm / 1000.0;
+            Array m = new double[]
+            {
+                ex[0], ex[1], ex[2], 0,
+                ey[0], ey[1], ey[2], 0,
+                ez[0], ez[1], ez[2], 0,
+                ez[0] * t, ez[1] * t, ez[2] * t, 1
+            };
             dynamic cs = doc.CoordinateSystems.AddByMatrix(ref m);
             dynamic face = cs.Plane(4); // XY do CS — é uma Face
             dynamic plane = doc.RefPlanes.AddParallelByDistance(face, 0.0, 2);
@@ -447,10 +655,11 @@ namespace AutoEDM.Reverse
             return ps.Profiles.Add(plane);
         }
 
-        private static double[] To2D(SolidEdgePart.Profile profile, double[] xyMm, double zMm)
+        private static double[] To2D(SolidEdgePart.Profile profile, ExtrusionFrame frame, double[] xyMm, double zMm)
         {
             double u, v;
-            profile.Convert3DCoordinate(xyMm[0] / 1000.0, xyMm[1] / 1000.0, zMm / 1000.0, out u, out v);
+            double[] w = frame.ToWorld(xyMm[0], xyMm[1], zMm);
+            profile.Convert3DCoordinate(w[0] / 1000.0, w[1] / 1000.0, w[2] / 1000.0, out u, out v);
             return new[] { u, v };
         }
 

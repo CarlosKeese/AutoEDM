@@ -186,12 +186,15 @@ namespace AutoEDM.Mcp
                     "\"montagem\":{\"type\":\"boolean\",\"description\":\"Com 'construir': salva cada peça e reúne todas numa MONTAGEM nova, cada uma na posição original. Nenhum arquivo é sobrescrito.\"}," +
                     "\"pasta\":{\"type\":\"string\",\"description\":\"Pasta das peças e da montagem. Padrão: '<peça> - sólidos' ao lado da peça da malha (que então precisa estar salva).\"}," +
                     "\"construir\":{\"type\":\"boolean\",\"description\":\"true = cria o sólido numa PEÇA NOVA (exige escrita liberada). Padrão false = só o plano.\"}," +
+                    "\"direcao\":{\"type\":\"string\",\"enum\":[\"auto\",\"X\",\"Y\",\"Z\"],\"description\":\"Direção de extrusão das faixas. Padrão auto: Z, a não ser que a previsão em Z acuse erro de forma — aí vence X ou Y pelo menor erro previsto.\"}," +
                     "\"arredondarMm\":{\"type\":\"number\",\"description\":\"Passo de arredondamento das medidas reconhecidas. Padrão 0,01; 0 desliga.\"}," +
                     "\"toleranciaCilindroMm\":{\"type\":\"number\",\"description\":\"Desvio radial aceito num cilindro. Padrão 0,005 (STL de CAD); suba para malha de scanner.\"}}," +
                     "\"additionalProperties\":false}",
                 Description =
                     "PEÇA ativa com corpo de MALHA: converte a malha em SÓLIDO pela rota prismática (2,5D). Reconhece as " +
-                    "superfícies, tira os níveis Z dos planos horizontais, secciona cada faixa e troca cada trecho do " +
+                    "superfícies, ESCOLHE A DIREÇÃO de extrusão (Z por padrão; X ou Y quando a PREVISÃO do sólido contra a " +
+                    "malha, feita antes de construir, acusa erro de forma em Z — 'direcao' impõe), tira os níveis dos planos " +
+                    "perpendiculares a ela, secciona cada faixa e troca cada trecho do " +
                     "contorno pela geometria EXATA (parede plana = reta, cilindro vertical = arco/círculo, no centésimo), " +
                     "com os vértices pela interseção exata das superfícies vizinhas. Devolve níveis, contornos, três " +
                     "volumes (malha, plano, EXATO) e avisos — faixa NÃO prismática (raio em aresta horizontal, chanfro, " +

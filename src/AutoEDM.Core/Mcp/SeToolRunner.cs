@@ -699,16 +699,16 @@ namespace AutoEDM.Mcp
             if (!TryReadMesh(doc, argsJson, out mesh, out name, out route, out error)) return error;
 
             RecognitionResult r = SurfaceRecognizer.Recognize(mesh.PointsMm, RecognizerOptionsFrom(argsJson));
-            PrismaticPlan plan = PrismaticSection.Plan(mesh.PointsMm, r, null);
-            Log.Info($"[MALHA] plano prismático de '{name}': {plan.Bands.Count} faixa(s), {plan.Warnings.Count} aviso(s).");
-
-            CorrectionPlan corrections = BoundaryCorrections.Plan(mesh.PointsMm, r, plan);
+            MeshToSolidPlan whole = MeshToSolidPlanner.Plan(mesh.PointsMm, r, ReadString(argsJson, "direcao"));
+            PrismaticPlan plan = whole.Plan;
+            Log.Info($"[MALHA] plano prismático de '{name}' em {whole.Frame.AxisName}: {plan.Bands.Count} faixa(s), " +
+                     $"{plan.Warnings.Count} aviso(s), erro de forma previsto {whole.Evaluation.FarErrorMm3:0.#} mm³.");
 
             PrismaticBuildResult result = null;
             if (build && plan.Bands.Count > 0)
-                result = PrismaticBuilder.Build((object)app, plan, corrections, name, mesh.PointsMm);
+                result = PrismaticBuilder.Build((object)app, plan, whole.Corrections, name, mesh.PointsMm);
 
-            return PrismaticReport.Format(plan, result, name, r, corrections) +
+            return PrismaticReport.Format(whole, result, name, r) +
                    (build ? "" : "\n(Só o plano. Para construir o sólido numa peça nova: 'construir': true, com a escrita liberada.)");
         }
 
@@ -739,7 +739,7 @@ namespace AutoEDM.Mcp
             foreach (BatchBodyResult b in result.Bodies)
             {
                 if (b.Plan == null) continue;
-                Log.Info(PrismaticReport.Format(b.Plan, b.Build, b.Body.Name, b.Recognition, b.Corrections));
+                Log.Info(PrismaticReport.Format(b.Whole, b.Build, b.Body.Name, b.Recognition));
                 sb.AppendLine();
                 sb.AppendLine("[" + b.Body.Index + "] " + b.Body.Name);
                 sb.Append(SurfaceReport.Identify(b.Recognition));

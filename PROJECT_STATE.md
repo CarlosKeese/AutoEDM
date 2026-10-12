@@ -97,7 +97,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release; depois da fusão com o grupo Molde o botão é o **id 28** e a ribbon `GuiVersion` 19); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 459 passando, 0 falhas |
+| Testes de unidade | ✅ 467 passando, 0 falhas |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -506,6 +506,104 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-10-12** — **tool-organizer_v2: erros de construção da malha → sólido corrigidos.** O botão
+  dava 10 de 68 correções recusadas (todas "+ raio R20 eixo X", enchimento do raio no topo das 16
+  divisórias) e desvio de 3,35 mm. Três causas, reproduzidas em peça nova pelo console e provadas
+  uma a uma na SE: (1) **SE recusa o enchimento** porque as pontas do arco ficam TANGENTES ao topo e
+  à rampa de 45° (status igFeatureFailed sem descrição; retângulo no mesmo lugar entra; aparar o
+  arco mantendo o vértice no ponto de tangência não basta) → o construtor tenta de novo com os
+  cantos arco–reta chanfrados em 0,05 mm, e o recorte que falhar passando 0,01 mm das faces;
+  (2) **sobra de faixa que nenhuma correção cobria** — triângulo acima da tangente do R20, a rampa
+  da fileira de cima inteira em degrau (os 5 pontos de teste dos triângulos caíam no lado que a faixa
+  acerta: "igual") e, na parede da frente (rebaixo R20 → R32 → R36 → R513 em Y), blocos de até
+  3,4 mm acima da curva → **degraus de faixa** (`BandStepRegions`, `InclinedPlaneSteps`): em cada
+  faixa, a área entre o arco/reta e a borda REAL da faixa, tirada dos contornos dela; entra se
+  deixar ≥ 0,5 mm³ fora das outras correções (grade densa, não 5 pontos); (3) **frestas e lâminas
+  de 1e-5 a 4e-4 mm** entre degrau e faixa → pontas de degrau vão ao nível da faixa, extensões ao
+  longo do eixo vão às faces planas reconhecidas, e a junção parede ↔ trecho copiado da malha é
+  levada à parede (a malha tem a parede x = 20,8 em 20,8004). Plano que precisa de degrau não é
+  mais "Z limpo" (senão o elo do frame-fidget ia para Z com 27 faixas): as outras direções são
+  avaliadas e o desempate decide — o tool-organizer sai em **Y**: 15 faixas, 82/82 correções,
+  86 s, volume −0,08% do exato, desvio máx 0,20 mm (RMS 0,02; era 3,35 / 0,44). Desempenho: a
+  previsão usa enrolamento inteiro com caixa (4× mais rápida nos corpos pequenos) e o "dentro da
+  malha?" dos degraus usa a grade de colunas (a vector voltou de 165 s para 73 s). Rack, vector,
+  stack, Enclosure e frame-fidget: mesma direção e erro previsto igual ou menor. Sobra: lasca de
+  0,07 mm sob o R513 (mais fina que a margem dos pontos de teste). 472 testes; nada commitado.
+- **2026-10-11** — **Malha → sólido escolhe a DIREÇÃO de extrusão; `vector_v2-6` construída.**
+  A peça (canal em U dobrado, 65.212 triângulos, ~80% deles em arredondamentos R0,5) não é 2,5D
+  em Z — é em Y, o perfil lateral. (1) Reconhecimento 177 s → 68 s com resultado byte a byte igual
+  nas 8 malhas (grupo que falhou no toro não é mais reajustado a cada semente; `HashSet` na
+  absorção; custo do Nelder–Mead sem alocação). Afrouxar a parada do Nelder–Mead foi testado e
+  recusado: muda raios perto do limite. (2) `ExtrusionFrame`: permutação cíclica dos eixos
+  aplicada à malha e ao reconhecimento — secção e correções rodam iguais no frame local, o
+  construtor volta ao mundo. (3) `PlanEvaluator`: PREVISÃO do sólido contra a malha por pontos,
+  antes de construir (erro de forma = discordância a mais de 0,3 mm da superfície); conferida
+  contra os corpos do Rack (0 mm³ onde a SE deu ≤ 0,04 mm). (4) `MeshToSolidPlanner`: Z por
+  padrão; se a previsão em Z passar de 0,5% do volume, vence X ou Y. Rack continua em Z; a vector
+  vai para Y (Z previa ~3.200 mm³, X ~4.800, Y ~29). MCP ganhou `direcao`. (5) Trecho copiado da
+  malha simplificado por Douglas–Peucker a 0,005 mm (6.855 → 2.881 trechos); reta exata que anda
+  PARA TRÁS (retalho de 0,02 mm entre duas paredes) sai do contorno; contorno que se CRUZA é
+  avisado no plano — foi isso que derrubou 6 faixas na 1ª construção. **Construção na SE (console,
+  peça nova): 15/15 faixas, volume 13.144,7 mm³ contra 13.143,1 da malha, ~15 min (eram 35 com
+  6 faixas perdidas); desvio máx 0,9 mm, RMS 0,13 mm, concentrado nos R0,5; 30 de 126 correções
+  falham (revoluções de toro R0,5).** Uma "quina viva" por cirurgia na malha (vértices do raio para
+  a interseção das faces vizinhas) foi tentada e deixada de lado — retalhos e pontos fora; rascunho
+  no scratchpad da sessão. 467 testes.
+- **2026-10-11 (tarde)** — **Direção de extrusão QUALQUER.** Testado no
+  `frame-fidget-mini-claw-machine` (8 corpos): 4 deles são cópias GIRADAS 30° em volta de Y, e
+  nenhum eixo servia (erro previsto ~24% do volume). O `ExtrusionFrame` ganhou base ortonormal
+  para direção qualquer (eixo do mundo continua na permutação exata) e o planner passou a
+  avaliar também as normais dos 4 maiores grupos de planos fora dos eixos — avaliando TODAS (parar
+  na 1ª aceitável escolhia a parede de um V girado). Lote construído na SE (console, montagem em
+  pasta de rascunho): corpos 3/6/7 com volume a 0,1–0,9 mm³ da malha, 2/5/8 a ≤ 1,4%; corpo 4
+  (placa com furos de eixo torto) +9,7%; corpo 8 (estrutura em várias direções) não é 2,5D em
+  direção nenhuma (previsão 2.551 mm³) e a 1ª faixa não criou corpo — agora isso sai como mensagem,
+  não como referência nula. O desvio "0,5 mm" dos corpos de volume exato vem de faces curvas de
+  eixo torto (R39,9 e pedaço de toro), não da forma geral. 469 testes.
+- **2026-10-11 (noite)** — **Carlos: "as peças não se parecem".** Comparação visual (malha ×
+  sólido renderizados lado a lado) e medida real (pontos dentro de uma × da outra) mostraram que a
+  SE construía o que o plano previa — o defeito era do plano. Três correções: (1) o botão mostrava
+  o relatório inteiro (~1.300 linhas) no diálogo e os botões Sim/Não saíam da tela — agora só o
+  RESUMO (`PrismaticReport.Summary`), o completo vai para o log; (2) **níveis no alto e no baixo
+  de cilindro deitado**: o pino Ø3 atravessando o vão do elo virava ponte da espessura inteira,
+  e a direção boa (a espessura, Y) perdia para uma de 9 faixas escalonadas — com o nível, Y vence
+  e a placa de 3 braços cai de 216 para 35 mm³ de discordância real, os elos para 14–20 (só
+  0,7–2,3 além de 0,3 mm); (3) **fora do alcance** (erro previsto > 2% do volume) dito no topo do
+  relatório, do resumo e do lote, com "Não" como padrão no botão. Desempate de direção por menos
+  faixas. Sobra: recortes de canto dos pinos Ø3 que a SE recusa (blocos nas pontas dos braços) e a
+  estrutura (corpo 1), que é de várias direções — próximo passo grande é decompor a peça em
+  regiões com direções próprias. 470 testes.
+- **2026-10-11 (noite, 2)** — **Enclosure Bottom (bandeja de 51×53×13 mm, 3.746 triângulos).** A
+  primeira construção perdeu o RESSALTO DE ENCAIXE no alto das paredes compridas. Duas causas: (1)
+  a face de baixo do ressalto e as duas pontas triangulares (41° entre si, 30° com a parede) caíam
+  na mesma "cadeia de superfície curva" e viravam região livre — agora a cadeia só junta faixas a
+  até 25°; (2) sem nível no começo/fim de face inclinada, a faixa da parede era cortada abaixo do
+  ressalto — agora face inclinada ≥ 2 mm² dá nível. Construída: 7/7 faixas, 18/18 correções, volume
+  +0,1% da malha, discordância real 17 mm³ (3,5 além de 0,3 mm). Rack com identificação idêntica;
+  vector 28,7 → 23,5 mm³; estrutura do frame-fidget 2.282 → 300 mm³ (ainda fora do alcance). 470
+  testes.
+- **2026-10-11 (noite, 3)** — **stack-container-double-tall-box (12 corpos; caixa de 92×140×136 mm).**
+  Carlos: "quero ver se os raios não ficam multifacetados". Achados e correções: (1) o recorte da
+  alça (U cônico Ø22,5 → Ø27,8 a 44°, 179°, através da parede) saía "livre": a tesselação do STL é
+  TORCIDA (bocas com vértices em ângulos diferentes) e o teste de "regrada" recusava — agora arco ≥ 90°
+  com ≥ 12 triângulos dispensa o teste, e a cadeia que falha inteira é tentada sem as faixas muito
+  maiores (as laterais planas do U); (2) eixo de cone a menos de 0,5° de X/Y/Z vira o eixo, girando em
+  volta do MEIO da superfície; o cone passou a ter pontas de arco; (3) **correção de cone DEITADO**
+  (anel revolvido pelo arco, miolo e cantos extrudados) e níveis no alto/baixo dele — o arco saía um
+  ENTALHE RETANGULAR, agora sai redondo (desvio malha → sólido 2,9 → 0,22 mm); (4) 8 faixas recusadas
+  por contorno cruzado: retalho de 0,008 mm e DOBRA (aba de normal invertida deitada sobre a parede) —
+  o laço agora tira reta < 0,02 mm e trecho que volta sobre a mesma reta. Caixa: 27/27 faixas,
+  110/110 correções, volume −0,02% do exato. Sobra: degrauzinho onde o arco do U encontra as laterais.
+  Rack idêntico. 470 testes.
+- **2026-10-11 (noite, 4)** — **Lote do stack-container inteiro (12 corpos, 4 min) com o add-in
+  reinstalado.** Três corpos pareciam errados pelo volume (+13%, +5,5%) mas a medida por pontos
+  mostrou que o sólido estava CERTO: a malha tem CASCAS SOBREPOSTAS, e o volume pela fórmula com
+  sinal fica ~12% abaixo do real (2.367 × 2.702 mm³). A previsão passou de paridade para
+  ENROLAMENTO (sobreposição conta como material, como na SE); o relatório usa o volume medido e
+  avisa "cascas sobrepostas". Com isso a peça de cima dá −1,0% e a tampa −0,9%, o resto entre
+  exato e +2,7% — menos as duas placas de canto com uma correção recusada (+5,7%). A aceitação
+  direta de Z ficou mais justa (≤ 1 mm³ ou 0,1% do volume): com 0,5% passava um Z de 27 faixas
+  escalonadas no elo do frame-fidget. 470 testes.
 - **2026-10-10 (noite, 3)** — **Skill `solid-edge-com` atualizada com a sessão** (secção fora de
   vértice, arcos tangentes, raio de concordância por hipótese, disputa entre cilindros, lote numa
   montagem por PutMatrix identidade, orientação de perfil fechado × `igLeft`, dados da SE no idioma
@@ -684,6 +782,11 @@ As 7 falhas registradas em `701725f` (testes escritos contra uma especificação
 alojamento foi validado no SE em 2026-09-21. Vale a tabela de catálogo.
 
 ## Próxima ação
+
+**Eng. Reversa (2026-10-12):** reinstalar o add-in com a SE fechada
+(`powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 -Configuration Release`) e
+converter de novo o tool-organizer_v2 pelo botão; depois, commitar a rodada inteira (desde a
+direção de extrusão de 2026-10-11 — nada commitado ainda).
 
 **Validar no SE a "Nova peça"** (grupo Molde): nome no próximo número da série, pasta, origem
 no ponto certo do eixo de altura e orientação da montagem. Depois, a Fase 2 do

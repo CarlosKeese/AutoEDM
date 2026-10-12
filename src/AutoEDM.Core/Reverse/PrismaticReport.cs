@@ -25,15 +25,94 @@ namespace AutoEDM.Reverse
         public static string Format(PrismaticPlan plan, PrismaticBuildResult build, string bodyName,
             RecognitionResult recognition, CorrectionPlan corrections)
         {
+            return Format(plan, build, bodyName, recognition, corrections, null);
+        }
+
+        /// <summary>O plano da fachada (<see cref="MeshToSolidPlanner"/>): diz também a direção de
+        /// extrusão escolhida, por quê, e a previsão do sólido contra a malha.</summary>
+        public static string Format(MeshToSolidPlan whole, PrismaticBuildResult build, string bodyName,
+            RecognitionResult recognition)
+        {
+            if (whole == null) throw new ArgumentNullException(nameof(whole));
+            return Format(whole.Plan, build, bodyName, recognition, whole.Corrections, whole);
+        }
+
+        /// <summary>
+        /// O RESUMO para uma janela de diálogo: direção, faixas, correções, volumes, previsão e,
+        /// construído, o resultado e o desvio — o relatório inteiro vai para o log. Na vector_v2-6 o
+        /// relatório tem ~1.300 linhas (quase tudo aviso); dentro de um MessageBox a janela passava
+        /// da tela e os botões Sim/Não ficavam fora do alcance (Carlos, 2026-10-11: "não funciona").
+        /// </summary>
+        public static string Summary(MeshToSolidPlan whole, PrismaticBuildResult build, string bodyName)
+        {
+            if (whole == null) throw new ArgumentNullException(nameof(whole));
+            PrismaticPlan plan = whole.Plan;
+            var sb = new StringBuilder();
+            string axis = (plan.Frame ?? ExtrusionFrame.Z).AxisName;
+            sb.AppendLine("Malha → sólido" + (string.IsNullOrEmpty(bodyName) ? "" : " — " + bodyName));
+            if (plan.Bands.Count == 0)
+            {
+                sb.AppendLine("Nenhuma faixa: a malha não fecha secção em direção nenhuma das tentadas.");
+                return sb.ToString();
+            }
+            if (whole.OutOfScope && whole.Evaluation != null && whole.Evaluation.Samples > 0)
+                sb.AppendLine("FORA DO ALCANCE da rota 2,5D: mesmo na melhor direção, o sólido diverge da malha em ~" +
+                    whole.Evaluation.FarErrorMm3.ToString("0", CultureInfo.InvariantCulture) + " mm³ (" +
+                    (100 * whole.Evaluation.FarErrorMm3 / Math.Abs(plan.MeshVolumeMm3)).ToString("0.#", CultureInfo.InvariantCulture) +
+                    "% do volume). A peça tem detalhes em várias direções; o sólido NÃO vai se parecer com ela.").AppendLine();
+            sb.AppendLine("Direção de extrusão: " + axis + (whole.DirectionNotes.Count > 1 ? " (Z não servia; a de menor erro previsto)" : ""));
+            int approx = 0;
+            foreach (SectionBand b in plan.Bands) foreach (SectionLoop l in b.Loops) foreach (SectionElement e in l.Elements) if (!e.Exact) approx++;
+            sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0} faixa(s), {1} correção(ões){2}.",
+                plan.Bands.Count, whole.Corrections != null ? whole.Corrections.Regions.Count : 0,
+                approx > 0 ? ", " + approx + " trecho(s) de contorno copiados da malha" : ""));
+            sb.AppendLine("Volume da malha " + F3(whole.RealMeshVolumeMm3) + " mm³, do plano exato " + F3(plan.ExactVolumeMm3) + " mm³.");
+            if (whole.OverlappingShells)
+                sb.AppendLine("A malha tem cascas SOBREPOSTAS ou invertidas: a fórmula dá " + F3(plan.MeshVolumeMm3) +
+                              " mm³, mas medido por pontos ela tem " + F3(whole.RealMeshVolumeMm3) + " mm³ — é esse o que vale.");
+            if (whole.Evaluation != null && whole.Evaluation.Samples > 0)
+                sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "Erro de forma previsto: {0:0.#} mm³ ({1:0.##}% do volume).",
+                    whole.Evaluation.FarErrorMm3, Math.Abs(plan.MeshVolumeMm3) > 0 ? 100 * whole.Evaluation.FarErrorMm3 / Math.Abs(plan.MeshVolumeMm3) : 0));
+            if (build != null)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Construído em '{build.DocumentName}': {build.BandsBuilt} faixa(s) ok, {build.BandsFailed} com falha; " +
+                              $"{build.CorrectionsBuilt} correção(ões) ok, {build.CorrectionsFailed} com falha.");
+                if (!double.IsNaN(build.BodyVolumeMm3))
+                    sb.AppendLine("Volume do corpo construído " + F3(build.BodyVolumeMm3) + " mm³" + Diff(build.BodyVolumeMm3, whole.RealMeshVolumeMm3, "da malha"));
+                if (build.MeshToSolid != null && build.SolidToMesh != null)
+                    sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "Desvio máximo {0:0.###} mm (RMS {1:0.###} mm).",
+                        Math.Max(build.MeshToSolid.MaxMm, build.SolidToMesh.MaxMm), Math.Max(build.MeshToSolid.RmsMm, build.SolidToMesh.RmsMm)));
+            }
+            int warnings = plan.Warnings.Count + (whole.Corrections != null ? whole.Corrections.Warnings.Count : 0);
+            if (warnings > 0) sb.AppendLine().AppendLine(warnings + " aviso(s) — o relatório completo está no log do AutoEDM.");
+            return sb.ToString();
+        }
+
+        private static string Format(PrismaticPlan plan, PrismaticBuildResult build, string bodyName,
+            RecognitionResult recognition, CorrectionPlan corrections, MeshToSolidPlan whole)
+        {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             var sb = new StringBuilder();
+            string axis = (plan.Frame ?? ExtrusionFrame.Z).AxisName;
 
-            sb.AppendLine("Malha → sólido, rota prismática (faixas Z)" +
+            sb.AppendLine("Malha → sólido, rota prismática (faixas " + axis + ")" +
                           (string.IsNullOrEmpty(bodyName) ? "" : " — corpo '" + bodyName + "'"));
+            if (whole != null && whole.OutOfScope && whole.Evaluation != null && whole.Evaluation.Samples > 0 && plan.Bands.Count > 0)
+                sb.AppendLine("FORA DO ALCANCE da rota 2,5D: mesmo na melhor direção, o sólido diverge da malha em ~" +
+                    whole.Evaluation.FarErrorMm3.ToString("0", CultureInfo.InvariantCulture) + " mm³ (" +
+                    (100 * whole.Evaluation.FarErrorMm3 / Math.Abs(plan.MeshVolumeMm3)).ToString("0.#", CultureInfo.InvariantCulture) +
+                    "% do volume). A peça tem detalhes em várias direções; o sólido NÃO vai se parecer com ela.");
+            if (whole != null)
+            {
+                sb.AppendLine("Direção de extrusão: " + axis + (whole.Forced ? " (imposta)" :
+                              whole.DirectionNotes.Count > 1 ? " — Z não servia; escolhida pelo menor erro previsto:" : ""));
+                if (whole.DirectionNotes.Count > 1) foreach (string n in whole.DirectionNotes) sb.AppendLine("  " + n);
+            }
             if (plan.Bands.Count == 0)
             {
                 sb.AppendLine();
-                sb.AppendLine("Nenhuma faixa: a malha está vazia ou não tem secção fechada em Z.");
+                sb.AppendLine("Nenhuma faixa: a malha está vazia ou não tem secção fechada em " + axis + ".");
                 return sb.ToString();
             }
 
@@ -43,7 +122,7 @@ namespace AutoEDM.Reverse
                 sb.AppendLine();
             }
 
-            sb.Append("Níveis Z (mm):");
+            sb.Append("Níveis " + axis + " (mm):");
             foreach (double z in plan.Levels) sb.Append(' ').Append(F2(z));
             sb.AppendLine();
             sb.AppendLine();
@@ -65,18 +144,41 @@ namespace AutoEDM.Reverse
                     }
                 approx += rough;
                 sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                    "  Faixa {0}: Z {1} → {2}  |  {3} contorno(s): {4} reta(s), {5} arco(s), {6} círculo(s){7}",
+                    "  Faixa {0}: {8} {1} → {2}  |  {3} contorno(s): {4} reta(s), {5} arco(s), {6} círculo(s){7}",
                     i + 1, F2(b.Z0), F2(b.Z1), b.Loops.Count, lines, arcs, circles,
-                    rough > 0 ? ", " + rough + " trecho(s) APROXIMADO(S) pela malha" : ""));
+                    rough > 0 ? ", " + rough + " trecho(s) APROXIMADO(S) pela malha" : "", axis));
             }
 
             sb.AppendLine();
             sb.AppendLine("Volumes (mm³):");
             sb.AppendLine("  malha ...................... " + F3(plan.MeshVolumeMm3));
+            if (whole != null && whole.OverlappingShells)
+                sb.AppendLine("  malha, medida por pontos ... " + F3(whole.RealMeshVolumeMm3) +
+                              "   (a malha tem cascas SOBREPOSTAS ou invertidas: a fórmula acima erra, este é o volume de verdade)");
             sb.AppendLine("  plano, pelo polígono da malha " + F3(plan.PlanVolumeMm3) + Diff(plan.PlanVolumeMm3, plan.MeshVolumeMm3, "da malha"));
             sb.AppendLine("  plano EXATO (arcos reais) .. " + F3(plan.ExactVolumeMm3));
             sb.AppendLine("  (a malha tem furo e raio como polígono INSCRITO: o exato difere dela por isso, e é contra o");
             sb.AppendLine("   EXATO que o sólido se confere)");
+
+            if (whole != null && whole.Evaluation != null && whole.Evaluation.Samples > 0)
+            {
+                PlanEvaluation ev = whole.Evaluation;
+                sb.AppendLine();
+                sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                    "Previsão do sólido contra a malha ({0} pontos, antes de construir): erro de forma {1:0.#} mm³ " +
+                    "(discordância a mais de {2:0.0#} mm da superfície); na casca da superfície, {3:0.#} mm³ a menos e {4:0.#} mm³ a mais " +
+                    "(flecha da tesselação e raios).",
+                    ev.Samples, ev.FarErrorMm3, PlanEvaluator.FarMm, ev.MissingMm3, ev.ExtraMm3));
+                ExtrusionFrame f = plan.Frame ?? ExtrusionFrame.Z;
+                int shown = 0;
+                foreach (var c in ev.FarClusters)
+                {
+                    if (shown++ == 5) break;
+                    double[] w = f.ToWorld(c.Item1);
+                    sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "  erro de ~{0:0.#} mm³ perto de ({1:0.#}; {2:0.#}; {3:0.#})",
+                        c.Item2, w[0], w[1], w[2]));
+                }
+            }
 
             if (corrections != null)
             {

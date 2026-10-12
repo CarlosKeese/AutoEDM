@@ -60,6 +60,10 @@ namespace AutoEDM.Reverse
 
     public sealed class PrismaticPlan
     {
+        /// <summary>Frame do plano: faixas, laços e níveis estão nele (Z local = direção de
+        /// extrusão). A construção leva tudo de volta ao mundo por ele.</summary>
+        public ExtrusionFrame Frame = ExtrusionFrame.Z;
+
         public readonly List<SectionBand> Bands = new List<SectionBand>();
         public readonly List<double> Levels = new List<double>();
         public readonly List<string> Warnings = new List<string>();
@@ -93,6 +97,21 @@ namespace AutoEDM.Reverse
         /// NÃO prismática: o maior entre este piso absoluto e a fração abaixo da área.</summary>
         public double MaxAreaVariationMm2 = 0.05;
         public double MaxAreaVariationFraction = 0.0005;
+
+        /// <summary>Níveis também no começo e no fim (em Z) de toda face inclinada de 2 mm² ou
+        /// mais.</summary>
+        public bool InclinedPlaneLevels = true;
+
+        /// <summary>Trecho copiado da malha é simplificado (Douglas–Peucker) com esta tolerância,
+        /// em mm. A malha já é polígono inscrito com flecha de ~0,01–0,02 mm: tirar os pontos que
+        /// ficam a menos de 0,005 mm da reta não muda a forma, e na vector_v2-6 cortou os trechos
+        /// do esboço de 6.855 para 2.881 — é a SE que paga cada um deles. 0 desliga.</summary>
+        public double SimplifyApproxMm = 0.005;
+
+        /// <summary>Frame em que a malha e o reconhecimento JÁ ESTÃO (o Z local é a direção de
+        /// extrusão). Só nomeia o eixo e leva as coordenadas das mensagens de volta ao mundo;
+        /// null = Z, o mundo.</summary>
+        public ExtrusionFrame Frame;
     }
 
     /// <summary>
@@ -127,7 +146,8 @@ namespace AutoEDM.Reverse
                 throw new ArgumentException("O reconhecimento não corresponde a esta malha.", nameof(r));
             PrismaticOptions o = options ?? new PrismaticOptions();
 
-            var plan = new PrismaticPlan();
+            var plan = new PrismaticPlan { Frame = o.Frame ?? ExtrusionFrame.Z };
+            string axis = plan.Frame.AxisName;
             if (pointsMm.Length == 0) return plan;
             plan.MeshVolumeMm3 = MeshVolume(pointsMm);
 
@@ -143,6 +163,27 @@ namespace AutoEDM.Reverse
             foreach (RecognizedSurface s in r.Surfaces)
                 if (s.Kind == "plano" && s.Normal != null && Math.Abs(s.Normal[2]) == 1.0)
                     raw.Add(s.PointMm[2]);
+            // Cilindro DEITADO (eixo perpendicular à extrusão): o alto e o baixo dele, onde a
+            // superfície fica tangente à secção, também são níveis. O pino Ø3 atravessando o vão
+            // do elo do frame-fidget-mini-claw-machine (2026-10-11) era cortado no meio da faixa
+            // de 6 mm e virava uma PONTE da espessura inteira — a correção arredondava o pino, mas
+            // as lajes acima e abaixo dele ficavam cheias (~30 mm³).
+            foreach (RecognizedSurface s in r.Surfaces)
+                foreach (double z in LyingCylinderExtremes(s))
+                    if (z > zMin + o.LevelMergeMm && z < zMax - o.LevelMergeMm) raw.Add(z);
+            // Face INCLINADA: onde ela começa e termina em Z também é nível. A janela de encaixe da
+            // Enclosure Bottom (2026-10-11) tem fundo em rampa e paredes verticais acima dela; sem
+            // nível no alto da rampa, a faixa da parede era cortada abaixo da janela e saía cheia —
+            // a correção da rampa só cobre o triângulo da própria face, não o vão acima.
+            if (o.InclinedPlaneLevels)
+                foreach (RecognizedSurface s in r.Surfaces)
+                {
+                    if (s.Kind != "plano" || s.Normal == null || s.MinMm == null || s.AreaMm2 < BoundaryCorrections.MinPlaneAreaMm2) continue;
+                    double nz = Math.Abs(s.Normal[2]);
+                    if (nz < 1e-9 || nz >= 1.0) continue;
+                    foreach (double z in new[] { s.MinMm[2], s.MaxMm[2] })
+                        if (z > zMin + o.LevelMergeMm && z < zMax - o.LevelMergeMm) raw.Add(z);
+                }
             raw.Sort();
             foreach (double z in raw)
                 if (plan.Levels.Count == 0 || z - plan.Levels[plan.Levels.Count - 1] > o.LevelMergeMm)
@@ -164,7 +205,7 @@ namespace AutoEDM.Reverse
                 List<List<Seg>> loops = Cut(pointsMm, r.RegionOfTriangle, (z0 + z1) / 2.0);
                 foreach (List<Seg> raw2 in loops)
                 {
-                    SectionLoop loop = Exactify(raw2, r, o, plan.Warnings, z0, z1);
+                    SectionLoop loop = Exactify(raw2, r, o, plan.Frame, plan.Warnings, z0, z1);
                     if (loop == null) continue;
                     band.Loops.AddRange(SplitTouchingCircles(loop));
                 }
@@ -190,9 +231,19 @@ namespace AutoEDM.Reverse
                 foreach (SectionLoop l in b.Loops) mid += l.SignedAreaMm2;
                 if (b.AreaVariationMm2 > Math.Max(o.MaxAreaVariationMm2, Math.Abs(mid) * o.MaxAreaVariationFraction))
                     plan.Warnings.Add(string.Format(CultureInfo.InvariantCulture,
-                        "Faixa Z {0:0.00}–{1:0.00} NÃO é prismática: a área da secção varia {2:0.###} mm² ao longo dela " +
+                        "Faixa {4} {0:0.00}–{1:0.00} NÃO é prismática: a área da secção varia {2:0.###} mm² ao longo dela " +
                         "({3:0.##}% da área) — há raio, chanfro ou saída que a extrusão reta não reproduz.",
-                        b.Z0, b.Z1, b.AreaVariationMm2, Math.Abs(mid) > 0 ? 100 * b.AreaVariationMm2 / Math.Abs(mid) : 0));
+                        b.Z0, b.Z1, b.AreaVariationMm2, Math.Abs(mid) > 0 ? 100 * b.AreaVariationMm2 / Math.Abs(mid) : 0, axis));
+            }
+
+            foreach (SectionBand b in plan.Bands)
+            {
+                double[] at = Crossing(b);
+                if (at == null) continue;
+                double[] w = plan.Frame.ToWorld(at[0], at[1], (b.Z0 + b.Z1) / 2);
+                plan.Warnings.Add(string.Format(CultureInfo.InvariantCulture,
+                    "Faixa {0} {1:0.00}–{2:0.00}: o contorno se CRUZA perto de ({3:0.###}; {4:0.###}; {5:0.###}) — a Solid Edge vai recusar esta faixa.",
+                    axis, b.Z0, b.Z1, w[0], w[1], w[2]));
             }
 
             foreach (SectionBand b in plan.Bands)
@@ -203,6 +254,35 @@ namespace AutoEDM.Reverse
                     plan.ExactVolumeMm3 += l.ExactAreaMm2 * (b.Z1 - b.Z0);
                 }
             return plan;
+        }
+
+        /// <summary>
+        /// Alturas em que um cilindro de eixo perpendicular a Z fica tangente a um plano Z: o
+        /// centro ± o raio, se o arco do cilindro passa por ali (volta inteira, ou arco que contém
+        /// a direção ±Z). Só cilindro de volta inteira ou de arco de 180° ou mais — um raio de
+        /// borda de 90° não pede faixa própria, a correção dele basta.
+        /// </summary>
+        public static IEnumerable<double> LyingCylinderExtremes(RecognizedSurface s)
+        {
+            bool cone = s.Kind == "cone";
+            if ((s.Kind != "cilindro" && !cone) || s.AxisMm == null || s.PointMm == null) yield break;
+            if (Math.Abs(s.AxisMm[2]) > 1e-9 || s.SweepDeg < 180) yield break;
+            foreach (double sign in new[] { 1.0, -1.0 })
+            {
+                if (s.SweepDeg < 359.5 && s.ArcFrom != null)
+                {
+                    // Direção ±Z dentro do arco que vai de ArcFrom, anti-horário em volta do eixo.
+                    double[] a = s.AxisMm, f = s.ArcFrom;
+                    double[] g = { a[1] * f[2] - a[2] * f[1], a[2] * f[0] - a[0] * f[2], a[0] * f[1] - a[1] * f[0] };
+                    double ang = Math.Atan2(sign * g[2], sign * f[2]) * 180 / Math.PI;
+                    if (ang < 0) ang += 360;
+                    if (ang > s.SweepDeg) continue;
+                }
+                if (!cone) { yield return s.PointMm[2] + sign * s.RadiusMm; continue; }
+                // Cone deitado: o eixo é horizontal, então cada boca dá o seu alto e o seu baixo.
+                yield return s.PointMm[2] + sign * s.RadiusMinMm;
+                yield return s.PointMm[2] + sign * s.RadiusMaxMm;
+            }
         }
 
         /// <summary>Área da secção em quatro alturas da faixa (10, 30, 70 e 90 %), comparada com a
@@ -418,7 +498,7 @@ namespace AutoEDM.Reverse
         }
 
         private static SectionLoop Exactify(List<Seg> segs, RecognitionResult r, PrismaticOptions o,
-            List<string> warnings, double z0, double z1)
+            ExtrusionFrame frame, List<string> warnings, double z0, double z1)
         {
             var loop = new SectionLoop();
             double area = 0;
@@ -466,20 +546,45 @@ namespace AutoEDM.Reverse
             for (int i = 0; i < n; i++)
             {
                 Seg join = runs[i].Segs[0];
-                double qx = join.Ax, qy = join.Ay;
-                Carrier a = carriers[(i - 1 + n) % n], b = carriers[i];
-
-                double[] v = null;
-                if (a != null && b != null) v = Intersect(a, b, qx, qy);
-                if (v != null && Dist(v[0], v[1], qx, qy) > o.VertexToleranceMm)
-                {
-                    warnings.Add(string.Format(CultureInfo.InvariantCulture,
-                        "Faixa Z {0:0.00}–{1:0.00}: vértice exato ({2:0.000}; {3:0.000}) a {4:0.000} mm da malha — ficou o da malha.",
-                        z0, z1, v[0], v[1], Dist(v[0], v[1], qx, qy)));
-                    v = null;
-                }
-                vertex[i] = v ?? new[] { qx, qy };
+                vertex[i] = Junction(carriers[(i - 1 + n) % n], carriers[i], join.Ax, join.Ay, o, frame, warnings, z0, z1);
             }
+
+            // ---------------------------------------------- trecho reto INVERTIDO
+            // Retalho de tesselação reconhecido como plano à parte (0,02 mm na ponta da perna da
+            // vector_v2-6) fica entre duas paredes de verdade; as interseções com ele saem em
+            // ordem trocada e o trecho anda PARA TRÁS em relação à malha — um laço cruzado de
+            // centésimos que a SE recusa (6 faixas sem protrusão, 2026-10-11). Reta exata que
+            // anda contra a malha não pertence àquele canto: sai, e as vizinhas se encontram.
+            var runList = new List<Run>(runs);
+            var carrierList = new List<Carrier>(carriers);
+            var vertexList = new List<double[]>(vertex);
+            for (bool changed = true; changed && runList.Count > 2;)
+            {
+                changed = false;
+                int m = runList.Count;
+                for (int i = 0; i < m; i++)
+                {
+                    Carrier c = carrierList[i];
+                    if (c == null || !c.IsLine) continue;
+                    Run run = runList[i];
+                    Seg first = run.Segs[0], last = run.Segs[run.Segs.Count - 1];
+                    double[] s0 = vertexList[i], s1 = vertexList[(i + 1) % m];
+                    double along = (s1[0] - s0[0]) * (last.Bx - first.Ax) + (s1[1] - s0[1]) * (last.By - first.Ay);
+                    if (along >= 0) continue;
+                    runList.RemoveAt(i);
+                    carrierList.RemoveAt(i);
+                    vertexList.RemoveAt(i);
+                    m--;
+                    int at = i % m;
+                    vertexList[at] = Junction(carrierList[(at - 1 + m) % m], carrierList[at], first.Ax, first.Ay, o, frame, warnings, z0, z1);
+                    changed = true;
+                    break;
+                }
+            }
+            runs = runList;
+            carriers = carrierList.ToArray();
+            vertex = vertexList.ToArray();
+            n = runs.Count;
 
             // ---------------------------------------------- trechos
             bool warnedApprox = false;
@@ -513,18 +618,20 @@ namespace AutoEDM.Reverse
                     if (!warnedApprox)
                     {
                         warnings.Add(string.Format(CultureInfo.InvariantCulture,
-                            "Faixa Z {0:0.00}–{1:0.00}: trecho sem parede vertical reconhecida (superfície {2}) — aproximado pela malha.",
-                            z0, z1, run.Region));
+                            "Faixa {3} {0:0.00}–{1:0.00}: trecho sem parede {4} reconhecida (superfície {2}) — aproximado pela malha.",
+                            z0, z1, run.Region, frame.AxisName, frame.IsIdentity ? "vertical" : "paralela a " + frame.AxisName));
                         warnedApprox = true;
                     }
-                    double[] from = start;
+                    var chain = new List<double[]> { start };
                     for (int k = 0; k < run.Segs.Count; k++)
                     {
                         double[] to = k == run.Segs.Count - 1 ? end : new[] { run.Segs[k].Bx, run.Segs[k].By };
-                        if (Dist(from[0], from[1], to[0], to[1]) < 1e-6) continue;
-                        loop.Elements.Add(new SectionElement { Kind = "reta", Start = from, End = to, Region = run.Region, Exact = false });
-                        from = to;
+                        if (Dist(chain[chain.Count - 1][0], chain[chain.Count - 1][1], to[0], to[1]) < 1e-6) continue;
+                        chain.Add(to);
                     }
+                    chain = Simplify(chain, o.SimplifyApproxMm);
+                    for (int k = 0; k + 1 < chain.Count; k++)
+                        loop.Elements.Add(new SectionElement { Kind = "reta", Start = chain[k], End = chain[k + 1], Region = run.Region, Exact = false });
                 }
             }
 
@@ -532,7 +639,182 @@ namespace AutoEDM.Reverse
             // comprimento zero que a interseção exata produziu. Arco que volta ao próprio início
             // NÃO é sobra — é círculo inteiro encostado no laço (ver SplitTouchingCircles).
             loop.Elements.RemoveAll(e => e.Kind == "reta" && Dist(e.Start[0], e.Start[1], e.End[0], e.End[1]) < 1e-6);
+            RemoveSlivers(loop);
             return loop.Elements.Count >= 2 ? loop : null;
+        }
+
+        /// <summary>Volta sobre a mesma reta até este comprimento é dobra da malha, não detalhe.</summary>
+        public const double FoldMm = 1.0;
+
+        /// <summary>e anda para trás sobre a reta de prev (direções opostas, pontas a menos de
+        /// 0,01 mm da reta de prev)?</summary>
+        private static bool FoldsBack(SectionElement prev, SectionElement e)
+        {
+            double px = prev.End[0] - prev.Start[0], py = prev.End[1] - prev.Start[1];
+            double ex = e.End[0] - e.Start[0], ey = e.End[1] - e.Start[1];
+            double lp = Math.Sqrt(px * px + py * py), le = Math.Sqrt(ex * ex + ey * ey);
+            if (lp < 1e-9 || le < 1e-9) return false;
+            if ((px * ex + py * ey) / (lp * le) > -0.99) return false;
+            foreach (double[] q in new[] { e.Start, e.End })
+            {
+                double off = Math.Abs((q[0] - prev.Start[0]) * py - (q[1] - prev.Start[1]) * px) / lp;
+                if (off > 0.01) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Reta mais curta que isto no contorno é retalho de tesselação, não detalhe.</summary>
+        public const double SliverMm = 0.02;
+
+        /// <summary>
+        /// Tira do laço as RETAS mais curtas que <see cref="SliverMm"/>, juntando as vizinhas no
+        /// meio do caminho. Na parede da caixa do stack-container (2026-10-11) um retalho de
+        /// 0,008 mm com a normal invertida, entre duas paredes paralelas a 0,003 mm uma da outra,
+        /// fazia o contorno voltar e se cruzar — 8 faixas recusadas pela SE. Nenhum detalhe de
+        /// projeto mede centésimos; a junção desloca a ponta das vizinhas no máximo metade disso.
+        /// </summary>
+        private static void RemoveSlivers(SectionLoop loop)
+        {
+            for (bool changed = true; changed && loop.Elements.Count > 3;)
+            {
+                changed = false;
+                int n = loop.Elements.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    SectionElement e = loop.Elements[i];
+                    if (e.Kind != "reta") continue;
+                    SectionElement prev = loop.Elements[(i - 1 + n) % n], next = loop.Elements[(i + 1) % n];
+                    if (prev.Kind == "circulo" || next.Kind == "circulo") continue;
+                    double len = Dist(e.Start[0], e.Start[1], e.End[0], e.End[1]);
+                    if (prev.Kind == "reta" && len < FoldMm && FoldsBack(prev, e))
+                    {
+                        // DOBRA: volta sobre a mesma reta da anterior (aba de normal invertida
+                        // deitada sobre a parede, na caixa do stack-container). Sai, e a seguinte
+                        // continua de onde a anterior parou.
+                        next.Start = prev.End;
+                        loop.Elements.RemoveAt(i);
+                        changed = true;
+                        break;
+                    }
+                    if (len >= SliverMm) continue;
+                    double[] mid = { (e.Start[0] + e.End[0]) / 2, (e.Start[1] + e.End[1]) / 2 };
+                    prev.End = mid;
+                    next.Start = mid;
+                    loop.Elements.RemoveAt(i);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Onde os contornos de uma faixa se cruzam (null = não se cruzam). Perfil cruzado a SE
+        /// recusa sem dizer onde — a feature só sai "com falha" —, e foi assim que 6 faixas da
+        /// vector_v2-6 sumiram por um laço de 0,02 mm. Arcos vão em 8 passos; trechos vizinhos no
+        /// mesmo laço não contam (encostam na ponta).
+        /// </summary>
+        public static double[] Crossing(SectionBand band)
+        {
+            var segs = new List<double[]>();
+            for (int li = 0; li < band.Loops.Count; li++)
+            {
+                SectionLoop l = band.Loops[li];
+                for (int ei = 0; ei < l.Elements.Count; ei++)
+                {
+                    SectionElement e = l.Elements[ei];
+                    if (e.Kind == "circulo") continue;
+                    List<double[]> pts = e.Kind == "arco" ? ArcPolyline(e, 8) : new List<double[]> { e.Start, e.End };
+                    for (int k = 0; k + 1 < pts.Count; k++)
+                    {
+                        segs.Add(new[] { pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1], li, ei, l.Elements.Count });
+                    }
+                }
+            }
+            for (int i = 0; i < segs.Count; i++)
+                for (int j = i + 1; j < segs.Count; j++)
+                {
+                    double[] a = segs[i], b = segs[j];
+                    if (a[4] == b[4])
+                    {
+                        int d = (int)Math.Abs(a[5] - b[5]);
+                        if (d <= 1 || d == (int)a[6] - 1) continue;
+                    }
+                    double d1 = Orient(a[0], a[1], a[2], a[3], b[0], b[1]), d2 = Orient(a[0], a[1], a[2], a[3], b[2], b[3]);
+                    double d3 = Orient(b[0], b[1], b[2], b[3], a[0], a[1]), d4 = Orient(b[0], b[1], b[2], b[3], a[2], a[3]);
+                    if (d1 * d2 < -1e-14 && d3 * d4 < -1e-14) return new[] { a[0], a[1] };
+                }
+            return null;
+        }
+
+        private static double Orient(double ax, double ay, double bx, double by, double px, double py)
+        {
+            return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+        }
+
+        private static List<double[]> ArcPolyline(SectionElement e, int steps)
+        {
+            double cx = e.Center[0], cy = e.Center[1];
+            double ts = Math.Atan2(e.Start[1] - cy, e.Start[0] - cx);
+            double tm = Math.Atan2(e.Mid[1] - cy, e.Mid[0] - cx);
+            double te = Math.Atan2(e.End[1] - cy, e.End[0] - cx);
+            double toMid = Wrap(tm - ts), toEnd = Wrap(te - ts);
+            double sweep = toMid <= toEnd ? toEnd : toEnd - 2 * Math.PI;
+            var pts = new List<double[]> { e.Start };
+            for (int k = 1; k < steps; k++)
+            {
+                double t = ts + sweep * k / steps;
+                pts.Add(new[] { cx + e.RadiusMm * Math.Cos(t), cy + e.RadiusMm * Math.Sin(t) });
+            }
+            pts.Add(e.End);
+            return pts;
+        }
+
+        /// <summary>Vértice entre dois trechos: a interseção exata dos portadores mais perto do
+        /// ponto de transição na malha (qx, qy), ou o próprio ponto da malha se não houver
+        /// interseção ou se ela cair longe dele (com aviso).</summary>
+        private static double[] Junction(Carrier a, Carrier b, double qx, double qy, PrismaticOptions o,
+            ExtrusionFrame frame, List<string> warnings, double z0, double z1)
+        {
+            double[] v = null;
+            if (a != null && b != null) v = Intersect(a, b, qx, qy);
+            if (v != null && Dist(v[0], v[1], qx, qy) > o.VertexToleranceMm)
+            {
+                double[] vw = frame.ToWorld(v[0], v[1], (z0 + z1) / 2);
+                warnings.Add(string.Format(CultureInfo.InvariantCulture,
+                    "Faixa {5} {0:0.00}–{1:0.00}: vértice exato ({2:0.000}; {3:0.000}; {6:0.000}) a {4:0.000} mm da malha — ficou o da malha.",
+                    z0, z1, vw[0], vw[1], Dist(v[0], v[1], qx, qy), frame.AxisName, vw[2]));
+                v = null;
+            }
+            if (v == null && (a == null) != (b == null)) v = OntoCarrier(a ?? b, qx, qy);
+            return v ?? new[] { qx, qy };
+        }
+
+        /// <summary>Até onde o ponto da malha é levado à parede reconhecida, quando só um lado
+        /// da junção é parede.</summary>
+        private const double OntoCarrierMm = 0.05;
+
+        /// <summary>
+        /// O ponto levado à parede (reta ou círculo) — a junção de uma parede com um trecho
+        /// aproximado ESTÁ na parede. Ficar no ponto da malha deixava o vértice a 0,4 µm dela (a
+        /// malha do tool-organizer_v2 tem a parede de x = 20,8 em 20,8004), a reta "exata"
+        /// inclinada por isso, e uma lâmina de 0,4 µm entre a faixa e a correção que vai até a
+        /// parede exata. Longe mais que <see cref="OntoCarrierMm"/>: fica o da malha.
+        /// </summary>
+        private static double[] OntoCarrier(Carrier c, double qx, double qy)
+        {
+            double[] p;
+            if (c.IsLine)
+            {
+                double t = (qx - c.Px) * c.Dx + (qy - c.Py) * c.Dy;
+                p = new[] { c.Px + t * c.Dx, c.Py + t * c.Dy };
+            }
+            else
+            {
+                double dx = qx - c.Cx, dy = qy - c.Cy, l = Math.Sqrt(dx * dx + dy * dy);
+                if (l < 1e-12) return null;
+                p = new[] { c.Cx + dx / l * c.R, c.Cy + dy / l * c.R };
+            }
+            return Dist(p[0], p[1], qx, qy) <= OntoCarrierMm ? p : null;
         }
 
         /// <summary>
@@ -605,6 +887,42 @@ namespace AutoEDM.Reverse
             double h = Math.Sqrt(h2);
             double[] p1 = { mx - h * dy / d, my + h * dx / d }, p2 = { mx + h * dy / d, my - h * dx / d };
             return Dist(p1[0], p1[1], qx, qy) <= Dist(p2[0], p2[1], qx, qy) ? p1 : p2;
+        }
+
+        /// <summary>Douglas–Peucker: fica a primeira e a última ponta e todo ponto a mais de tol
+        /// da reta entre os que ficaram.</summary>
+        private static List<double[]> Simplify(List<double[]> pts, double tol)
+        {
+            if (tol <= 0 || pts.Count < 3) return pts;
+            var keep = new bool[pts.Count];
+            keep[0] = keep[pts.Count - 1] = true;
+            var stack = new Stack<int[]>();
+            stack.Push(new[] { 0, pts.Count - 1 });
+            while (stack.Count > 0)
+            {
+                int[] span = stack.Pop();
+                int a = span[0], b = span[1], worst = -1;
+                double far = tol;
+                for (int i = a + 1; i < b; i++)
+                {
+                    double d = SegmentDistance(pts[i], pts[a], pts[b]);
+                    if (d > far) { far = d; worst = i; }
+                }
+                if (worst < 0) continue;
+                keep[worst] = true;
+                stack.Push(new[] { a, worst });
+                stack.Push(new[] { worst, b });
+            }
+            var result = new List<double[]>();
+            for (int i = 0; i < pts.Count; i++) if (keep[i]) result.Add(pts[i]);
+            return result;
+        }
+
+        private static double SegmentDistance(double[] p, double[] a, double[] b)
+        {
+            double dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+            double t = l2 < 1e-24 ? 0 : Math.Max(0, Math.Min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
+            return Dist(a[0] + t * dx, a[1] + t * dy, p[0], p[1]);
         }
 
         private static double Dist(double ax, double ay, double bx, double by)
