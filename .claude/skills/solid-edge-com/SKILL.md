@@ -179,7 +179,7 @@ Read only the file you need; each is self-contained.
 | Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered, placing a part in an assembly | `references/modeling-recipes.md` |
 | Putting a button inside SE: add-in registration, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, modeless dialogs, in-process hosting limits, picking a face or edge from the model | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |
-| Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser (plane, cylinder, cone, torus, fillets between known faces), mesh → solid with boundary corrections, batch conversion into an assembly, verifying by deviation | `references/mesh-reverse.md` |
+| Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser (plane, cylinder, cone, torus, fillets between known faces), mesh → solid with boundary corrections, choosing the extrusion direction by forecasting the solid before building, band steps and hairline gaps, batch conversion into an assembly, verifying by deviation | `references/mesh-reverse.md` |
 
 ## The discovery loop, in order
 

@@ -74,3 +74,24 @@ that single change is the difference between one test round and three.
 `net8.0-windows` (tests, MCP server). Silence it on the reference itself —
 `<PackageReference Include="Interop.SolidEdge" Version="219.0.0" NoWarn="NU1701" />` — which also
 covers projects that get it transitively; do not blanket-suppress NU1701 project-wide.
+
+**A protrusion that adds no new material fails** (`igFeatureFailed`, empty description) — re-adding
+a region already inside the body is a failure, not a no-op. Do not read "failed" as "wrong side".
+
+**A fill whose arc ends TANGENT to existing faces is refused** (SE 226, 2026-10-12): the segment
+between an R20 arc and its chord, with the arc tangent to the top face and to a 45° ramp at its
+ends — 10 of 16 identical walls refused, `Status` = igFeatureFailed, no description. A rectangle
+at the same spot went in; nudging the arc 0.002 mm outward, trimming only the arc (vertex still at
+the tangent point) and pushing the sketch 0.05 mm back all still failed. What works: **move the
+vertex off the tangent point** — chamfer each arc–line corner by 0.05 mm (the triangle lost is
+negligible and always on the safe side). Do it as a retry after a failure, not always.
+
+**A cut whose extent ends exactly on a coplanar wall face can be refused**; the same cut extended
+0.01 mm past both faces goes in. Again: a retry variant, because overshooting into material notches it.
+
+**`Profile.End` = −103 for a closed profile that looks fine**: a zero-length line (a computed
+vertex coinciding with an arc end). Drop vertices within 0.1 µm of the previous one before drawing.
+
+**First band protrusion accepted, no body created**: `AddFiniteExtrudedProtrusion` returns the
+MODEL, and when the profile is accepted (`End` = 0) but no solid results, `Models.Count` stays 0 —
+check it before `Models.Item(1)`, or the next line throws an unrelated "index" error.

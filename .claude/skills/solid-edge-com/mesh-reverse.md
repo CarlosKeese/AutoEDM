@@ -236,3 +236,57 @@ each part, **close it**, then `Occurrences.AddByFilename(path)` into a new assem
 mesh's own coordinates, so the identity placement reproduces the original arrangement with no
 positioning at all — checked by reading the occurrences back (origin 0,0,0, rotation 0). Never
 overwrite: a taken name gets " (2)", " (3)". Six bodies + assembly took 100 s.
+
+## Choosing the extrusion direction, and forecasting before building (2026-10-11)
+
+Not every 2.5D part is 2.5D in Z (a bent U channel is 2.5D in Y; parts rotated 30° in space are
+2.5D along no world axis). Do not rewrite the section for arbitrary directions — **move the mesh
+and the recognised surfaces into a frame whose local Z is the chosen direction**, plan there, and
+send only the build back to world:
+- World axis → **cyclic permutation** of coordinates (a proper rotation, exact arithmetic: a
+  normal (0,1,0) becomes exactly (0,0,1), so every `== 0 / == 1` test in the section still works).
+- Arbitrary direction → orthonormal basis, then snap local components below 1e-5 to 0 (the
+  rotated fit carries 1e-7 noise and otherwise no wall is "vertical").
+- Sketch in any frame: CS by matrix whose rows are the local axes + `Convert3DCoordinate` from
+  world points; the derived RefPlane does not inherit the CS axes.
+
+**Forecast the solid against the mesh by points BEFORE building** (60k points in the box: inside
+the mesh vs inside bands + corrections in build order; count only disagreements farther than
+0.3 mm from the surface). It is what chooses the direction (Z unless its forecast error is above
+max(1 mm³, 0.1 % of volume); then X, Y and the normals of the 4 largest off-axis plane groups are
+ALL evaluated — stopping at the first "acceptable" one picked a side wall of a rotated V) and
+what tells the user "out of reach" (> 2 % of volume) before a 30-minute build. Ties (within
+max(1 mm³, 0.1 %)) go to fewer bands, then fewer mesh-copied segments.
+- Inside-the-mesh test: **winding**, not parity, on a column grid (ray along Z per 0.5 mm cell).
+  Real STL has **overlapping shells**; the signed-volume formula then undercounts (2 367 vs
+  2 702 mm³ measured by points) and a correct solid looks "13 % too big". SE treats overlap as
+  material — so must the forecast, and the report must quote the measured volume.
+- Make it fast: integer (Sunday) winding with a bounding box per polygon, not a sum of `atan2`.
+
+## Band steps: the error the per-surface corrections do not cover (2026-10-12)
+
+Per-surface corrections (corner between arc and tangents, segment between arc and chord, the two
+half-rectangle triangles of a ramp) only fix the band error when the band edge falls inside them.
+On a divider whose top is "45° ramp → R20 → flat" they left a material triangle above the tangent
+line, a whole ramp stair-stepped (its 5 test points all landed on the side the band already got
+right → "already agrees"), and blocks up to 3.4 mm above a finger-scoop curve made of 4 arcs.
+- **Band step region**: for each band crossing a lying cylinder (axis ⟂ extrusion) or an
+  inclined plane, the area between the arc/line and the band's REAL edge — a vertical line taken
+  from the band's own loops on the section line — split where they cross. Arcs split into pieces
+  monotonic in height first. The mesh decides add/cut as for any region.
+- Accept a step only if it leaves ≥ 0.5 mm³ **not covered** by already-accepted regions of the
+  same sign, measured on a dense grid — sparse test points said "covered" while the triangle the
+  step exists for sat just outside the corner region. The threshold matters: on a part full of
+  R0.5 rounds, 133 of 137 steps were hundredth-mm slivers.
+- Thousands of candidates × exact solid-angle winding over 65k triangles = 91 s; the column grid
+  answers "inside the mesh?" for them in microseconds.
+- A plan that needs steps is not a "clean Z": evaluate the other directions and let the tie
+  rule decide (otherwise a link went back to 27 stepped bands + 61 corrections instead of 11).
+
+**Hairline gaps and wafers.** Exact values from recognition and raw mesh coordinates differ by
+1e-5…4e-4 mm (the STL had the wall x = 20.8 at 20.8004; the arc end at 46.94215, the band level at
+46.94214). Each mismatch left a 10 nm crack or a 0.4 µm wafer in the solid — invisible in volume,
+2.3 mm in the solid → mesh deviation (the sample lands on the internal face). Cure at the source:
+step edges within 0.001 mm of a band level go TO the level (extend the arc a hair); extents along
+the extrusion snap to recognised planes (within 0.02 mm); a junction between a recognised wall and
+a mesh-copied segment is projected ONTO the wall (within 0.05 mm) instead of keeping the mesh point.
