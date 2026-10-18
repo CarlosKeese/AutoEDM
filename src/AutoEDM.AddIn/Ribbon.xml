@@ -25,6 +25,12 @@
               supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
               imageId="1" showLabel="true" />
     </group>
+    <group name="Importação">
+      <button id="29" size="large" label="Limpar importação"
+              screentip="Peças iguais vindas de outro CAD viram UMA só, sem sair do lugar (MONTAGEM)"
+              supertip="Na MONTAGEM importada de outro CAD (STEP, Parasolid): quando cada posição da mesma peça chega como um arquivo separado — 48 pinos iguais como 48 arquivos — este botão acha as peças GEOMETRICAMENTE iguais e faz todas as posições apontarem para uma cópia só. A igualdade não é adivinhada por nome nem por medida: o AutoEDM mede o encaixe vértice a vértice entre os dois corpos e só unifica quando ele fecha dentro da tolerância, mostrando o pior desvio. Peça ESPELHADA (postiço de mão esquerda e de mão direita) tem volume, área e topologia idênticos e por isso aparece identificada no relatório, mas NÃO é unificada a não ser que você marque. A posição é preservada por construção e CONFERIDA: a pose é lida de volta depois de escrita e a troca é desfeita se não bater. Opcionalmente cria também as relações de montagem óbvias — contato entre faces encostadas e eixo de pino no furo — deduzidas da posição atual, portanto sem mover nada; a peça maior fica de referência e cada relação é medida e desfeita se mover a peça. Mostra o plano inteiro antes de qualquer escrita, não apaga arquivo nenhum do disco e não salva a montagem."
+              imageId="1" showLabel="true" />
+    </group>
     <group name="Eletrodos">
       <button id="3" size="large" label="Analisar (Z)"
               screentip="Analisar eletrodos por níveis de Z"

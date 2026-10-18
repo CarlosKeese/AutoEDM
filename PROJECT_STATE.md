@@ -107,6 +107,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Nova peça (molde) | 🚧 construída (2026-09-24), coberta por teste, **aguardando validação no SE** |
 | Refrigeração (molde) | 🚧 construída (2026-09-24), plano coberto por teste, **aguardando o 1º run no SE** |
 | Grupo **Molde** (Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
+| **Limpar importação** (grupo Importação, botão id 29) | ✅ **núcleo validado no SE (2026-10-18)** por sonda externa e teste ponta a ponta em geometria real: 2 arquivos → 1 com **posição preservada em 0,0000 mm**, e as duas buchas guia Ø30/Ø32 da base de molde **corretamente NÃO unificadas**. 60 testes novos (527 no total). Dois caminhos de prova: encaixe vértice a vértice e **perfil de revolução** (peça torneada, 0 vértices). 🚧 o BOTÃO em si (as duas janelas de conferência) e a etapa de RELAÇÕES ainda não foram clicados por um humano |
 
 ## Regra de ouro
 
@@ -505,6 +506,235 @@ apagá-los, nunca salva). Confere presença de membro por introspecção **antes
 e registra o erro exato do que falha — que é o dado que ela existe para trazer.
 
 ## Histórico
+
+- **2026-10-18 (2º run real — projeto importado de verdade)** — **Três defeitos achados pelo
+  Carlos num projeto de 508 ocorrências / 138 arquivos, e os três eram diferentes do que o relato
+  sugeria.** O relato foi: "o reconhecimento funcionou muito bem, menos algumas peças iguais que
+  não foram reconhecidas; alguns parafusos ficaram invertidos; poucas relações".
+
+  **1. Peças iguais não reconhecidas — a chave de agrupamento era feita de grandeza CONTÍNUA.**
+  `Corpo do Desenho_279` e `_356` tinham a mesma caixa, a mesma topologia (50F 120A 76V), os
+  mesmos diâmetros e a mesma área — e volumes de 99 622,7357 e 99 623,2167 mm³, diferença de
+  **0,48 mm³ em 99 623, ou 4,8 PPM**. A chave grossa levava 6 dígitos significativos de volume, os
+  dois valores caíram em lados opostos do último passo, as peças foram para **baldes diferentes e
+  nunca chegaram a ser comparadas** — o crivo fino, que tolera 191 mm³ nessa peça, nunca era
+  alcançado. Pior: eu havia DOCUMENTADO esse risco no próprio código ("dois corpos no limite entre
+  dois passos cairiam em chaves diferentes") e descrito uma mitigação que não existia. **A lição:
+  chave de agrupamento não se faz de grandeza contínua** — por mais fina que seja a tolerância,
+  sempre há dois valores quase iguais em lados opostos de uma fronteira, e o erro não aparece como
+  aproximação ruim, aparece como par que nunca foi testado. A chave passou a ser só a topologia
+  (inteira, sem fronteira para cair em cima) e o volume separa no crivo fino, com tolerância.
+  **Efeito medido no mesmo projeto: de 1 grupo / 0 substituições para 31 grupos, 138 → 121
+  arquivos, 26 ocorrências.**
+
+  **2. Parafusos invertidos — os vértices são um SUBCONJUNTO do corpo.** Diagnosticado com uma
+  sonda nova (`--autoencaixe`) que encaixa cada peça CONTRA ELA MESMA: a resposta certa é a
+  identidade, e **dezenas de peças devolviam giro de 180°, 120° ou 60°**. A causa: num parafuso de
+  sextavado interno o anel de vértices do topo e o do fundo são iguais e paralelos, então virar a
+  peça troca um anel pelo outro e a **nuvem** coincide — mesmo que o parafuso, que tem haste só
+  para um lado, não coincida. E o código aceitava o **primeiro** candidato que passasse na
+  conferência de desvio, não o certo. Duas defesas: (a) entre candidatos todos válidos nos
+  vértices vence o de **MENOR GIRO** — numa importação em que a posição vem na ocorrência o
+  movimento certo entre dois arquivos iguais é a identidade, e nada gira menos que ela; (b) prova
+  do **CORPO INTEIRO** pelos anéis (`RingEvidence`), que estão espalhados pela peça e carregam
+  raio, então a cabeça do parafuso não acha par do lado da haste. **Medido depois da correção: 0 de
+  138 peças com autoencaixe ambíguo** (eram dezenas). Junto saiu uma regressão que eu mesmo
+  introduzi: a escolha pelo menor giro fazia peça muito simétrica estourar o teto de busca antes de
+  devolver qualquer candidato — agora o teto devolve o melhor já aprovado.
+
+  **3. "Peças iguais não reconhecidas" que NÃO eram iguais — 28 pares espelhados.** As duas peças
+  que o Carlos apontou (`_279` e `_356`) a ferramenta recusou como ESPELHADAS, e ele discordou. Em
+  vez de confiar no meu próprio veredito, medi com uma sonda dirigida (`--comparar`), que tenta o
+  encaixe próprio e o espelhado com tolerância crescente: **o próprio não fecha nem com 2 mm; o
+  espelhado fecha com desvio 0,0000 mm**. São mão esquerda e mão direita exatas — o CAD de origem
+  gerou uma espelhando a outra. A ferramenta estava certa; o projeto tem **28 pares** assim, e
+  olhar na tela não distingue. O que estava errado era a COMUNICAÇÃO: o aviso saía no fim de 31
+  grupos, onde ninguém lê, e por isso o acerto foi lido como falha. Agora ele vem ANTES da lista.
+
+  **Risco latente fechado de quebra:** a caixa "tratar peça espelhada como a mesma peça" prometia
+  algo que não se faz por esse caminho — o encaixe espelhado tem matriz de **determinante −1**, que
+  não é posicionamento rígido, e mandá-la para `PutMatrix` é pedir à SE uma colocação que ela não
+  faz (na melhor hipótese recusa; na pior aceita e produz corpo invertido). A caixa saiu, `Apply`
+  recusa membro espelhado explicitamente, e `Occurrence.Mirror` entrou na sonda de assinaturas para
+  uma sessão futura decidir com evidência.
+
+  **530 testes, 0 falhas.** Novos: autoencaixe tem de dar identidade; peça simétrica transladada não
+  pode inventar giro; a prova do corpo inteiro recusa movimento que só encaixa os vértices; e o par
+  279/356 reproduzido com os volumes medidos como regressão da chave de agrupamento. Dois testes
+  antigos foram CORRIGIDOS por estarem errados (um cobrava que volume diferente separasse baldes —
+  agora separa no crivo fino; outro montava o caso de espelho com um bloco retangular, que é
+  aquiral). **4. Poucas relações — a lista de peças "firmes" só crescia quando achava
+  proposta.** As ocorrências eram percorridas por TAMANHO, que nada tem a ver com quem encosta em
+  quem: a lista começava com a referência e só admitia uma peça nova quando ela já tinha gerado
+  proposta, então bastava as primeiras não tocarem a referência para nada ser proposto — e o
+  silêncio se propagava por toda a montagem. Reescrito: cada peça se relaciona a quem for **MAIOR
+  que ela e EM CONTATO com ela**. "Maior" dá a dependência acíclica de graça (a referência é a
+  maior de todas e fica aterrada; ninguém governa quem o governa) e "em contato" é o que de fato
+  decide a intenção do projeto, em vez da ordem acidental de processamento. Entrou também poda por
+  caixa envolvente, que não é só velocidade: sem ela o laço é O(n²) sobre as listas de faces
+  inteiras — com 508 ocorrências de até centenas de faces dá mais de 10⁹ comparações de par de
+  face, e a ferramenta não termina.
+
+  **Medido no projeto do Carlos: 120 relações propostas em 110 peças**, e as propostas são
+  coerentes com o que um projetista faria — contato de faces com folga 0 (`plano X = -360 mm`,
+  95 mm² contra 95 mm²), eixo de pino em furo com folga real de ajuste (`Ø28 em Ø28,2`, folga
+  0,1 mm), e contato de peça pequena sobre placa grande (7 518 mm² contra 65 567 mm²). A folga de
+  0,005 mm que aparece em alguns contatos é o ruído da geometria importada, dentro do orçamento
+  de 0,02 mm.
+
+  **Pendência de DESEMPENHO, não de correção:** a varredura das duas etapas num projeto de 508
+  ocorrências passa de 10 minutos. A causa está identificada e a correção é conhecida — a leitura
+  de faces roda uma vez por OCORRÊNCIA quando as ocorrências do mesmo ARQUIVO têm faces locais
+  idênticas (só a pose muda). Ler uma vez por arquivo e transformar por ocorrência corta as
+  chamadas COM em ~3,7× neste projeto (508 → 138), e é a mesma estratégia que a varredura de
+  repetidas já usa. Não foi feito nesta sessão porque desempenho não estava no relato.
+
+  **Próxima ação: reinstalar o add-in com a SE fechada e clicar o botão** — todas as correções
+  desta rodada estão provadas por sonda externa, mas as janelas de conferência e a CRIAÇÃO das
+  relações (com o oráculo de "não moveu nada") seguem sem run.
+
+- **2026-10-18** — **"Limpar importação": peça repetida de outro CAD vira uma cópia só, sem sair
+  do lugar.** Pedido do Carlos: ao importar um projeto de outro CAD, cada posição da mesma peça
+  chega como um ARQUIVO próprio (48 pinos iguais = 48 arquivos). Botão **id 29**, grupo novo
+  **Importação**, `GuiVersion` 21, núcleo em `src/AutoEDM.Core/Import/`.
+
+  **A igualdade não é adivinhada, é MEDIDA.** Três crivos de custo crescente, e isso é o que
+  torna viável varrer uma montagem inteira: (1) volume + contagem de faces/arestas/vértices,
+  4 leituras COM por arquivo, agrupa; (2) listas ORDENADAS de áreas de face e raios de cilindro,
+  só dentro do grupo; (3) o **encaixe rígido** vértice a vértice, só para confirmar. A caixa
+  envolvente ficou **de fora** da chave de agrupamento de propósito — caixa alinhada aos eixos
+  muda quando a peça gira num ângulo qualquer, e usá-la perderia justamente as repetições
+  giradas, que são o caso comum de importação.
+
+  **O encaixe dispensa SVD.** Os pontos são vértices correspondentes exatos, não medidas com
+  ruído: dois vetores independentes bastam para montar um triedro ortonormal por Gram-Schmidt e
+  `R = F_B · F_Aᵀ`. Exato, curto e conferível à mão. Grade espacial para o vizinho mais próximo,
+  senão cada candidato errado custaria O(n²).
+
+  **ESPELHO: o achado que mais importa.** Um postiço de mão esquerda e o de mão direita têm
+  volume, área e topologia **idênticos** — passam por todos os crivos de medida. Só o encaixe os
+  separa, por `det(R) = −1`, e por padrão eles **não** são unificados (trocar um pelo outro numa
+  cavidade é refugo); aparecem no relatório identificados como par esquerda/direita. Duas
+  armadilhas apareceram aqui: (a) o construtor de rotação, forçando `e3 = e1×e2` nos **dois**
+  triedros, só produz rotação própria e **nunca** um espelho — um par de vetores não distingue
+  reflexão de rotação, então o espelho tem de ser **pedido** invertendo o terceiro eixo, e os
+  dois são tentados e julgados pelo desvio; (b) o primeiro teste usou um **bloco retangular**, que
+  é **aquiral** — o espelho dele coincide com ele mesmo por rotação de 180°, então o teste cobrava
+  uma recusa matematicamente errada. Caso de espelho exige forma **quiral** (está escrito no
+  teste, para ninguém reintroduzir).
+
+  **A posição é preservada por construção E conferida.** A pose nova é `P · T` (pose da
+  duplicada composta com o encaixe mestra→duplicada), e a MESMA conta cobre os dois
+  comportamentos de tradutor sem ramo a escolher: geometria na origem com a posição na ocorrência
+  (T≈identidade, P trabalha) ou posição **assada** na geometria com ocorrências na identidade
+  (P=identidade, T trabalha). A varredura diz qual dos dois é o caso. Depois de escrita, a pose é
+  **lida de volta** e comparada — origem e rotação: um `PutMatrix` que gravasse a rotação
+  transposta passaria batido, e peça 180° invertida num molde é refugo. A ordem é
+  **acrescenta-confere-apaga**, nunca apaga-acrescenta: se a inserção falha, o pior caso é uma
+  ocorrência duplicada visível, não um buraco na montagem.
+
+  **Relações óbvias: o oráculo que resolve a ambiguidade do `NormalsAligned`.** A skill registra
+  que esse sinalizador **não tem significado confirmado** (duas fontes do projeto se contradizem,
+  e o re-teste de 2026-10-17 não decidiu) e que errá-lo gira a peça 180°. A saída: a montagem
+  importada **já está na posição certa**, logo *relação correta é a que resolve E não move nada*.
+  Cada relação é criada, **medida** (deslocamento da origem **e** erro de rotação) e desfeita se
+  mover; aí tenta com o sinalizador invertido; se mover das duas, é descartada e o aterro volta.
+  O sinalizador deixa de ser presumido e passa a ser **medido caso a caso** — e o resultado é
+  reportado, então o 1º run no SE também responde a pergunta que estava aberta na skill.
+  Também tratadas: só é proposta a relação que a posição atual **já satisfaz**; a peça maior fica
+  de referência e cada outra é **desaterrada** (relação entre duas aterradas o SE aceita e não
+  cumpre — `DetailedStatus = 4`); teto de relações por peça com um planar por direção, porque
+  sobra de relação é o caminho do `OverDefined` (45 relações num molde real relataram "resolvido"
+  e não governavam nada); e varredura de **relação órfã** depois de cada chamada falhada.
+
+  **Duas falhas encontradas na própria revisão, antes de qualquer run:** (1) peça espelhada era
+  descartada da fila por inteiro, então as **cópias dela entre si** nunca eram unificadas — perdia
+  a metade espelhada de um molde de duas cavidades; (2) o código usava o proxy de face guardado na
+  varredura, enquanto o comentário dizia que relia — a montagem **regenera a cada relação criada**
+  e `CreateReference` com proxy velho dá E_FAIL, então só a primeira relação teria funcionado.
+  Agora a face é reconquistada por `Face.ID` + `Body.GetFaceByFaceID`.
+
+  **O que NÃO faz, de propósito:** não apaga arquivo do disco (os órfãos vão para o relatório),
+  não salva a montagem, não entra em subconjunto, e não unifica peça com leitura de vértices
+  incompleta (acima de 4.000 vértices por corpo ela é marcada como não confirmada em vez de
+  unificada por palpite).
+
+  **`Occurrence.Replace` existe** (dispid 34, 3 parâmetros, confirmado no dump e na introspecção
+  ao vivo) e seria o caminho melhor — preserva a identidade da ocorrência, o nome e as relações
+  que a referenciam. **Não** foi usado porque o significado dos 3 parâmetros não está confirmado,
+  e a regra de ouro proíbe inventar assinatura; em vez disso a varredura registra no log a
+  assinatura real lida do objeto ao vivo, para uma sessão futura trocar o caminho com evidência.
+
+  **46 testes novos** (513 no total, 0 falhas): encaixe rígido (identidade, translação pura,
+  rotações de eixo, rotação composta em dois eixos, ruído dentro e fora da tolerância, 400
+  vértices, recusa de medida diferente/contagem diferente/poucos pontos, espelho recusado e
+  espelho liberado), a peneira (chave grossa, tolerância de arredondamento de tradutor, recusa de
+  leitura parcial), a composição de poses (a propriedade medida: a pose composta leva a geometria
+  da mestra exatamente onde a duplicada estava) e a dedução de relações (contato, coplanar
+  disjunto, folga real, face pequena, pino no furo, coaxial distante, eixos deslocados, Ø
+  diferentes, e a recusa de planos paralelos redundantes). **Próxima ação: reinstalar o add-in com
+  a SE fechada e rodar o botão na montagem importada real** — toda a geometria foi provada em
+  nuvem sintética; o que falta medir no CAD é a leitura de vértices por `Face.Vertices` em peça
+  importada de verdade e o comportamento do solver ao desaterrar.
+
+- **2026-10-18 (run real)** — **Primeiro run no SE: um acerto, um achado e uma correção.** Add-in
+  instalado em Release e a base de molde Polimold real (`Porta Molde - 3540406315B.asm`, 45
+  ocorrências, 16 arquivos) varrida por uma **sonda externa só leitura** nova
+  (`tools/ImportScanProbe`, fora do `.sln` de propósito). Ela existe porque o botão só pode ser
+  clicado por um humano e trocar o add-in exige fechar o CAD: a sonda exercita a metade que os
+  testes não alcançam — a leitura COM de verdade — com a SE aberta e sem escrever nada.
+
+  **Acerto 1 — `Occurrence.Replace` tem assinatura confirmada.** A sonda plantada na varredura
+  entregou, do objeto vivo:
+  `Replace(NewOccurrenceFileName: BSTR, ReplaceAll: bool, [opt]NewFamilyMemberName: VARIANT) -> void`
+  (dispid 34). Agora dá para trocar o apaga-e-recria por uma troca que **preserva a identidade da
+  ocorrência** (nome, relações que a referenciam, item de lista) — e o `ReplaceAll` sugere que ele
+  resolve todas as posições de uma vez. **Próximo passo natural desta ferramenta.**
+
+  **Acerto 2 — nenhum falso positivo onde era mais fácil errar.** `Bucha Guia - Tipo BG _47574_` e
+  `Bucha Guia - Tipo BG_0` têm **a mesma caixa (47x47x116), a mesma topologia (21F 21A 0V) e nomes
+  quase iguais** — e furo **Ø30 contra Ø32**. Idem nas colunas (haste Ø30 contra Ø32). É a coluna de
+  centragem de diâmetro diferente que **impede montar o molde ao contrário**. Dedup por nome, por
+  caixa ou por contagem de faces teria fundido as duas e destruído a prova de erro do molde; o
+  crivo de volume + raios de cilindro separou. O "0 grupos de repetidas" nesta montagem é a
+  resposta CERTA — ela não é um projeto importado, é uma montagem bem feita, com 4 posições por
+  arquivo.
+
+  **O achado que mudou o código — peça torneada não tem vértice.** Bucha extratora, bucha guia,
+  pino de retorno e coluna extratora vieram com **0 ou 2 vértices**: numa peça de revolução toda
+  aresta é círculo, e círculo não tem canto. O encaixe por nuvem exige 3 vértices, então ele
+  recusava justamente **as peças mais repetidas de um molde**. A ausência de vértice não é azar: é
+  a assinatura de um sólido de revolução, e aí o problema ENCOLHE — a peça não tem orientação
+  angular, só um eixo e um perfil. Novo `AxisProfileFit`: duas peças são a mesma quando os perfis
+  (posição axial, raio) coincidem, e o movimento é "alinhe os eixos", com o giro em torno do eixo
+  livre porque qualquer valor dele é correto. Espelho não é questão aqui (sólido de revolução é
+  sempre aquiral).
+
+  **A API do caso torneado foi confirmada AO VIVO antes de escrever a implementação**, não depois:
+  `Circle.Radius` (d350), `Circle.GetCenterPoint` (d347) e `Circle.GetAxisVector` (d346)
+  responderam em **21 de 21 arestas** das duas buchas e das duas colunas, com os centros todos em
+  (0,0,z) e eixos ±Z. As duas chamadas de ponto são `[in,out] SAFEARRAY(double)` — o array tem de
+  chegar alocado. O sinal do eixo vem da orientação da aresta e **não significa nada** (a mesma
+  peça traz Ø30 com (0,0,-1) e Ø30 com (0,0,+1)), então é canonizado antes de comparar.
+
+  **Teste ponta a ponta em geometria REAL, com escrita.** Duas cópias do mesmo `.par` (= exatamente
+  o que o tradutor de STEP produz) numa montagem de RASCUNHO nova, uma delas girada 90 graus em Y:
+  2 arquivos -> 1, prova pelo **perfil de revolução**, desvio 0,0000 mm, e a conferência que importa
+  — a **caixa envolvente de cada ocorrência em coordenadas da montagem, antes e depois** — bateu em
+  **0,0000 mm**. O teste NEGATIVO com as duas buchas diferentes (Ø30 x Ø32) na mesma montagem não
+  unificou nada, como tem de ser. Nada do Carlos foi tocado: pasta temporária própria, documento
+  novo, fechado sem salvar.
+
+  **Detalhe operacional registrado:** a SE marca a montagem como `Dirty = True` só por abrir e
+  regenerar as ocorrências, sem edição nenhuma — então "modificado" ao fechar não significa que a
+  ferramenta escreveu. E `CloseMainWindow()` não fecha a SE; o caminho que funciona é
+  `Document.Close(false)` + `Application.Quit()` por COM.
+
+  **527 testes, 0 falhas** (eram 467 no início do dia): +14 do caminho torneado, com o caso das duas
+  buchas Ø30/Ø32 reproduzido com os números medidos como teste de regressão. **Próxima ação: clicar
+  o botão** (as duas janelas de conferência nunca foram exercitadas por um humano) e rodar a etapa
+  de RELAÇÕES, que é a única metade ainda sem run — de preferência num projeto realmente importado
+  de outro CAD, já que a base Polimold não tem repetidas para unificar.
 
 - **2026-10-12** — **tool-organizer_v2: erros de construção da malha → sólido corrigidos.** O botão
   dava 10 de 68 correções recusadas (todas "+ raio R20 eixo X", enchimento do raio no topo das 16

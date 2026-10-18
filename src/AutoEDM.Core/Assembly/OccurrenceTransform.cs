@@ -155,6 +155,61 @@ namespace AutoEDM.Assembly
             new OccurrenceTransform((double[])_r.Clone(), new[] { xM, yM, zM }, Layout, LayoutEvidence);
 
         /// <summary>
+        /// Esta pose aplicada DEPOIS de um movimento rígido interno: o resultado leva um ponto
+        /// pelo movimento de dentro e só então pela pose desta ocorrência.
+        ///
+        /// POR QUE ISTO EXISTE. É a conta que preserva a posição ao trocar uma peça repetida por
+        /// uma cópia da peça-mestra (ver <see cref="AutoEDM.Import.AssemblyUnifier"/>). Chamando
+        /// P a pose da ocorrência duplicada e T o encaixe que leva a geometria da MESTRA sobre a
+        /// geometria da DUPLICADA (ambas em coordenadas locais da própria peça), a ocorrência
+        /// nova — que aponta para o arquivo da mestra — tem de receber <c>P · T</c>: um ponto p
+        /// da mestra vai para T(p) no espaço da duplicada, e de lá para P(T(p)) na montagem,
+        /// que é exatamente onde a geometria duplicada estava.
+        ///
+        /// Os dois casos reais de importação caem na MESMA conta, e é por isso que ela é feita
+        /// assim em vez de por casos: quando o tradutor põe cada peça na origem e carrega a
+        /// posição na ocorrência, T é quase a identidade e P faz o trabalho; quando ele assa a
+        /// posição dentro da geometria e deixa toda ocorrência na identidade, P é a identidade e
+        /// T faz o trabalho. Não há ramo a escolher — e portanto não há ramo a errar.
+        /// </summary>
+        /// <param name="innerR">Rotação do movimento interno, linha-a-linha (convenção de
+        /// <see cref="RigidFit"/>, a mesma desta classe).</param>
+        /// <param name="innerTM">Translação do movimento interno, em METROS.</param>
+        public OccurrenceTransform ComposedWith(double[] innerR, double[] innerTM)
+        {
+            if (innerR == null || innerR.Length != 9) throw new ArgumentException("rotação interna precisa de 9 valores.", nameof(innerR));
+            if (innerTM == null || innerTM.Length != 3) throw new ArgumentException("translação interna precisa de 3 valores.", nameof(innerTM));
+
+            // R = R_externa · R_interna
+            var r = new double[9];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                {
+                    double s = 0;
+                    for (int k = 0; k < 3; k++) s += _r[i * 3 + k] * innerR[k * 3 + j];
+                    r[i * 3 + j] = s;
+                }
+
+            // t = R_externa · t_interna + t_externa
+            var t = new double[3];
+            for (int i = 0; i < 3; i++)
+                t[i] = _r[i * 3] * innerTM[0] + _r[i * 3 + 1] * innerTM[1] + _r[i * 3 + 2] * innerTM[2] + _t[i];
+
+            return new OccurrenceTransform(r, t, Layout, LayoutEvidence);
+        }
+
+        /// <summary>
+        /// A pose IDENTIDADE, no layout pedido. Serve de pose da ocorrência quando a montagem
+        /// importada deixou todas na identidade e a posição está assada na geometria.
+        /// </summary>
+        public static OccurrenceTransform Identity(MatrixLayout layout = MatrixLayout.TranslationLast) =>
+            new OccurrenceTransform(
+                new double[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 },
+                new double[] { 0, 0, 0 },
+                layout,
+                "identidade construída, não lida do Solid Edge");
+
+        /// <summary>
         /// Interpreta os 16 doubles do <c>GetMatrix</c>.
         ///
         /// <paramref name="knownOriginM"/> é a origem lida por <c>GetTransform</c> — que já é

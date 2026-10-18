@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 20; // incrementar ao mudar a ribbon (v20 = "Malha → sólido" em lote e com montagem)
+            AddInEx.GuiVersion = 21; // incrementar ao mudar a ribbon (v21 = grupo "Importação" + "Limpar importação")
 
             Current = this;
             App = application;

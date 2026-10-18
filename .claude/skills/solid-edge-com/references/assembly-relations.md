@@ -98,6 +98,50 @@ To settle it, test with **two parallel faces** and a known expected outcome, and
 hypothesis (it came from a real assembly where a plate visibly flipped), and **verify the
 flag empirically in your own case** rather than trusting either line.
 
+## Settling Trap 2 without settling it: the position-preserving oracle
+
+*(AutoEDM, 2026-10-18 — design confirmed by construction and unit tests; the live run in SE is
+still pending, so what is claimed here is the method, not a measurement.)*
+
+When the assembly is **already in the correct position** — an import from another CAD, or any
+model you are adding relations to after the fact — you do not need to know what
+`NormalsAligned` means. The geometry gives you an oracle:
+
+> A correct relation is one that **solves AND moves nothing.**
+
+So instead of choosing the flag, **measure it**:
+
+```
+snapshot the pose (GetMatrix) of every occurrence that can move
+for flag in [true, false]:
+    countBefore = Relations3d.Count
+    rel = AddPlanar(...) / AddAxial(...)   // may throw
+    if rel == null: delete anything above countBefore (Trap 4); try next flag
+    if DetailedStatus == Solved and occ.Status != OverDefined and nothing moved:
+        keep it — and RECORD which flag worked
+    else:
+        rel.Delete(); delete anything above countBefore; try next flag
+discard the relation and restore the ground if both flags move the part
+```
+
+Three details that matter:
+
+- **Measure rotation, not just origin.** A 180° flip about the centre of a symmetric plate
+  barely moves the origin — and that flip is exactly the damage a wrong flag does. Compare the
+  rotation matrix element-wise too, and scale the worst component difference by a part-sized
+  lever arm before comparing against a linear tolerance.
+- **Only the un-grounded occurrences can move,** so only those need re-reading each attempt.
+  Re-reading every occurrence costs one COM round-trip per part per attempt.
+- **Re-acquire the faces by `Face.ID`** (`Body.GetFaceByFaceID`, dispid 514) immediately before
+  each `CreateReference`. The assembly regenerates when a relation is created, so a face proxy
+  captured during an earlier scan is stale by the second relation — this is Trap 5 arriving on
+  schedule rather than by accident. Caching the proxy makes only the first relation work.
+
+This does not tell you what the flag *means*, and it is not a substitute for the parallel-face
+experiment the trap asks for. What it does is make the ambiguity **harmless** in the one case
+where relations are being inferred rather than authored — and, as a side effect, every run
+reports which flag won, which is the data that would settle the trap.
+
 ## Trap 3 — `ConstrainingPoint1/2` ⚠️ CORRECTED
 
 **Field claim:** passing `(0,0,0)` for every relation left plates `OverDefined`

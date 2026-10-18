@@ -6,6 +6,7 @@ using AutoEDM.Com;
 using AutoEDM.Config;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
+using AutoEDM.Import;
 using AutoEDM.Mcp;
 using AutoEDM.Model;
 using AutoEDM.Mold;
@@ -52,6 +53,7 @@ namespace AutoEDM.AddIn
         private const int CmdNovaPeca = 26;         // MOLDE: peça vazia codificada (.100/.200/.300) na origem das faces escolhidas
         private const int CmdRefrigeracao = 27;     // MOLDE: canais de refrigeração a partir das linhas do esboço 3D (PEÇA ordenada)
         private const int CmdMalhaParaSolido = 28;  // ENG. REVERSA: malha → sólido pela rota prismática (cria PEÇA NOVA) — era 26 até a fusão com o grupo Molde
+        private const int CmdLimparImportacao = 29; // IMPORTAÇÃO: peças geometricamente iguais -> uma cópia só, e relações óbvias
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -99,10 +101,264 @@ namespace AutoEDM.AddIn
                 case CmdMcpSomenteLeitura: McpDefinirModo(BridgeMode.ReadOnly); break;
                 case CmdSondaMalha: SondarMalha(); break;
                 case CmdMalhaParaSolido: MalhaParaSolido(); break;
+                case CmdLimparImportacao: LimparImportacao(); break;
             }
         }
 
         // -------------------------------------------------------------- comandos
+
+        /// <summary>
+        /// LIMPAR IMPORTAÇÃO. Um projeto vindo de outro CAD traz cada posição da mesma peça como
+        /// um ARQUIVO diferente: 48 pinos iguais chegam como 48 arquivos. Este botão acha as
+        /// peças geometricamente iguais, faz todas as posições apontarem para UMA cópia e, se
+        /// pedido, cria as relações de montagem óbvias — sem mover nada de lugar.
+        ///
+        /// SÃO DUAS CONFERÊNCIAS, e de propósito. A varredura das repetidas é só leitura e vira
+        /// a primeira janela; as relações só podem ser deduzidas DEPOIS da unificação (ela troca
+        /// as ocorrências), então elas têm a sua própria janela. Cada confirmação trata de uma
+        /// coisa só — misturar as duas obrigaria o usuário a aprovar no escuro a metade que
+        /// ainda não foi calculada.
+        /// </summary>
+        private void LimparImportacao()
+        {
+            Run(CmdLimparImportacao, (connector, doc, p) =>
+            {
+                const string title = "AutoEDM — Limpar importação";
+
+                ImportCleanupChoice choice = PickImportCleanup(title);
+                if (choice == null) return;
+
+                // --- fase 1: peças repetidas (varredura só leitura, depois a troca)
+                UnifyResult applied = null;
+                if (choice.Unify)
+                {
+                    UnifyScan scan = AssemblyUnifier.Scan((object)doc, choice.ToleranceMm, choice.AllowMirror);
+                    if (!scan.Ok)
+                    {
+                        MessageBox.Show("A varredura não concluiu: " + scan.Error, title,
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    Log.Info(scan.Summary());
+                    if (scan.Groups.Count == 0 || scan.OccurrencesToReplace == 0)
+                    {
+                        MessageBox.Show(scan.Summary() + "\nNada foi alterado.", title,
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        if (!choice.Relations) return;
+                    }
+                    else
+                    {
+                        string ask = scan.Summary() +
+                            "\nCada ocorrência das peças dispensadas será trocada por uma ocorrência da " +
+                            "peça-mestra, NA MESMA POSIÇÃO — a posição é lida de volta e conferida depois de " +
+                            "escrita, e a troca é desfeita se não bater.\n\n" +
+                            "Nenhum arquivo é apagado do disco e a montagem NÃO é salva automaticamente.\n\n" +
+                            "Aplicar?";
+                        if (!ShowReport(title + " — peças repetidas", ask, "Aplicar")) return;
+
+                        applied = AssemblyUnifier.Apply((object)doc, scan, choice.ToleranceMm);
+                        Log.Info(applied.Summary());
+                        if (applied.OrphanedFiles.Count > 0)
+                            foreach (string f in applied.OrphanedFiles) Log.Info("[IMPORT] órfão: " + f);
+
+                        if (!choice.Relations)
+                        {
+                            MessageBox.Show(applied.Summary() + "\nConfira a montagem e SALVE se estiver certo.",
+                                title, MessageBoxButtons.OK,
+                                applied.Failed > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                            return;
+                        }
+                    }
+                }
+
+                // --- fase 2: relações óbvias (sobre a montagem JÁ unificada)
+                RelationResult proposed = RelationInferrer.Run((object)doc, dryRun: true, choice.MaxRelations);
+                string plan = string.Join(Environment.NewLine, proposed.Messages.ToArray());
+                if (proposed.Outcomes.Count == 0)
+                {
+                    string none = (applied != null ? applied.Summary() + Environment.NewLine : "") +
+                        "Nenhuma relação óbvia encontrada: o AutoEDM só propõe o que a posição ATUAL já " +
+                        "satisfaz, e apenas em faces e eixos paralelos a X, Y ou Z da montagem.";
+                    MessageBox.Show(none, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string askRel =
+                    (applied != null ? applied.Summary() + Environment.NewLine : "") + plan +
+                    Environment.NewLine +
+                    "Como isto é feito: a peça MAIOR fica de referência (segue aterrada) e cada outra é " +
+                    "DESATERRADA para que a relação de fato a governe — relação entre duas peças aterradas " +
+                    "o Solid Edge aceita e não cumpre.\n\n" +
+                    "Cada relação é criada, MEDIDA e desfeita se mover a peça: a posição importada é a " +
+                    "verdade, então relação que move é relação errada. O sinalizador de alinhamento das " +
+                    "normais é decidido assim, medindo os dois valores, em vez de presumido.\n\n" +
+                    "Criar as relações?";
+                if (!ShowReport(title + " — relações de montagem", askRel, "Criar relações")) return;
+
+                RelationResult made = RelationInferrer.Run((object)doc, dryRun: false, choice.MaxRelations);
+                string text = (applied != null ? applied.Summary() + Environment.NewLine : "") + made.Summary() +
+                              Environment.NewLine + "O detalhe de cada relação está no log.";
+                Log.Info(text);
+                MessageBox.Show(text + Environment.NewLine + "Confira a montagem e SALVE se estiver certo.",
+                    title, MessageBoxButtons.OK,
+                    made.Refused > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+            });
+        }
+
+        /// <summary>O que o usuário escolheu na janela de opções da limpeza de importação.</summary>
+        private sealed class ImportCleanupChoice
+        {
+            public bool Unify = true;
+            public bool Relations;
+            public bool AllowMirror;
+            public double ToleranceMm = AssemblyUnifier.DefaultToleranceMm;
+            public int MaxRelations = 3;
+        }
+
+        private static ImportCleanupChoice PickImportCleanup(string title)
+        {
+            using (var form = new Form())
+            using (var head = new Label())
+            using (var unify = new CheckBox())
+            using (var mirror = new CheckBox())
+            using (var relations = new CheckBox())
+            using (var tolLabel = new Label())
+            using (var tol = new TextBox())
+            using (var maxLabel = new Label())
+            using (var max = new NumericUpDown())
+            using (var note = new Label())
+            using (var ok = new Button())
+            using (var cancel = new Button())
+            {
+                form.Text = title;
+                form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                form.StartPosition = FormStartPosition.CenterScreen;
+                form.MinimizeBox = form.MaximizeBox = false;
+                form.ClientSize = new System.Drawing.Size(560, 330);
+
+                head.Text = "Projeto importado de outro CAD traz cada posição da mesma peça como um arquivo " +
+                            "separado. Esta limpeza faz todas as posições apontarem para uma cópia só, sem " +
+                            "mudar nada de lugar.";
+                head.SetBounds(12, 10, 536, 48);
+
+                unify.Text = "Unificar as peças geometricamente iguais (mantém 1 arquivo por peça)";
+                unify.Checked = true;
+                unify.SetBounds(12, 64, 536, 22);
+
+                // A caixa de "tratar espelhada como igual" SAIU (2026-10-18). Ela prometia algo
+                // que não se faz por este caminho: o encaixe espelhado tem matriz de
+                // determinante -1, que não é posicionamento rígido, e PutMatrix não coloca peça
+                // assim. Pior, era um convite a unificar mão esquerda com mão direita. Peça
+                // espelhada agora é sempre REPORTADA e nunca unificada.
+                mirror.Text = "";
+                mirror.Visible = false;
+                mirror.SetBounds(30, 90, 0, 0);
+                note.Text = "Peça ESPELHADA (mão esquerda e mão direita) tem volume, área e topologia idênticos e " +
+                            "parece igual na tela, mas nenhum movimento rígido leva uma na outra. O AutoEDM as " +
+                            "identifica no relatório e NUNCA as unifica — trocar uma pela outra é refugo.";
+                note.SetBounds(30, 90, 518, 48);
+                note.ForeColor = System.Drawing.SystemColors.GrayText;
+
+                tolLabel.Text = "Tolerância de \"mesma geometria\" (mm):";
+                tolLabel.SetBounds(30, 146, 240, 22);
+                tol.SetBounds(274, 144, 70, 24);
+                tol.Text = AssemblyUnifier.DefaultToleranceMm.ToString("0.###",
+                    System.Globalization.CultureInfo.CurrentCulture);
+
+                relations.Text = "Criar as relações de montagem óbvias (contato de faces e eixo de pino/furo)";
+                relations.SetBounds(12, 198, 536, 22);
+
+                maxLabel.Text = "No máximo, relações por peça:";
+                maxLabel.SetBounds(30, 226, 200, 22);
+                max.SetBounds(234, 224, 60, 24);
+                max.Minimum = 1; max.Maximum = 6; max.Value = 3;
+                maxLabel.Enabled = max.Enabled = false;
+                relations.CheckedChanged += (s, e) => maxLabel.Enabled = max.Enabled = relations.Checked;
+                unify.CheckedChanged += (s, e) => note.Enabled = tol.Enabled = tolLabel.Enabled = unify.Checked;
+
+                ok.Text = "Continuar"; ok.DialogResult = DialogResult.OK; ok.SetBounds(378, 292, 85, 26);
+                cancel.Text = "Cancelar"; cancel.DialogResult = DialogResult.Cancel; cancel.SetBounds(469, 292, 79, 26);
+
+                form.Controls.AddRange(new Control[]
+                    { head, unify, mirror, note, tolLabel, tol, relations, maxLabel, max, ok, cancel });
+                form.AcceptButton = ok;
+                form.CancelButton = cancel;
+
+                if (form.ShowDialog() != DialogResult.OK) return null;
+                if (!unify.Checked && !relations.Checked)
+                {
+                    MessageBox.Show("Marque pelo menos uma das duas etapas.", title,
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return null;
+                }
+
+                double t;
+                if (!double.TryParse(tol.Text.Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.CurrentCulture, out t) || t <= 0 || t > 1.0)
+                {
+                    MessageBox.Show("A tolerância tem de ser um número entre 0 e 1 mm. " +
+                                    "O padrão (0,01 mm) cobre o arredondamento de tradutor de STEP sem " +
+                                    "confundir duas peças de medidas vizinhas.",
+                        title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return null;
+                }
+
+                return new ImportCleanupChoice
+                {
+                    Unify = unify.Checked,
+                    Relations = relations.Checked,
+                    AllowMirror = false,   // ver a nota acima: espelho é reportado, nunca unificado
+                    ToleranceMm = t,
+                    MaxRelations = (int)max.Value
+                };
+            }
+        }
+
+        /// <summary>
+        /// Mostra um relatório longo em caixa rolável, com um botão que confirma e outro que
+        /// desiste. Um <c>MessageBox</c> não serve aqui: o plano de unificação tem uma linha por
+        /// peça repetida e passa fácil da altura da tela, e um texto cortado faz o usuário
+        /// aprovar o que não leu.
+        /// </summary>
+        private static bool ShowReport(string title, string text, string applyCaption)
+        {
+            using (var form = new Form())
+            using (var box = new TextBox())
+            using (var ok = new Button())
+            using (var cancel = new Button())
+            {
+                form.Text = title;
+                form.StartPosition = FormStartPosition.CenterScreen;
+                form.ClientSize = new System.Drawing.Size(700, 520);
+                form.MinimumSize = new System.Drawing.Size(500, 320);
+
+                box.Multiline = true;
+                box.ReadOnly = true;
+                box.ScrollBars = ScrollBars.Vertical;
+                box.WordWrap = true;
+                box.Font = new System.Drawing.Font("Consolas", 9f);
+                box.Text = text.Replace("\n", Environment.NewLine);
+                box.SetBounds(12, 12, 676, 456);
+                box.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+                box.Select(0, 0);
+
+                ok.Text = applyCaption;
+                ok.DialogResult = DialogResult.OK;
+                ok.SetBounds(480, 480, 120, 28);
+                ok.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+
+                cancel.Text = "Cancelar";
+                cancel.DialogResult = DialogResult.Cancel;
+                cancel.SetBounds(608, 480, 80, 28);
+                cancel.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+
+                form.Controls.AddRange(new Control[] { box, ok, cancel });
+                form.AcceptButton = ok;
+                form.CancelButton = cancel;
+                return form.ShowDialog() == DialogResult.OK;
+            }
+        }
 
         /// <summary>Analisa (NÃO-destrutivo) e propõe os eletrodos por nível de Z.</summary>
         private void AnalisarZ()
@@ -1310,6 +1566,10 @@ namespace AutoEDM.AddIn
                 { CmdListaCorte,          new CommandSpec("LISTA DE CORTE (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdListaModificacoes,   new CommandSpec("LISTA DE MODIFICAÇÕES (folha de revisões)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdSpecSheet,           new CommandSpec("FICHA DE ELETRODOS (spec-sheet)",      DocKind.Assembly, ModelingEnv.Any) },
+                // Limpeza de importação: trabalha nas OCORRÊNCIAS da montagem (substitui e
+                // relaciona). Não cria recurso de peça nenhum, então o ambiente de modelagem
+                // das peças não entra na conta.
+                { CmdLimparImportacao,    new CommandSpec("LIMPAR IMPORTAÇÃO (peças repetidas)",  DocKind.Assembly, ModelingEnv.Any) },
 
                 // --- peça: cada botão tem UM ambiente, o do recurso que ele cria ---
                 // Bloco + faixa + furos: extrusão e furação da família síncrona (BlankModeler),
