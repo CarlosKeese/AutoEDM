@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Automação do SE 2026 é x64 puro: um build x86 não conecta. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>LiveProbe</AssemblyName>
+    <RootNamespace>SeApiRecon.Probe</RootNamespace>
+    <!-- Late binding por `dynamic` sobre IDispatch. -->
+    <EnableDynamicLoading>false</EnableDynamicLoading>
+  </PropertyGroup>
+
+</Project>
