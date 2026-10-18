@@ -1,171 +1,169 @@
 ---
 name: solid-edge-com
 description: >
-  Automate Solid Edge (2023/2026) from C#/.NET through COM when the SDK and type
-  libraries are NOT installed — discover the API at runtime by introspection instead
-  of guessing signatures from memory. Use this skill for ANY Solid Edge automation
-  task: reading faces, colors, geometry or occurrence transforms; creating parts and
-  features (extrude, holes, threaded holes, surfaces, booleans, surface-to-solid);
-  reading facet/mesh bodies and reverse-engineering a scanned mesh back into surfaces;
-  editing in the context of an assembly; building ribbon add-ins; or debugging COM
-  errors such as RPC_E_CALL_REJECTED, RPC_E_DISCONNECTED, DISP_E_TYPEMISMATCH,
-  E_NOINTERFACE, RuntimeBinder failures and out-parameter marshaling. Trigger it
-  whenever "Solid Edge", SolidEdgeFramework/SolidEdgePart/SolidEdgeGeometry/
-  SolidEdgeAssembly, EDM electrode automation, or COM automation of a CAD system come
-  up — even if the user never mentions the SDK, and even if the request looks like a
-  plain C# question.
+  Automate Solid Edge (2023/2026) from C#/.NET through COM — discover the API from the
+  machine's own type libraries instead of guessing signatures from memory. Use this skill
+  for ANY Solid Edge automation task: reading faces, colors, geometry or occurrence
+  transforms; creating parts and features (extrude, holes, threaded holes, surfaces,
+  booleans, surface-to-solid); reading facet/mesh bodies and reverse-engineering a scanned
+  mesh back into surfaces; placing parts and creating assembly relations that really
+  govern them; editing in the context of an assembly; file properties; events; building
+  ribbon add-ins (including .NET 10 via comhost); and debugging COM errors such as
+  RPC_E_CALL_REJECTED, RPC_E_DISCONNECTED, DISP_E_TYPEMISMATCH, E_INVALIDARG,
+  E_NOINTERFACE, RuntimeBinder failures, out-parameter marshaling, hangs on connect, and
+  calls that silently hit the wrong Solid Edge instance. Trigger it whenever "Solid Edge",
+  SolidEdgeFramework/SolidEdgePart/SolidEdgeGeometry/SolidEdgeAssembly, EDM electrode
+  automation, or COM automation of a CAD system come up — even if the user never mentions
+  the SDK, and even if the request looks like a plain C# question.
 ---
 
-# Solid Edge COM automation (no SDK on the machine)
-
-The Siemens SE SDK docs require a login and the type libraries are not downloadable.
-But SE registers its COM type libraries locally, so the API is fully discoverable at
-runtime.
+# Solid Edge COM automation
 
 **The one rule this skill exists to enforce: never guess a signature from memory.**
-Every wrong guess costs a full round-trip through a human who has to run the code
-inside a licensed SE. Introspect first, then call.
+A wrong guess costs a round-trip through a licensed Solid Edge, and the failure modes are
+often *silent wrong results* rather than exceptions. Introspect first, then call.
 
-## Working assumptions
+## What is actually on the machine
 
-This skill was written against a real project (AutoEDM: a C# add-in + external GUI
-that builds EDM electrodes). Names like `ComDiagnostics.DumpTypeLibraries`,
-`ModelingProbe`, `SurfaceBlockBuilder` and paths under `%LOCALAPPDATA%\AutoEDM\logs`
-refer to that project's helpers. **Treat them as a reference implementation, not a
-dependency** — if the current project has no equivalent, build the same three tools
-(typelib dumper, live-object dumper, action recorder), because everything downstream
-assumes they exist. `references/discovery.md` describes what each one must do.
+The Siemens SDK docs need a WebKey login and the `SESDK.chm` is usually absent. That does
+**not** mean the API is undiscoverable — the opposite:
 
-## Non-negotiable constraints (predict these errors before they happen)
+- **Type libraries are installed.** 33 `.tlb` in the SE `Program` folder, plus **11 more
+  embedded** in `.dll`/`.exe`/`.ocx`/`.dcx` (so a `*.tlb`-only sweep misses `PropAuto.dll`,
+  `SEScreenCapture.dll`, `autosketch.dll`, `basic.dcx`, and `SECatiaV5Trans.exe`, which has
+  no `.tlb` at all). Readable with `LoadTypeLibEx` + `REGKIND_NONE` — no license, no
+  running SE, nothing registered.
+- **Managed interop assemblies ship WITH the install.** 13 × `interop.SolidEdge*Lib.dll`
+  in `Program`, versioned to the exact build (e.g. `226.0.0.106`). You do **not** need
+  `tlbimp` (often absent) and you should **not** use the community NuGet `Interop.SolidEdge`,
+  which lags the installed build by years.
+- **Early binding therefore works**, including on **.NET 10** — see
+  `references/inventory-and-binding.md`. Late binding with `dynamic` remains the default
+  for portability, but "I can't reference the types" is no longer true.
 
-- **Lengths are METERS** in the geometry/modeling API. 20 mm = `0.020`. Convert
-  ranges ×1000 for mm. **Angles have no single rule** — `Occurrence.GetTransform`
-  returns radians, but `HoleData.BottomAngle`/`CountersinkAngle`/chamfer angles are
-  **degrees** (`118`, not `2.06`), while `HoleData.ThreadTaperAngle` is radians in
-  the same object. Check the property, never the object.
-- **Collections are 1-based** (`.Item(1)`, `.Count`).
-- **x64 only** — SE 2023/2026 are 64-bit; a 32-bit build won't connect.
-- **STA thread required** — run automation on `[STAThread]` (a WinForms UI thread
-  is STA; a plain worker thread is not — marshal or create an STA thread).
-- **Late binding (`dynamic`)** so the code compiles without the type libraries.
-  Cast to `object` before calling your own/extension methods on a `dynamic` result
-  to force static binding.
-- **Install an OLE message filter** — SE is a busy server; without a filter, calls
-  throw `RPC_E_CALL_REJECTED (0x80010001)` or, while SE recomputes/shows a modal,
-  `RPC_E_SERVERCALL_RETRYLATER (0x8001010A)`. The filter must retry on **both**.
-  (`OleMessageFilter.Register()`.) Add a bounded retry/timeout so a modal error
-  dialog in SE doesn't hang the automation forever.
-- **Connect to the running instance** via the Running Object Table
-  (`ComInterop.GetActiveObject("SolidEdge.Application")`) — `Marshal.GetActiveObject`
-  is gone in modern .NET, so P/Invoke `ole32`/`oleaut32`.
+Measured against **SE 2026, build 226.00.08.004 x64**. Where a fact is version-specific it
+says so.
 
-These earn their own explanation because they cause silent wrong results rather than
-exceptions:
+## Golden rules
 
-- **A feature `Add` that returns without throwing may still have failed.** SE reports
-  feature failure through `.Status`, not through an HRESULT. Check
-  `feature.Status == igFeatureOK (1216476310)` after every `Add`, comparing as uint32.
-  **SE does not roll a failed feature back** — it stays in PathFinder, red. A retry
-  loop that only tests the return value for null leaves the user a trail of junk to
-  clean by hand, so `Delete()` any returned feature whose `.Status` is failed before
-  the next attempt.
-- **`[out]` parameters come back empty in late binding unless you mark them by-ref**
-  with a `ParameterModifier`. `Face.GetRange` and `Occurrence.GetTransform` both
-  return plausible all-zero values otherwise — an all-zero transform reads as "at the
-  origin", which once caused a ~23 mm mis-placement that threw no error.
-- **SAFEARRAY params need a TYPED element array** (`SolidEdgeGeometry.Face[]`,
-  `SolidEdgePart.Profile[]`, `SolidEdgeGeometry.Body[]`), never `object[]` — `object[]`
-  marshals as `SAFEARRAY(VARIANT)` and the call fails with `DISP_E_TYPEMISMATCH`.
-  **This one recurs** — it has now bitten `CopySurfaces.Add`, the extrusion calls and
-  `Sketches.CreateSectionSketches` (2026-09-18), because `object[]` is the natural thing
-  to write. Whenever the dump says `SAFEARRAY(IDispatch)*`, reach for the typed array
-  before running anything. And note what the error does *not* mean: the call never
-  reached the command, so **a marshaling failure says nothing about whether SE can do
-  the operation** — do not record it as "SE can't do X".
-- **Some ordered features are a silent no-op on a synchronous part** — they return a
-  non-null object, create nothing, and set no error. Branch on `ModelingMode`.
-- **Worse than a no-op: an ordered method on a synchronous part can SUCCEED**, creating
-  the sketch and the feature in the *other* environment — geometry the user then cannot
-  delete. So never "try the other mode" as a fallback: read `ModelingMode` (sync=1,
-  ordered=2) and call only that mode's family. If it refuses, say so and let the human
-  decide to switch the document. A fallback that dirties the user's part is not a
-  fallback.
+Each line is a failure that has actually happened. Follow the pointer for the long form.
+
+**Units and indexing**
+- **Lengths are METERS.** 20 mm = `0.020`.
+- **Angles have NO single rule** — `Occurrence.GetTransform` returns radians (π/2 measured
+  exactly); `HoleData.ThreadTaperAngle` is radians; `BottomAngle`/`CountersinkAngle`/chamfer
+  angles are degrees (`118`, not `2.06`) — **in the same object**. Check the *property*.
+- **Collections are 1-based.** And `igQueryAll` is **1**, not 0.
+
+**Process and threading**
+- **x64 only**; a 32-bit build will not connect. **STA thread required** (`[STAThread]`).
+- **Install an OLE message filter**, retrying on **both** `SERVERCALL_RETRYLATER` *and*
+  `SERVERCALL_REJECTED`, with a bounded timeout.
+- **The message filter does NOT protect you from hangs.** `GetActiveObject` has been
+  measured hanging ~28 s with **zero** filter retries, because a hang is not a rejection.
+  Give connect its own timeout on its own thread.
+- **To attach, only `GetActiveObject` works.** `Activator.CreateInstance(ProgID)` **starts a
+  SECOND, INVISIBLE instance** (`Visible == False`, no window) and everything then "works"
+  in a session the user cannot see. Never use it as a connect fallback; snapshot
+  `Process.GetProcessesByName("Edge")` before and after and abort if a PID appeared.
+  → `references/connecting.md`
+
+**Marshaling**
+- **Out-params: it depends on WHICH late binding.** `dynamic` with `ref`/`out` works and
+  needs **no** `ParameterModifier`. `Type.InvokeMember` **without** a `ParameterModifier`
+  returns **plausible all-zero values** — silently. Prefer `dynamic`.
+- **`[in,out]` needs the array to arrive ALLOCATED.** `Face.GetRange`, `Vertex.GetPointData`:
+  `ref null` → `E_INVALIDARG`. (`Occurrence.GetTransform` is `[out]` pure — not the same case.)
+- **SAFEARRAY params need a TYPED element array**, never `object[]`. With `dynamic` the
+  failure is `E_INVALIDARG` "Could not convert argument N" — the call **never reaches SE**,
+  so it says nothing about whether SE can do the operation. You can build the typed array
+  without a compile-time reference (`Array.CreateInstance` + resolve the interop from the
+  install folder).
+  → `references/com-rules.md`
+
+**Silent wrong results**
+- **A feature `Add` that doesn't throw may still have failed.** Check
+  `feature.Status == igFeatureOK (1216476310)` **as UInt32** after every `Add`. SE does
+  **not** roll a failed feature back — `Delete()` it before retrying.
+- **Then MEASURE the geometry.** Status OK is not proof: read the face back
+  (`Body.Faces[igQueryCylinder]` + `Geometry.Radius` / `GetRange`).
+- **A successful `Add` can hand back something you didn't ask for** — flat enum namespaces
+  accept any legal-somewhere value, and SE merges the user's saved dialog defaults unless
+  you pass `IgnoreSavedDefaultValues`. Note it is a **parameter**, not a property.
+- **`.Type` on a Face/Edge is TOPOLOGY, never shape.** `Face.Type` is always `igFace`;
+  the shape is `Face.Geometry.Type`, and `Face.Geometry` also carries the exact `Radius`.
+- **An enum that INDEXES is rarely the enum a property RETURNS**
+  (`FeatureTopologyQueryTypeConstants` vs `GNTTypePropertyConstants`).
+- **There is no single integer type for comparing enums.** `igFeatureOK` needs `uint`
+  (it exceeds `int.MaxValue`); `igCylinder` is **negative** as int32. Check the value first.
+- **The same enum NAME can hold DIFFERENT values in different typelibs.**
+  `ApplicationGlobalConstants` has 497 members in `constant.tlb`/`framewrk.tlb` and 24 in
+  `DesMgr.tlb`/`RevMgr.tlb`, shifted — `seApplicationGlobalOfflineMode` is 25 in one and 5
+  in the other. Wrong numbering reads or writes the **wrong global parameter, with no error**.
+  → `references/com-rules.md`
+
+**Names are not always in English**
+- **Many `BSTR` keys are LOCALIZED.** On a pt-BR install
+  `Properties.Item("Title")` → `DISP_E_BADINDEX` (it is `"Título"`) and
+  `FaceStyles.Item("Blue")` → `0x80040B50` (it is `"Azul"`). ProgIDs and property-**set**
+  names are not translated; property names, face-style names and draft sheet names are
+  (and "2D Model" stayed English — not even the translation is consistent). SE's **data
+  files** are localized too (the hole database sheet is "Rosqueado", not "Threaded").
+  Enumerate and match a list of aliases, or key off a number instead of a name.
+  → `references/localization.md`
+
+**Environment discipline**
 - **Never set `ModelingMode` on the user's document — declare the environment instead.**
-  This is the strongest form of the rule above, and it earned its place twice on the same
-  project (2026-09-08). Every command should name the one environment its features belong
-  to and *refuse* in the other; switching mid-operation breaks two ways at once:
-  1. **Orphan sketches.** `ProfileSets` only ever makes an *ordered* sketch. Feed it to a
-     *synchronous* feature and the sketch is stranded under PathFinder's "Ordered" node with
-     no owner — the UI will not delete it, so the user cannot clean their own part. A single
-     multi-item run left a pile of them.
-  2. **Dead face proxies.** Changing the mode makes SE rebuild the body, so every
-     `Face`/`Edge` read *before* the switch is a stale proxy afterwards. A command that
-     collected the user's selection, switched to ordered, then painted/offset those faces
-     failed with a bare `E_FAIL` that pointed nowhere near the real cause.
-  The two exceptions: a document **your own code just created** (a throwaway probe part),
-  and a switch the user explicitly asked for in that click.
-- **ORDERED is not ASSOCIATIVE.** An ordered feature recomputes only from the references its
-  sketch actually holds. A sketch on a base plane (or on `AddParallelByDistance` of one, at a
-  fixed number), with lines placed at absolute coordinates, holds **none** — so when the user
-  edits the synchronous body underneath (moves or resizes the hole the feature was built
-  around), the ordered feature stays behind and cuts air, or fails. Nothing errors at creation
-  time; the break only shows up at the user's next sync edit (AutoEDM O-ring grooves,
-  2026-09-21). "Put it in ordered so the sketch has an owner" (the rule above) fixes
-  *deletability*, not *associativity* — you need both. Build the sketch plane **from the
-  geometry the user picked** (`RefPlanes.AddNormalToCurve(edge, …)`, `AddParallelByTangent(…,
-  face, …)`, …) — `AddNormalToCurve` on a circular edge confirmed live 2026-09-21 — and tie sketch elements to projected model edges (`Profile.IncludeEdge` /
-  `ProjectEdge` + `Relations2d`) instead of only placing them by coordinates. When you can only
-  get the loose plane, **say so in the log**; a silent non-associative feature looks fine until
-  it doesn't. Recipe and status in `references/modeling-recipes.md` (annular grooves).
-- **Disable the command in the wrong environment, don't just fail in it.** The environment
-  check belongs in the UI, not only at the bottom of the call stack — a greyed-out button
-  teaches the constraint, an error dialog after the fact only reports it. In a ribbon add-in
-  this is `RibbonControl.Enabled` (see `references/addin-ribbon.md`); keep the click-time
-  check too, as the state can be one poll stale.
-- **A successful `Add` can hand back an object you never asked for.** Two mechanisms,
-  usually together. First, enums like `FeaturePropertyConstants` are one flat namespace
-  shared by dozens of properties, so a value that is legal *somewhere* is accepted
-  *anywhere* — pass it to the wrong property and SE substitutes something else instead
-  of erroring. Second, SE merges the user's **saved dialog defaults** into your object
-  unless you pass `IgnoreSavedDefaultValues = true`. So: **read the properties back and
-  assert the ones that matter**, and where the call produces geometry, **measure it**
-  (`Body.Faces[igQueryCylinder]` + `Face.GetRange`) instead of trusting
-  `Status == igFeatureOK`. A hole reported OK came out Ø6.0 counterdrilled where Ø5.0
-  tapped was asked for, and nothing in the API said so.
-- **`.Type` on a Face or Edge is the TOPOLOGY kind, never the shape.** `Face.Type` is
-  always `igFace`, `Edge.Type` always `igEdge`. Plane-vs-cylinder and circle-vs-line
-  live one level down, on `.Geometry.Type` — and that geometry object also carries the
-  exact `Radius`, which a bounding box cannot give you for a partial cylindrical face.
-  Comparing `Face.Type` with `igPlane` matches nothing, forever.
-- **More generally, an enum that INDEXES a collection is rarely the enum a property
-  RETURNS.** `Body.Faces[igQueryCylinder=10]` does select the cylindrical faces, but
-  `igQueryCylinder` will never appear as anyone's `.Type` — indexing uses
-  `FeatureTopologyQueryTypeConstants`, reading uses `GNTTypePropertyConstants`. Before
-  comparing any constant against a property, confirm in the dump that the property's
-  own type is that enum.
-- **Ask an object where it is; don't deduce it from how you built it.** A profile knows
-  its own plane (`Convert2DCoordinate` at `(0,0)`, `(1,0)`, `(0,1)` gives origin plus
-  two in-plane vectors, hence the normal), so sketch geometry can be placed from real 3D
-  part coordinates and a `NormalSide` guess can be checked rather than assumed. The same
-  move works elsewhere: a full circular edge's `GetRange` box is degenerate along the
-  circle's normal, which hands you the axis and centre in one read (take the exact radius
-  from `.Geometry`, not from the box). Most sign and axis bugs
-  in sketch-driven modeling come from reasoning about construction history instead of
-  querying the result.
+  Switching creates orphan sketches the user cannot delete, and kills every face proxy read
+  before the switch. Exceptions: a document your own code just created, and a switch the
+  user asked for in that click. A new `PartDocument` is **synchronous** (`ModelingMode == 1`).
+- **ORDERED is not ASSOCIATIVE.** Build the sketch plane from the geometry the user picked,
+  and tie elements to projected model edges — otherwise the feature cuts air at the user's
+  next sync edit, with no error at creation time.
+- **Disable the command in the wrong environment, don't just fail in it.** A greyed-out
+  button teaches the constraint; an error dialog after the click only reports it.
+- **A closed profile's ORIENTATION decides what `igLeft`/`igRight` means.** Circles come out
+  counter-clockwise so hole cuts "just work" and hide the rule; a triangle drawn the other
+  way removed 17 700 mm³ instead of 1 060. Measure the loop's signed area in sketch
+  coordinates and reverse if negative.
+  → `references/modeling-recipes.md`
 
-- **A closed profile's ORIENTATION decides what `igLeft`/`igRight` means.** Extruded cut or
-  protrusion with `ProfileSide = igLeft` removes/adds the side to the LEFT of the drawing
-  direction — the inside for a counter-clockwise loop, the OUTSIDE for a clockwise one. Circles
-  come out counter-clockwise, so hole cuts "just work" and hide the rule; a triangle drawn the
-  other way took 17 700 mm³ instead of 1 060. Measure the signed area of the loop **in sketch
-  coordinates** (read back with `Convert3DCoordinate`, the sketch can be mirrored relative to your
-  own frame) and reverse it if negative.
-- **SE's own data files are in the INSTALL language.** The hole database
-  (`Preferences\Holes\<standard>.xlsx`) of a Portuguese install has the sheet "Rosqueado", not
-  "Threaded", headers "Subtipo / Tamanho / Diâmetro de Macho", and sub-types "Rosca de Tubo
-  Reta/Cônica". A reader that only knows the English names silently finds nothing. Match names in
-  every language you ship for, and pass the raw string back to the API — it is what `AddEx`
-  matches against.
+## The discovery loop, in order
+
+1. **Build the inventory once, from the machine.** Read every type library — the loose
+   `.tlb` **and** the embedded ones — via `ITypeLib`/`ITypeInfo` with `REGKIND_NONE`, and
+   emit parameter **types and direction** (`[in]`/`[out]`/`[in,out]`/`[opt]`/`[retval]`/
+   `[lcid]`), DISPIDs, vtable offsets, defaults and enum **values**. Direction is what
+   predicts marshaling errors; a missing `[opt]` is what predicts `DISP_E_PARAMNOTOPTIONAL`.
+   `scripts/ApiDump` does this. The result is tens of megabytes — **never load it whole**.
+2. **Query the inventory before proposing any call.** `scripts/apiq.mjs` answers by type,
+   member, exact signature, enum, reverse value lookup, events and out-params:
+   ```
+   node scripts/apiq.mjs sig "Face.GetRange"
+   node scripts/apiq.mjs value 1216476310
+   node scripts/apiq.mjs members HoleData | grep -i diameter
+   ```
+   The answer is usually already there. A member you "remember" that the inventory doesn't
+   list does not exist.
+3. **Read the install's DATA tables for any string argument.** The typelib gives the *shape*
+   of a call and never the magic strings an `[in] BSTR` accepts — hole standards, thread
+   descriptions, materials, fits. They live under `Preferences\` in the install, readable
+   without a license and without running SE, and they are **in the install language**.
+   Reading the table also reveals what SE *cannot* do.
+4. **Confirm the member exists on the LIVE object before building on it.** Static metadata
+   finds types the running object may not implement. Ask the object: `IDispatch` →
+   `GetTypeInfo(0)` → `ITypeInfo` gives the real interface name and member list.
+   On the shipped interops static and live agree closely (46 294 members cross-checked,
+   zero arity divergence); on the **community NuGet** they do not — that package is the
+   one that imports a `SurfaceByBoundaries.Add` argument as `out` where the typelib says
+   `[in,out]`. Where sources differ, the live object wins.
+5. **When the API is unclear, have the human do it by hand and watch.** Dump the selected
+   feature (SPY) or diff collection snapshots around the manual action (recorder). One
+   round instead of ten.
+6. **Watch for the void-returning trap in step 5.** Not every visible action creates a tree
+   feature; some apply geometry with no record, so the recorder reports "nothing changed"
+   on a real success. The tell is an *existing* item migrating between collections rather
+   than a new name appearing.
 
 ## Where to look next
 
@@ -173,83 +171,56 @@ Read only the file you need; each is self-contained.
 
 | Task at hand | Read |
 |---|---|
-| Setting up discovery, dumping the typelib, building the SPY or the action recorder, reading the install's data tables for a string argument, early binding | `references/discovery.md` |
+| Connecting, message filter, hangs, hitting the wrong instance, `Visible`, `DisplayAlerts` | `references/connecting.md` |
+| The long form of the marshaling and enum rules above, with measured evidence | `references/com-rules.md` |
+| A name lookup failed, or anything involving `BSTR` keys, UI labels or SE data files | `references/localization.md` |
+| Building and querying the API inventory; early binding; the shipped interops; .NET 10 | `references/inventory-and-binding.md` |
 | A specific HRESULT, binder error, or "it succeeded but nothing happened" | `references/errors.md` |
-| A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts, **ordered-tree groups, feature↔body face IDs, document properties (the revision trap), ribbon GuiVersion cache** | `references/api-signatures.md` |
-| Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered, placing a part in an assembly | `references/modeling-recipes.md` |
-| Putting a button inside SE: add-in registration, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, modeless dialogs, in-process hosting limits, picking a face or edge from the model | `references/addin-ribbon.md` |
+| Setting up discovery, the typelib dumper, the SPY, the action recorder | `references/discovery.md` |
+| A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts, ordered-tree groups, feature↔body face IDs, document properties, ribbon GuiVersion cache | `references/api-signatures.md` |
+| Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered | `references/modeling-recipes.md` |
+| Placing parts, ground/contact/flush/axial relations, and why relations say "solved" and govern nothing | `references/assembly-relations.md` |
+| Draft sheets and sections (a new draft has **6** sheets, not 1), file properties, events and the message pump | `references/draft-properties-events.md` |
+| Putting a button inside SE: add-in registration, the two interfaces people confuse, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, .NET 10 comhost, modeless dialogs, picking a face or edge | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |
-| Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser (plane, cylinder, cone, torus, fillets between known faces), mesh → solid with boundary corrections, choosing the extrusion direction by forecasting the solid before building, band steps and hairline gaps, batch conversion into an assembly, verifying by deviation | `references/mesh-reverse.md` |
+| Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser, mesh → solid with boundary corrections, choosing the extrusion direction, band steps and hairline gaps, batch conversion, verifying by deviation | `references/mesh-reverse.md` |
 
-## The discovery loop, in order
+## Working loop when a human runs SE for you
 
-1. **Dump the type library once** (`ITypeInfo` → `GetContainingTypeLib` → `ITypeLib`),
-   seeding one live object per module so all four typelibs get covered. Emit parameter
-   **types and direction** (`[out]`, `[in,out]`, `[opt]`) plus enum **values** — types
-   are what predict marshaling errors, and a missing `[opt]` marker is what predicts
-   `DISP_E_PARAMNOTOPTIONAL`. Grep the output; never load it wholesale into context.
-2. **Grep the dump before proposing any call.** The answer is usually already there.
-3. **Read the install's DATA tables for any string argument.** The typelib gives the
-   *shape* of a call and never the magic strings an `[in] BSTR` accepts — hole
-   standards, thread descriptions, materials, fits. Those live in files under
-   `Preferences\` in the SE install, readable **without a license and without running
-   SE**, so they cost no human round-trip at all. Locate them via
-   `Application.GetGlobalParameter` rather than hardcoding. Reading the table also
-   reveals what SE *cannot* do: the legacy `HOLES.TXT` has no pitch column, so nothing
-   needing a pitch can be driven from it.
-4. **Confirm the member exists on the LIVE object** before building on it. Reflecting
-   `Interop.SolidEdge` finds interop *types* that the running Model may not implement,
-   and can disagree with the dump on **parameter direction** — it imports one
-   `SurfaceByBoundaries.Add` argument as `out` where the live dump says `[in,out]`,
-   which would drop your data on the way in. The interop package is older than the SE
-   build; where they differ, the dump wins. Reflection gives you signatures and enum
-   values; the live IDispatch decides what is actually callable.
-5. **When the API is unclear, have the human do it by hand and watch.** Dump the
-   selected feature (SPY) or diff collection snapshots around the manual action
-   (recorder). This reverse-engineers the exact call in one round instead of ten.
-6. **Watch for the void-returning trap in step 5.** Not every visible modeling action
-   creates a tree feature — some apply geometry with no record, so the recorder reports
-   "nothing changed" on a real, successful action. The signature of one of these is an
-   *existing* item migrating between collections rather than a new name appearing.
-   Don't dismiss that as noise, and don't conclude "no feature means no call" — probe
-   the owning object's member list directly.
-
-## Working loop with a human running SE
-
-The dev machine usually has no SE license, so a human runs the built app inside SE and
-sends back a log. That round-trip is the scarce resource; spend it well.
+When the dev machine has no license, a human runs the built app inside SE and sends back a
+log. That round-trip is the scarce resource; spend it well. (When SE *is* on the machine,
+steps 1, 5 and 6 still apply — they are about not corrupting the user's work.)
 
 1. **Non-destructive first.** A new probe only reads, introspects and writes a log. No
    geometry, no save, until the API is confirmed.
-2. **One question per run.** Each log should answer one specific unknown — a signature,
-   an enum value, whether a getter populates.
+2. **One question per run.** Each log answers one unknown.
 3. **Numbered logs** (`App NNN.log`) so runs are comparable.
-4. **Close the GUI before rebuilding** — a running WinExe locks the output exe.
-5. **Stamp the loaded build in the log — with the full PATH.** On startup, log
-   `assembly.Location` plus `File.GetLastWriteTime(...)` for the add-in and core DLLs.
-   The file name alone is not enough: a stale build and a fresh one look identical until
-   you can see which folder it loaded from. The first lines then prove which binary
-   actually ran, which kills the "is this even my new code?" ambiguity permanently. (For add-ins this matters doubly — see the
-   deploy-folder trap in `references/addin-ribbon.md`.)
-6. **Isolate risky operations from the working deliverable.** A feature that fails
-   mid-op can poison the document proxy so that every *subsequent* call fails — an
-   experiment can silently break a step that already worked. Put unproven operations
-   behind their own command so the proven flow never shares a document mutation with
-   the experiment.
-7. **When a tool "finds nothing", make it dump the structure** — occurrences, bodies,
-   face counts — and read the target value from *every* plausible source. A silent
-   `continue` on a failed read hides the real cause; one diagnostic run beats three
-   rounds of guessing.
+4. **Close the GUI before rebuilding** — a running WinExe locks the output exe, and a
+   loaded add-in locks its DLL (hence the separate deploy folder).
+5. **Stamp the loaded build in the log — with the full PATH** plus
+   `File.GetLastWriteTime`. The file name alone is not enough: a stale build and a fresh
+   one look identical until you can see which folder it came from. This kills the "is this
+   even my new code?" ambiguity permanently.
+6. **Isolate risky operations from the working deliverable.** A feature that fails mid-op
+   can poison the document proxy so every *subsequent* call fails.
+7. **When a tool "finds nothing", make it dump the structure** — occurrences, bodies, face
+   counts — and read the target from *every* plausible source. A silent `continue` on a
+   failed read hides the real cause.
+8. **Work only in documents you created, in a scratch folder.** Snapshot
+   `Documents.Count` first; if the user has something open, say so and stop rather than
+   risk it. Save and restore `Application.DisplayAlerts` around the run.
 
 ## Reporting findings back
 
-When a run confirms or refutes something, record it in the matching reference file
-with the date and how it was confirmed (live dump, reflection, human observation).
-Two habits keep this file trustworthy:
+When a run confirms or refutes something, record it in the matching reference file with
+the date and how it was confirmed. Three habits keep these files trustworthy:
 
-- **State which source confirmed a fact**, because they disagree. Authored docs and
-  reflection are cross-checks; the live dump wins.
+- **State which source confirmed a fact**, because they disagree. Static metadata and
+  reflection are cross-checks; the live object wins.
+- **Say when something was NOT reproduced, and under what conditions you tried.** A claim
+  that held in a 45-relation mold base and not in a 1-relation test case is not wrong — it
+  is *conditional*, and the condition is the useful part.
 - **Keep corrected mistakes, marked as corrected.** Several entries here describe a
-  mechanism that was chased for days and turned out wrong. The wrong path is worth a
-  paragraph precisely because the next person will otherwise reason their way into it
+  mechanism that was chased for days and turned out wrong. The wrong path earns a
+  paragraph precisely because the next reader would otherwise reason their way into it
   again.
