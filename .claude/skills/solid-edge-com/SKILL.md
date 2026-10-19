@@ -180,7 +180,7 @@ Read only the file you need; each is self-contained.
 | A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts, ordered-tree groups, feature↔body face IDs, document properties, ribbon GuiVersion cache | `references/api-signatures.md` |
 | Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered | `references/modeling-recipes.md` |
 | Placing parts, ground/contact/flush/axial relations, and why relations say "solved" and govern nothing | `references/assembly-relations.md` |
-| Draft sheets and sections (a new draft has **6** sheets, not 1), file properties, events and the message pump | `references/draft-properties-events.md` |
+| Draft sheets and sections (a new draft has **6** sheets, not 1), drawing views and dimensions from code (attach to `.Reference`, born-wrong flips), file properties, events and the message pump | `references/draft-properties-events.md` |
 | Putting a button inside SE: add-in registration, the two interfaces people confuse, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, .NET 10 comhost, modeless dialogs, picking a face or edge | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |
 | Meshes and reverse engineering: reading facets, what SE will and will not fit for you, sectioning a mesh, writing a surface recogniser, mesh → solid with boundary corrections, choosing the extrusion direction, band steps and hairline gaps, batch conversion, verifying by deviation | `references/mesh-reverse.md` |

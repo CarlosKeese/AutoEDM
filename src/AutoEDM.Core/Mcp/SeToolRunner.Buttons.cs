@@ -7,6 +7,7 @@ using System.Text.Json;
 using AutoEDM.Com;
 using AutoEDM.Config;
 using AutoEDM.Diagnostics;
+using AutoEDM.Drawing;
 using AutoEDM.Electrode;
 using AutoEDM.Model;
 using AutoEDM.Mold;
@@ -51,6 +52,8 @@ namespace AutoEDM.Mcp
                 case "se_lista_corte": return SawCutList(app, doc);
                 case "se_lista_modificacoes": return ChangeList(doc);
                 case "se_ficha": return SpecSheet(app, doc);
+                case "se_desenho_2d_plano": return TurnedDrawing(app, doc, create: false);
+                case "se_desenho_2d": return TurnedDrawing(app, doc, create: true);
                 case "se_criar_base": return CreateBase(app, doc, argsJson);
                 case "se_unir_superficies": return UniteSurfaces(doc);
                 case "se_aplicar_gap": return ApplyGap(doc, argsJson);
@@ -287,6 +290,31 @@ namespace AutoEDM.Mcp
             AutoEdmConfig cfg = AutoEdmConfig.LoadOrCreateDefault();
             DuplicateElectrodeResult res = NewBuilder(app, cfg).DuplicateElectrodeToNextGap(doc, cfg.ToElectrodeParams());
             return (res.Created ? "DUPLICADO. " : "NÃO duplicado. ") + res.Message;
+        }
+
+        /// <summary>
+        /// "Desenho 2D" da peça torneada: o plano em texto e, com <paramref name="create"/>, o
+        /// desenho novo. O documento criado fica aberto e SEM salvar — salvar (e o nome) é do Carlos,
+        /// e assim nenhum .dft que já existe ao lado da peça corre risco de ser sobrescrito.
+        /// </summary>
+        private static string TurnedDrawing(dynamic app, dynamic doc, bool create)
+        {
+            TurnedProfile profile = TurnedProfileReader.Read((object)doc, new FinishCatalog());
+            if (!profile.IsTurned)
+                return "Esta peça não é torneada — o 'Desenho 2D' por enquanto só cota peças de revolução.\n" +
+                       string.Join("\n", profile.Rejected.Take(10).Select(r => "  • " + r));
+
+            TurnedDimensionPlan plan = TurnedDimensionPlan.Build(profile);
+            string text = TurnedPlanFormatter.Describe(profile, plan);
+            if (!create) return text;
+
+            string path = null;
+            try { path = (string)doc.FullName; } catch { }
+            if (string.IsNullOrEmpty(path))
+                return "A peça ainda não foi salva — o desenho precisa do arquivo .par para o vínculo. Salve e chame de novo.";
+
+            TurnedDrawingResult res = TurnedDrawingBuilder.Create((object)app, (object)doc, profile, plan, new TurnedDrawingOptions());
+            return res.Summary + "\nO desenho ficou aberto SEM salvar.\n\n" + text;
         }
 
         private static string SawCutList(dynamic app, dynamic doc)

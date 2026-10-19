@@ -1,5 +1,16 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-10-19 — drawing views and dimensions (SE 2023 v223)
+
+New section in `references/draft-properties-events.md`, measured while building the AutoEDM
+"Desenho 2D" button: arbitrary view orientation, the view-local space shared by
+`ModelToView` and the DV elements, and the rule that dimensions attach to
+`dvElement.Reference` (the raw DV element is read in sheet space). Per-type table of the
+dimension calls that are born wrong and the property flip that fixes each, plus tolerance
+display types, named-style switch and the title-block refresh. Second pass: placement by
+key points copied from a hand-made drawing, and GD&T (FCF symbol codes from
+`DraftFCF.txt`, AddByTerminator + AddVertex placement, datum symbols, hidden edges).
+
 ## 2026-10-17 — reconnaissance pass against SE 2026 build 226.00.08.004 x64
 
 Everything below came out of a dedicated recon project (`E:\Code\SE-API-Recon`): a full

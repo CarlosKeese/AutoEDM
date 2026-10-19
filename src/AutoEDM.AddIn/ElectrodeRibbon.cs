@@ -54,6 +54,7 @@ namespace AutoEDM.AddIn
         private const int CmdRefrigeracao = 27;     // MOLDE: canais de refrigeração a partir das linhas do esboço 3D (PEÇA ordenada)
         private const int CmdMalhaParaSolido = 28;  // ENG. REVERSA: malha → sólido pela rota prismática (cria PEÇA NOVA) — era 26 até a fusão com o grupo Molde
         private const int CmdLimparImportacao = 29; // IMPORTAÇÃO: peças geometricamente iguais -> uma cópia só, e relações óbvias
+        private const int CmdDesenho2D = 30;        // DESENHO: .dft novo da peça torneada, cotado pelas cores das faces
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -102,6 +103,7 @@ namespace AutoEDM.AddIn
                 case CmdSondaMalha: SondarMalha(); break;
                 case CmdMalhaParaSolido: MalhaParaSolido(); break;
                 case CmdLimparImportacao: LimparImportacao(); break;
+                case CmdDesenho2D: Desenho2D(); break;
             }
         }
 
@@ -595,6 +597,52 @@ namespace AutoEDM.AddIn
                 {
                     form.ShowDialog();
                 }
+            });
+        }
+
+        /// <summary>
+        /// Botão "Desenho 2D" (ambiente de PEÇA, Carlos, 2026-10-19): desenho 2D automático da peça
+        /// torneada, cotado pelas cores das faces (tabela da ferramentaria). Mostra o plano de cotas
+        /// primeiro — é ele que o Carlos confere antes de gastar o tempo de montar as vistas — e só
+        /// então cria o .dft. O desenho fica aberto e SEM salvar: o nome e a pasta são dele, e nenhum
+        /// .dft que já exista ao lado da peça corre o risco de ser sobrescrito.
+        /// </summary>
+        private void Desenho2D()
+        {
+            const string title = "AutoEDM — Desenho 2D";
+            Run(CmdDesenho2D, (connector, doc, p) =>
+            {
+                string partPath = null;
+                try { partPath = (string)doc.FullName; } catch { }
+                if (string.IsNullOrEmpty(partPath))
+                {
+                    MessageBox.Show("Salve a peça primeiro — o desenho se liga ao arquivo .par.", title,
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                AutoEDM.Drawing.TurnedProfile profile =
+                    AutoEDM.Drawing.TurnedProfileReader.Read((object)doc, new AutoEDM.Drawing.FinishCatalog(Config.BuildColorMap()));
+                if (!profile.IsTurned)
+                {
+                    MessageBox.Show(
+                        "Esta peça não é torneada — por enquanto o Desenho 2D só cota peças de revolução (um eixo só)." +
+                        Environment.NewLine + Environment.NewLine +
+                        string.Join(Environment.NewLine, System.Linq.Enumerable.Take(profile.Rejected, 8)),
+                        title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                AutoEDM.Drawing.TurnedDimensionPlan plan = AutoEDM.Drawing.TurnedDimensionPlan.Build(profile);
+                string planText = AutoEDM.Drawing.TurnedPlanFormatter.Describe(profile, plan);
+                if (MessageBox.Show(planText + Environment.NewLine + "Criar o desenho com estas cotas?", title,
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+                AutoEDM.Drawing.TurnedDrawingResult res = AutoEDM.Drawing.TurnedDrawingBuilder.Create(
+                    (object)ElectrodeAddIn.Current.App, (object)doc, profile, plan, new AutoEDM.Drawing.TurnedDrawingOptions());
+
+                MessageBox.Show(res.Summary + Environment.NewLine + "O desenho está aberto e AINDA NÃO FOI SALVO.", title,
+                    MessageBoxButtons.OK, res.Failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             });
         }
 
@@ -1586,6 +1634,9 @@ namespace AutoEDM.AddIn
                 // Furos ordenados, cada um com esboço num plano normal à linha — o esboço é filho do
                 // furo (mesma regra do O'ring); em síncrono ficaria órfão.
                 { CmdRefrigeracao,        new CommandSpec("REFRIGERAÇÃO",         DocKind.Part, ModelingEnv.Ordered) },
+                // Desenho 2D: só LÊ a peça e cria um DOCUMENTO NOVO (.dft). Não cria recurso na peça,
+                // então qualquer ambiente serve.
+                { CmdDesenho2D,           new CommandSpec("DESENHO 2D (peça torneada)", DocKind.Part, ModelingEnv.Any) },
                 // WEDM: só LÊ as curvas e grava .igs. Síncrono porque é onde o Carlos prepara os perfis.
                 { CmdExportarPerfisWedm,  new CommandSpec("EXPORTAR PERFIS WEDM (IGES por Z)", DocKind.Part, ModelingEnv.Synchronous) },
                 // Cria curva derivada a partir das arestas das superfícies: mesmo ambiente do

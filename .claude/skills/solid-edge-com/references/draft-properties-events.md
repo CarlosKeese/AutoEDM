@@ -89,6 +89,96 @@ doc.Properties.Item("Custom").Add("ReconTag", "v1");   // -> PropertyEx
 
 ---
 
+# Drawing views and dimensions from code (SE 2023 v223, 2026-10-19)
+
+Measured building a fully dimensioned turned-part drawing (`AutoEDM.Drawing.TurnedDrawingBuilder`).
+Every bullet cost a live round; the API raises **no error** for most of these mistakes —
+the dimension is created, attached to something, and shows a wrong number.
+
+**Views**
+- `Documents.Add("SolidEdge.DraftDocument", templatePath)`, `ModelLinks.Add(partPath)`,
+  `DrawingViews.AddPartView(link, igFrontView=4, scale, x, y, sePartDesignedView=0)`.
+- Arbitrary orientation: `view.SetViewOrientation(viewVecX,Y,Z, localXX,Y,Z)` then `Update()`.
+  Up in the view = viewVec × localX. Puts any part axis horizontal.
+- `AddByFold(view, igFoldLeft=4, x, y)` for a projected view; iso = `AddPartView(..., 9, ...)`.
+- `view.ModelToView(x,y,z, [out] vx, [out] vy)` and `DVLine2d.GetStartPoint/GetEndPoint`,
+  `DVArc2d.GetCenterPoint/.Radius` share ONE space: **view-local, model metres, no scale**.
+  Sheet = `view.GetOrigin` + `ScaleFactor` × local. Find 2D edges geometrically with these.
+- The typed hop `DVLine2d.Reference/GetReferenceKey` → 3D edge throws `DISP_E_TYPEMISMATCH`
+  with interop 219 against SE 223 — don't build on it; match geometry instead.
+
+**Attaching dimensions — pass `dvElement.Reference`, never the DV element**
+- With the raw `DVLine2d` SE reads its local coordinates as SHEET coordinates: the dim lands
+  in the sheet's bottom-left corner with a nonsense value. `((dynamic)dvLine).Reference` fixes
+  it; pick points are SHEET metres.
+- Reading an existing dim: `Dimension.GetRelatedCount/GetRelated(i, out obj, out x,y,z, out kp)`
+  needs the TYPED `SolidEdgeFrameworkSupport.Dimension` (IDispatch out-object → TYPEMISMATCH);
+  the related object is a `Reference` (`.Object` = DVLine2d) or a `CenterLine`.
+
+| Dimension | Call | Born wrong → fix |
+|---|---|---|
+| Coordinate origin | `AddCoordinateOriginEx(ref, px,py,0, false, tx,ty,0)` | 3rd point = origin TEXT; place it PERPENDICULAR to the run (above the view for a horizontal run) or the whole chain measures vertically. `MeasurementAxis*` setters throw on coordinate dims |
+| Coordinate | `AddCoordinateEx(originDim, ref, px,py,0, false, tx,ty,0)` | follows the origin |
+| Symmetric Ø | `AddSymmetricalDiameter(centerLine, cx,cy,0,false, ref, px,py,0, kp)` | measures along the axis; flip `MeasurementAxisDirection` |
+| Centre line | `sheet.CenterLines.Add(x1,y1,0, x2,y2,0)` | `AddBetweenTwoLines(ref, ref)` → E_FAIL / 0x80040223 |
+| Radius | `AddRadius(arcRef)` | raw DVArc2d → 0x80040223 |
+| Chamfer | `AddChamfer(neighbourRef, …, false, chamferRef, mid…, true, 0)` | reversed order measures the neighbour; `TrackDistance` is born **−123456** (text off-sheet) — set ~0.006 |
+| Angle between lines | `AddAngleBetweenObjects(ref1,…, ref2,…)` | born supplementary (180.5° for 0.5°); flip `MeasureLineDirection` |
+
+- **Verify every dim**: `Value` is metres (radians for angles). Compare with the model,
+  apply the known flip, delete (`Delete()`) what still does not match.
+- `Dimension.Value` units: linear m, angle rad. `PrimaryUpper/LowerTolerance` are STRINGS
+  in display units ("-0,01"). `DisplayType`: 2 = tolerance, **14 = fit + tolerance**
+  ("Ø27 g6 (-0,01/-0,02)"); 9 stores the numbers but the PAN style does not show them.
+- Style: `dim.Style.Name = "PAN (mm)"` switches to a named template style
+  (`dim.Style = styleObj` fails to convert). ISO (mm) rounds angles to whole degrees.
+- Text: `SetTextOffsets(d, 0)` slides a Ø label along its dimension line, `d` sheet metres
+  from the axis.
+
+**Placement (copying a hand-made layout, 2026-10-19).** Read the human's dims with
+`GetKeyPoint(i, out x,y,z, out type, out handle)` — that is the layout spec.
+- Symmetric Ø: `DisplayHalf = true` gives the full line with both arrows (7 key points:
+  k1 = attach on the feature, k4/k5 = dim-line ends, k6 = text). `TrackDistance` is the
+  SIGNED distance from **k1** (SE snaps the pick to the generatrix END, not where you
+  clicked): positive = line to the left, negative = to the right. Verify the side by k4.
+- Radius with leader: `Leader = true`, `TerminatorPosition = false`, `BreakPosition = 3`;
+  then move the knee with `SetKeyPoint(3, x, y, 0)` — SE recomputes `TrackDistance`/
+  `BreakDistance`. `TrackDistance` is NOT the leader slope (the human had 0.61 on leaders of
+  different slopes). Concave arcs (groove) report k0 where the leader touches; use it.
+- Chamfer with leader: `TerminatorPosition = true`, `BreakPosition = 3`, `BreakDistance`
+  = knee leg; `TrackDistance` = vertical leg, sign depends on the picked line — verify by k4.
+- Angle: `SetKeyPoint(6, x, y)` moves the text and the arc follows.
+- Circular Ø in an end view: `TrackAngle = π` makes it horizontal; check k6 is above.
+- Balloon with leader: `Balloons.Add(textX, textY, 0)` → `Leader/Callout=1/BalloonType=0`
+  → `BalloonText` (property text, `\r` between lines) → **`SetTerminator(ref, x,y,0,false)`
+  last**. `AddByTerminator` or terminator-first loses the leader (only 1 key point).
+- Custom iso: `SetViewOrientation` works on iso views too; the "lying" turned-part iso is
+  view = (v + up − axis), localX = −(v + axis) in the side-view frame.
+- Background `TextBox.Text = ...` resets `VerticalAlignment`/`Justification` (template had
+  1/4) and the text jumps a row — save and restore them (font/size via `Edit.SetSelect(0,n,5)`).
+- `SaveCopyAs("x.pdf")` exports the ACTIVE window; for an unsaved draft `SaveAs("x.pdf")`
+  exports it and the document stays unsaved.
+- Title block shows "Erro: Sem referência" until `draft.UpdatePropertyTextCacheAndDisplay()`.
+
+**GD&T (feature control frames, datum symbols), 2026-10-19.**
+- Text syntax is in SE's own `Template\Reports\DraftFCF.txt`: cells separated by `|`, symbol
+  codes `%CY` cylindricity, `%FL` flatness, `%PP` perpendicularity, `%PR` parallelism,
+  `%AN` angularity, `%PO` position, `%CO` concentricity, `%SY` symmetry, `%DI` Ø; measured
+  live: `%CR` circular runout. E.g. `fcf.PrimaryFrame = "%PP|0,01|A"`. (`%VB` or `%PE`
+  render as literal text — no error.)
+- Placement that works: `FeatureControlFrames.AddByTerminator(target, x, y, 0, false)` →
+  `PrimaryFrame` → **`AddVertex(boxX, boxY, 0)`**: the box moves to the vertex and the leader
+  bends to the target. `Add(x,y)` + `SetTerminator` jumps the box onto the terminator;
+  `SetKeyPoint(0, …)` on it moves only Y.
+- `target` can be a **Dimension** (frame on a Ø dimension = controls the axis) — use its
+  key point 4 (top end of the dim line) as the terminator point.
+- Datum: `DatumFrames.AddByTerminator(dimOrEdgeRef, x, y, 0, false)` then `.Datum = "A"`;
+  on a Ø dimension's k5 (bottom end) = axis datum, on a face edge = plane datum.
+- Hidden edges for bores: `drawingView.Defaults_ShowHiddenEdges = true` before `Update()`;
+  the hidden DV lines are matched and dimensioned like visible ones.
+
+---
+
 # Events
 
 ## Two conditions, and the event never arrives without both

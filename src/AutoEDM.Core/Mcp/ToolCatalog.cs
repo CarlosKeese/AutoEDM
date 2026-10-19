@@ -385,6 +385,27 @@ namespace AutoEDM.Mcp
             },
             new ToolSpec
             {
+                Name = "se_desenho_2d_plano",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "SÓ LEITURA. Plano do 'Desenho 2D' para a PEÇA torneada ativa: lê cada face (plano, cilindro, cone, " +
+                    "toro) no sistema do eixo, resolve a cor pela tabela da ferramentaria (estilo de face '11 - MED CALIB', " +
+                    "'20 - VEDAÇÃO'... ou o RGB) e lista as cotas que 'se_desenho_2d' criaria — posições no eixo, diâmetros, " +
+                    "raios, chanfros e ângulos — com a tolerância de cada uma — e o GD&T (referências A/B e quadros de 0,01). Recusa peça que não é de revolução. Nada é alterado."
+            },
+            new ToolSpec
+            {
+                Name = "se_desenho_2d",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Desenho 2D'. Cria um DESENHO NOVO (.dft, sem salvar) da PEÇA torneada ativa a partir do template " +
+                    "PanFlight: vista lateral com o eixo na horizontal, vista de topo, isométrica e as cotas do plano com a " +
+                    "tolerância da cor e o GD&T das faces de precisão. Toda cota é conferida contra o 3D; a que não bate é apagada e relatada. Não altera a peça."
+            },
+            new ToolSpec
+            {
                 Name = "se_ficha",
                 Writes = true,
                 InputSchemaJson = NoArgs,

@@ -47,6 +47,12 @@ function New-IconDib([int]$id) {
             $c = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(0,150,60)), 2
             $g.DrawEllipse($c, 2,1, 11,5)     # contorno do topo
             $g.DrawEllipse($c, 3,9, 9,5) }    # contorno do fundo
+        9 { # Desenho 2D: perfil de eixo escalonado (preto) + cota azul com setas
+            $p = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(40,40,40)), 1
+            $g.DrawRectangle($p, 1,6, 5,6); $g.DrawRectangle($p, 6,7, 8,4)
+            $c = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(0,90,200)), 1
+            $g.DrawLine($c, 1,2, 14,2); $g.DrawLine($c, 1,1, 1,5); $g.DrawLine($c, 14,1, 14,5)
+            $g.DrawLine($c, 2,1, 3,2); $g.DrawLine($c, 2,3, 3,2); $g.DrawLine($c, 13,1, 12,2); $g.DrawLine($c, 13,3, 12,2) }
     }
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
@@ -77,7 +83,7 @@ function Write-ResHeader([UInt32]$dataSize, [UInt16]$typeOrd, [UInt16]$nameOrd, 
 # Cabeçalho nulo obrigatório no início do .res
 Write-ResHeader 0 0 0 0
 
-foreach ($id in @(1, 2, 3, 4, 5, 7, 8)) {   # o 6 (sonda) segue sem imagem, só rótulo
+foreach ($id in @(1, 2, 3, 4, 5, 7, 8, 9)) {   # o 6 (sonda) segue sem imagem, só rótulo
     [byte[]]$dib = New-IconDib $id
     Write-Output ("  id {0}: DIB {1} bytes" -f $id, $dib.Length)
     Write-ResHeader ([UInt32]$dib.Length) 2 ([UInt16]$id) 0x1030  # type 2 = RT_BITMAP

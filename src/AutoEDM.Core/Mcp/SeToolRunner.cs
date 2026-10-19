@@ -64,6 +64,8 @@ namespace AutoEDM.Mcp
                 { "se_lista_corte",           new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_lista_modificacoes",    new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_ficha",                 new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_desenho_2d_plano",      new Requirement(DocKind.Part,     ModelingEnv.Any) },
+                { "se_desenho_2d",            new Requirement(DocKind.Part,     ModelingEnv.Any) },
                 { "se_criar_base",            new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_unir_superficies",      new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_aplicar_gap",           new Requirement(DocKind.Part,     ModelingEnv.Ordered) },

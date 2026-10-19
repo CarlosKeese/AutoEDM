@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 21; // incrementar ao mudar a ribbon (v21 = grupo "Importação" + "Limpar importação")
+            AddInEx.GuiVersion = 23; // incrementar ao mudar a ribbon (v23 = supertip do "Desenho 2D" com GD&T)
 
             Current = this;
             App = application;
