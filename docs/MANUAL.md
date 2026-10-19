@@ -544,6 +544,19 @@ Mesmo pipeline, mas o candidato vem do bounding box das **faces escolhidas à m�
 
 Desde 2026-09-24 o botão **não exige pré-seleção**: abre a janela modeless `ManualElectrodeForm`, que assume o mouse da SE (`SePicker`, filtro de FACE). Cada clique no modelo soma uma face; clicar de novo na mesma face a retira (identidade = ocorrência + `Face.ID`). "Criar eletrodo" chama `ElectrodeBuilder.CreateElectrodeFromFaces`, limpa a lista e recomeça a coleta para o próximo eletrodo. O que já estava selecionado ao abrir entra na lista, e "Usar seleção" é o modo reserva quando a SE não deixa assumir o mouse. **A face escolhida é a primeira À VISTA, decidida pelo AutoEDM**: a localização da SE dentro do comando não respeita profundidade (peça de trás ganhava) e o SmartLocate não entrega geometria. Por isso cada clique monta o raio de visão (câmera da janela + ponto sob o cursor, convertido do PIXEL pela vista — `DrawHwnd` + `View.TransformDCToModel`; o (x, y, z) do evento `MouseClick` não está sob o cursor) e `VisibleFacePicker` acha o primeiro impacto entre as ocorrências de peça visíveis do 1º nível (`Body.FacesByRay` + malha da face); a face que a SE localizou só vale se o raio falhar (submontagem, por exemplo). A ferramenta MCP `se_criar_eletrodo_manual` continua lendo o `SelectSet` (`CreateElectrodeFromSelection`, casca sobre o mesmo método).
 
+**Eixos da montagem (2026-10-19).** O eletrodo nasce com os eixos da MONTAGEM (rotação identidade). A origem fica no centro XY e no Z mais fundo das faces, medidos na montagem: cada caixa de face é levada pela pose da sua ocorrência. Antes ele herdava a orientação da cavidade (decisão de 2026-09-10) e nascia invertido quando a peça estava virada na montagem (14973.102: Z local → −Z). O "Criar eletrodos" automático ainda herda a orientação.
+
+**Cópia da queima para dentro da peça (2026-10-19).** Com a peça nova ainda aberta, o
+`BurnSurfaceCopier` põe a peça em **síncrono** e, para cada ocorrência dona de faces, faz o seguinte:
+1. `CoordinateSystems.AddByMatrix(M)`, com M = pose da dona vista do eletrodo (`OccurrenceTransform.SeenFrom`);
+2. `CopyConstructions.Add` do **arquivo** da dona;
+3. acha as faces escolhidas pelo **mesmo `Face.ID`**;
+4. `CopySurfaces.Add`;
+5. repinta cada face com o estilo da origem, porque em síncrono a cor não chega;
+6. apaga a cópia do corpo e o sistema de coordenadas.
+
+A superfície fica com o nome "Queima - {peça} #{n}", sem vínculo com a cavidade. Não precisa de edição em contexto (docs/INTER-PART.md §8). Se a peça aberta difere da salva, o relatório avisa. Validado pela sonda `tools/ElectrodeCopyProbe --real`: duas ocorrências com poses diferentes, 24 vértices conferidos na montagem, erro 0,0000 mm.
+
 O Ra é gravado como **`Variable.Formula` (string), nunca `Variable.Value`** — `Value` é escalado pela unidade do documento. Nome da variável: **`AutoEDM_Ra`**.
 
 ### Duplicar eletrodo — id 12
@@ -554,7 +567,7 @@ A partir de um eletrodo com GAP aplicado, gera a cópia de **desbaste** no próx
 - Casamento do Ra gravado com a tabela: tolerância **0,05 µm** (o número vai e volta de string).
 
 ### Criar Base — id 5 (peça, **síncrona**)
-Dimensiona e modela o bloco, a faixa de medição e a fixação, sobre as superfícies de queima já copiadas na peça. Janela com resumo ao vivo e Preview destrutível.
+Dimensiona e modela o bloco, a faixa de medição e a fixação, sobre as superfícies de queima já copiadas na peça. A superfície vem da seleção, da **superfície costurada** (desde 2026-10-19; antes o botão não achava nada depois que a queima era fechada e costurada) ou da `CopySurface`. Janela com resumo ao vivo e Preview destrutível.
 
 | Regra | Valor | Onde |
 |---|---|---|
@@ -578,11 +591,20 @@ Dimensiona e modela o bloco, a faixa de medição e a fixação, sobre as superf
 **Catálogo de barras de cobre** (conferido contra o estoque real, `IBlankLibrary.cs:285-305`): QUAD 19 / 32 / 50 · RED 6 CuW80, 10, 12 CuW80, 12,7, 16, 16 CuW80, 25,4, 38 · RET 25,4×12,7, 38×16, 50×19, 102×25,4.
 
 ### Unir superfícies — id 7 (peça, **síncrona**)
-Une a superfície de queima ao sólido do bloco, fechando os vãos laterais com patch de contorno. **Isolado do "Criar Base"** porque o thicken, ao falhar, envenenava o documento e derrubava a fixação.
+Une a superfície de queima ao sólido do bloco, fechando antes as regiões abertas com patch de contorno ("Limite"). **Isolado do "Criar Base"** porque o thicken, ao falhar, envenenava o documento e derrubava a fixação.
 
+A superfície de queima vem da seleção, da **superfície costurada** ou da `CopySurface`.
+
+**Classificação das arestas abertas (2026-10-19, `OpenEdgeLoops.Analyze`, validada no EE01 do 14973.102):**
 - Duas extremidades a ≤ **0,01 mm** são o mesmo ponto (encadeamento de arestas abertas).
-- **Só vira patch o contorno fechado que tenha pelo menos uma aresta vertical**: o rim de topo e o de fundo também são fechados, mas todo horizontal — fechá-los taparia a queima.
-- Aresta é "horizontal" se ΔZ < 0,05 mm.
+- **Pares de arestas coincidentes** (mesmas pontas e mesma caixa) são separados ANTES do encadeamento. São **costura não fechada**, não buraco: "Limite" sobre uma fenda de largura zero dá `E_FAIL`. O botão avisa para refazer "Costurar" com uma tolerância maior.
+- **Rim** = o contorno fechado mais ALTO (empate → o de maior pegada XY): a boca da superfície, onde o bloco encosta. Fica aberto. Se ficar abaixo da base do bloco, o aviso pede "Estender superfície".
+- **Qualquer outro contorno fechado** é região aberta a fechar, em qualquer orientação. Antes só se fechava contorno com aresta vertical, e um furo de pino no piso passava como "rim".
+- Contorno que não fecha (pontas soltas) vira aviso.
+
+**Costura de consolidação** (superfície + patches): `StitchSurfaces.Add` recebe os **corpos** das superfícies (`Faces[1].Item(1).Body`), não as features. Com features, tipadas pela PIA ou não, dava `E_NOINTERFACE` em toda rodada. O array é `SAFEARRAY(IDispatch)`, montado por `Com/DispatchArray.cs` (interface com o IID do próprio `IDispatch`); assim aceita tipos misturados (costura do usuário + `SurfaceByBoundary`). A costura nova **consome** as entradas: as referências antigas morrem (`0x80010114`) e não podem nem ser passadas numa chamada `dynamic`. O bloco é relido antes de unir.
+
+**União:** `Model.BooleanFeatures.Add` primeiro (hoje dá `E_NOINTERFACE` com o array tipado pela PIA); depois `Model.Attach(Body[], bAdd=true, fpcSide=2)`, que uniu o EE01 (corpo de 14 → 37 faces). O `Attach` não deixa recurso na árvore.
 
 ### Aplicar GAP — id 11 (peça, **ordenada**)
 Aplica o offset de faísca **para dentro** nas faces de queima, pinta a cor do Ra e nomeia a feature na árvore como `GAP: {gap} - Ra: {ra}`.

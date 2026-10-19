@@ -198,5 +198,45 @@ namespace AutoEDM.Core.Tests
             Assert.Throws<ArgumentException>(() => OccurrenceTransform.FromMatrix(new double[9]));
             Assert.Throws<ArgumentException>(() => OccurrenceTransform.FromMatrix(null));
         }
+
+        /// <summary>
+        /// A matriz que põe a cópia da cavidade dentro do eletrodo (2026-10-19): um ponto local
+        /// da cavidade, levado por ela à montagem, tem de cair no MESMO lugar que o ponto
+        /// correspondente do eletrodo, levado pela pose dele.
+        /// </summary>
+        [Fact]
+        public void SeenFrom_LevaOLocalDeUmaOcorrenciaAoDaOutra()
+        {
+            double c = Math.Cos(0.5), s = Math.Sin(0.5);
+            var cavity = OccurrenceTransform.FromMatrix(RowMajor(new[] { c, s, 0 }, new[] { -s, c, 0 }, new[] { 0.0, 0, 1 }, new[] { 0.1, 0.05, 0.02 }));
+            var electrode = OccurrenceTransform.FromMatrix(RowMajor(new[] { 1.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 0.0, -1, 0 }, new[] { 0.3, -0.1, 0.07 }));
+            OccurrenceTransform m = cavity.SeenFrom(electrode);
+
+            double[] p = { 0.012, -0.034, 0.056 };
+            cavity.TransformPointM(p[0], p[1], p[2], out double ax, out double ay, out double az);
+            m.TransformPointM(p[0], p[1], p[2], out double ex, out double ey, out double ez);
+            electrode.TransformPointM(ex, ey, ez, out double bx, out double by, out double bz);
+            Assert.Equal(ax, bx, 9); Assert.Equal(ay, by, 9); Assert.Equal(az, bz, 9);
+            Assert.Equal(cavity.Layout, m.Layout);
+        }
+
+        /// <summary>
+        /// O caso do "Criar eletrodo (manual)": o eletrodo é a cavidade com a origem no ponto de
+        /// queima c, então a matriz é a translação pura −c, mesmo com a cavidade inclinada.
+        /// </summary>
+        [Fact]
+        public void SeenFrom_EletrodoNaPoseDaCavidade_EhTranslacaoMenosC()
+        {
+            double c = Math.Cos(0.3), s = Math.Sin(0.3);
+            var cavity = OccurrenceTransform.FromMatrix(RowMajor(new[] { 1.0, 0, 0 }, new[] { 0, c, s }, new[] { 0, -s, c }, new[] { 0.1, 0.05, 0.02 }));
+            cavity.TransformPointM(0.015, 0.010, 0.030, out double px, out double py, out double pz);
+            OccurrenceTransform m = cavity.SeenFrom(cavity.WithTranslationM(px, py, pz));
+
+            m.TransformPointM(0.015, 0.010, 0.030, out double x, out double y, out double z);
+            Assert.Equal(0, x, 9); Assert.Equal(0, y, 9); Assert.Equal(0, z, 9);
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                    Assert.Equal(i == j ? 1.0 : 0.0, m.R(i, j), 9);
+        }
     }
 }

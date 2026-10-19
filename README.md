@@ -1,4 +1,4 @@
-﻿# AutoEDM — API de Automação para Eletrodos no Solid Edge
+# AutoEDM — API de Automação para Eletrodos no Solid Edge
 
 [![Solid Edge](https://img.shields.io/badge/Solid%20Edge-2023%2F2026-blue)](https://plm.sw.siemens.com/en-US/solid-edge/)
 [![.NET](https://img.shields.io/badge/.NET-Framework%204.7.2%20%7C%20NET%2010%2B-purple)](https://dotnet.microsoft.com/)
@@ -92,7 +92,7 @@ A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cad
 |---|---|---|
 | **Analisar (Z)** | qualquer | Lê a peça **sem alterar nada** e propõe quantos eletrodos existem, por nível de profundidade, com a posição de cada um. Junto, faz a [análise de usinabilidade](#análise-de-usinabilidade): o que a sua ferramentaria não consegue produzir e por isso exige erosão. **Selecione a peça a analisar** antes de clicar — sem seleção ele mira pela cor de queima, e o eletrodo também tem faces pintadas. |
 | **Criar eletrodos** | qualquer | Cria uma peça por eletrodo com o bloco da base (holder) modelado e posicionado na montagem. Não salva a montagem. |
-| **Criar eletrodo (manual)** | qualquer | Um clique por eletrodo: selecione a(s) face(s) do fundo do bolsão a erodir e ele cria **um** eletrodo, centrado em XY e no Z mais fundo das faces. Identifica o Ra pela cor e grava numa variável da peça. |
+| **Criar eletrodo (manual)** | qualquer | Um clique por eletrodo: selecione a(s) face(s) do fundo do bolsão a erodir e ele cria **um** eletrodo, centrado em XY e no Z mais fundo das faces, **já com essas faces copiadas para dentro** (superfície "Queima", na cor de origem, sem vínculo com a cavidade, sem editar em contexto). Identifica o Ra pela cor e grava numa variável da peça. |
 | **Duplicar eletrodo** | qualquer | Selecione um eletrodo que já tem GAP aplicado: gera a cópia de desbaste no **próximo Ra da escada** e a posiciona em todas as ocorrências daquele eletrodo na montagem. |
 
 ### Relatórios — documento de montagem
@@ -109,7 +109,7 @@ A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cad
 | Comando | Ambiente | O que faz |
 |---|---|---|
 | **Criar Base** | **síncrono** | Cria a base (bloco no material mais próximo) com a **faixa de medição** (chanfro X+/Y− em quadrado/retângulo, flat em Y− no redondo) e a **fixação** (M6 roscado + 2×Ø4, ou eixo). Janela de parâmetros com preview. |
-| **Unir superfícies** | **síncrono** | Une a superfície de queima ao bloco num sólido único. Isolado de propósito: só une, sem GAP nem cor. |
+| **Unir superfícies** | **síncrono** | Fecha as regiões abertas da queima (furos e vãos, em qualquer orientação; o rim onde o bloco encosta fica aberto), costura e une ao bloco num sólido único. Arestas coincidentes que a costura não juntou viram aviso, não "Limite". Isolado de propósito: só une, sem GAP nem cor. |
 | **Aplicar GAP** | **ordenado** | Escolha o Ra numa lista (pré-selecionada pelo Ra gravado na peça): aplica o offset de faísca via `Model.FaceOffsets`, pinta a cor do Ra e nomeia a feature na árvore. |
 | **Alojamento de O'ring** | **ordenado** | Canal de anel O'ring pela **ISO 3601**. Capture uma face (cilíndrica = eixo/furo; plana = vedação de face) e uma aresta circular: ele mede o diâmetro, acha o anel mais próximo no catálogo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta. Mostra **esmagamento, estiramento e preenchimento antes de cortar**, e avisa quando algum sai da norma — quem decide é você. |
 

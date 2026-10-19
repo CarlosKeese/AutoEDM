@@ -974,7 +974,7 @@ namespace AutoEDM.AddIn
                 var builder = new SurfaceBlockBuilder();
                 BlockOverSurfacesResult res = builder.UniteSurfacesToBlock(doc, new BlockOverSurfacesOptions());
                 string gaps = res.SideGapsPatched > 0
-                    ? $"{res.SideGapsPatched} vão(s) lateral(is) fechado(s) automaticamente com 'Limite'.\n\n"
+                    ? $"{res.SideGapsPatched} região(ões) aberta(s) fechada(s) automaticamente com 'Limite'.\n\n"
                     : "";
                 string msg = res.SurfacesUnited
                     ? gaps + "Superfície unida ao bloco ✓. Confira no modelo — depois use 'Aplicar GAP' para o offset/cor.\n\nDetalhe no log (linhas 'Unir:')."

@@ -220,5 +220,94 @@ namespace AutoEDM.Core.Tests
             Assert.False(loop.Closed);
             Assert.Equal(0.05, loop.GapMm, 6);   // a folga denuncia: devia ter fechado
         }
+
+        // ------------------------------------------------ classificação (EE01 do 14973.102, 2026-10-19)
+
+        /// <summary>O rim real do EE01: 8 arestas em Z=3 (paredes retas e chanfros dos cantos).</summary>
+        private static List<OpenEdgeSegment> RimEe01() => new List<OpenEdgeSegment>
+        {
+            Seg(7.65, -2.6, 3, 6.25, -4, 3), Seg(6.25, -4, 3, -6.25, -4, 3), Seg(-6.25, -4, 3, -7.65, -2.6, 3),
+            Seg(-7.65, -2.6, 3, -7.65, 2.6, 3), Seg(-7.65, 2.6, 3, -6.25, 4, 3), Seg(-6.25, 4, 3, 6.25, 4, 3),
+            Seg(6.25, 4, 3, 7.65, 2.6, 3), Seg(7.65, 2.6, 3, 7.65, -2.6, 3),
+        };
+
+        /// <summary>
+        /// O caso que travou a união: um furo de pino no PISO (aresta circular fechada, horizontal,
+        /// Z=1,011) era lido como "rim" porque não tem aresta vertical — e ficava aberto.
+        /// </summary>
+        [Fact]
+        public void FuroNoPiso_EhRegiaoAFechar_ENaoRim()
+        {
+            var segs = RimEe01();
+            var circle = Seg(-3.7407, 1.004, 1.011, -3.7407, 1.004, 1.011);
+            circle.MinMm = new[] { -5.7407, 0.004, 1.011 }; circle.MaxMm = new[] { -3.7407, 2.004, 1.011 };
+            segs.Add(circle);
+
+            OpenEdgeAnalysis a = OpenEdgeLoops.Analyze(segs);
+
+            Assert.NotNull(a.Rim);
+            Assert.Equal(8, a.Rim.Segments.Count);
+            Assert.Equal(3.0, a.Rim.ZMinMm, 6);
+            Assert.Single(a.Holes);
+            Assert.Same(circle, a.Holes[0].Segments.Single());
+            Assert.Empty(a.SeamEdges);
+            Assert.Empty(a.OpenLoops);
+        }
+
+        /// <summary>
+        /// A leitura anterior do mesmo EE01: o recorte da parede Y=+4 encostava no piso e nos
+        /// degraus com as pontas iguais até 0,0001 mm, mas a costura não juntou — 3 pares de arestas
+        /// coincidentes. Não é furo (o "Limite" sobre fenda de largura zero dava E_FAIL).
+        /// </summary>
+        [Fact]
+        public void ArestasCoincidentes_SaoCosturaNaoFechada_ENaoFuro()
+        {
+            var segs = RimEe01();
+            var pairs = new[]
+            {
+                Seg(-5.2572, 4, 1.011, 5.2572, 4, 1.011), Seg(5.2572, 4, 1.011, -5.2572, 4, 1.011),
+                Seg(5.2572, 4, 1.011, 5.2748, 4, 0), Seg(5.2572, 4, 1.011, 5.2748, 4, 0),
+                Seg(-5.2748, 4, 0, -5.2572, 4, 1.011), Seg(-5.2748, 4, 0, -5.2572, 4, 1.011),
+            };
+            segs.AddRange(pairs);
+
+            OpenEdgeAnalysis a = OpenEdgeLoops.Analyze(segs);
+
+            Assert.Equal(6, a.SeamEdges.Count);
+            Assert.Empty(a.Holes);
+            Assert.Empty(a.OpenLoops);
+            Assert.Equal(8, a.Rim.Segments.Count);
+        }
+
+        /// <summary>Furo em "D" (reta + arco com as MESMAS pontas): a caixa diferente impede que
+        /// os dois lados sejam tomados por um par coincidente.</summary>
+        [Fact]
+        public void FuroEmD_NaoEhParCoincidente()
+        {
+            var segs = RimEe01();
+            var line = Seg(0, 0, 1, 2, 0, 1); line.MinMm = new[] { 0.0, 0, 1 }; line.MaxMm = new[] { 2.0, 0, 1 };
+            var arc = Seg(2, 0, 1, 0, 0, 1); arc.MinMm = new[] { 0.0, 0, 1 }; arc.MaxMm = new[] { 2.0, 1, 1 };
+            segs.Add(line); segs.Add(arc);
+
+            OpenEdgeAnalysis a = OpenEdgeLoops.Analyze(segs);
+
+            Assert.Empty(a.SeamEdges);
+            Assert.Single(a.Holes);
+            Assert.Equal(2, a.Holes[0].Segments.Count);
+        }
+
+        /// <summary>Vão lateral (o caso antigo, com arestas verticais) continua sendo região a fechar.</summary>
+        [Fact]
+        public void VaoLateral_ContinuaSendoFechado()
+        {
+            var segs = RimEe01();
+            segs.AddRange(new[] { Seg(-2, -4, 0, 2, -4, 0), Seg(2, -4, 0, 2, -4, 1), Seg(2, -4, 1, -2, -4, 1), Seg(-2, -4, 1, -2, -4, 0) });
+
+            OpenEdgeAnalysis a = OpenEdgeLoops.Analyze(segs);
+
+            Assert.Single(a.Holes);
+            Assert.Equal(2, a.Holes[0].VerticalCount);
+            Assert.Equal(3.0, a.Rim.ZMaxMm, 6);
+        }
     }
 }

@@ -106,3 +106,16 @@ vertex coinciding with an arc end). Drop vertices within 0.1 µm of the previous
 **First band protrusion accepted, no body created**: `AddFiniteExtrudedProtrusion` returns the
 MODEL, and when the profile is accepted (`End` = 0) but no solid results, `Models.Count` stays 0 —
 check it before `Models.Item(1)`, or the next line throws an unrelated "index" error.
+
+## NEVER `SaveCopyAs` + `Documents.Open` a part that is being edited in-context ⚠️ destructive (SE 2023, 2026-10-19)
+
+A probe called `SaveCopyAs(copy.par)` on an electrode part that was in in-place edit inside its
+assembly, opened the copy with `Documents.Open`, then closed it with `Close(false)`. The copy had
+no geometry (`Models.Count = 0`, the stitch feature with `Faces` → `E_FAIL`). Right after that,
+the ORIGINAL in-memory part had lost its body too. Its features were still listed, but
+`Models.Count` was 0, and the unsaved work (block, patches, stitch) was gone from memory. No
+write call was made on the original.
+
+Rule: never copy, open or close documents while the user has a part in in-place edit.
+Experiment only on throwaway documents you created yourself. When you need to test a fix on the
+user's real geometry, ask first, and do it on the document itself, with their consent.

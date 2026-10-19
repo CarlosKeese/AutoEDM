@@ -1,5 +1,23 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-10-19 — stitch wants bodies; IDispatch arrays for mixed types
+
+`references/edm-electrode.md`: `StitchSurfaces.Add` takes the surfaces' Body objects.
+`SAFEARRAY(IDispatch)` can be built from an IID_IDispatch interface. A stitch consumes its inputs
+(dead proxies break `dynamic` calls). Uniting works with `Attach(Body[])`. Added the
+rim/hole/seam classification of open edges.
+
+## 2026-10-19 — destructive trap: SaveCopyAs/Open around an in-context part
+
+`references/errors.md`: running `SaveCopyAs` on a part in in-place edit, then opening and closing
+the copy, unloaded the body of the original from memory and lost the unsaved work.
+
+## 2026-10-19 — burn-surface copy without in-place (SE 2023 v223)
+
+`references/edm-electrode.md`: the copy is solved via `CopyConstructions.Add` from the cavity
+file. Face IDs are preserved, `AddByMatrix` places the copy, `CopySurfaces` runs intra-part
+and the parent can be deleted. Colors survive in ordered only. Measured with a throwaway probe.
+
 ## 2026-10-19 — PathFinder order (SE 2023 v223)
 
 New section in `references/assembly-relations.md`: `Occurrences.ReorderOccurrence`'s

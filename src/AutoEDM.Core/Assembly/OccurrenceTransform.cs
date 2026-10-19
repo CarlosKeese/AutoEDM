@@ -199,6 +199,30 @@ namespace AutoEDM.Assembly
         }
 
         /// <summary>
+        /// Esta pose vista do espaço LOCAL de <paramref name="viewer"/>: leva um ponto local desta
+        /// ocorrência para o local da outra, passando pela montagem (<c>viewer⁻¹ · this</c>).
+        /// É a matriz que posiciona dentro da peça do ELETRODO a cópia do corpo da cavidade
+        /// (<c>CoordinateSystems.AddByMatrix</c> põe a cópia em M·p — medido em 2026-10-19).
+        /// O layout é o desta pose, o mesmo que a SE devolveu no GetMatrix.
+        /// </summary>
+        public OccurrenceTransform SeenFrom(OccurrenceTransform viewer)
+        {
+            if (viewer == null) throw new ArgumentNullException(nameof(viewer));
+            // R = Rvᵀ · R ;  t = Rvᵀ · (t − tv)
+            var r = new double[9];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                {
+                    double s = 0;
+                    for (int k = 0; k < 3; k++) s += viewer._r[k * 3 + i] * _r[k * 3 + j];
+                    r[i * 3 + j] = s;
+                }
+            viewer.InverseRotate(_t[0] - viewer._t[0], _t[1] - viewer._t[1], _t[2] - viewer._t[2],
+                out double tx, out double ty, out double tz);
+            return new OccurrenceTransform(r, new[] { tx, ty, tz }, Layout, LayoutEvidence);
+        }
+
+        /// <summary>
         /// A pose IDENTIDADE, no layout pedido. Serve de pose da ocorrência quando a montagem
         /// importada deixou todas na identidade e a posição está assada na geometria.
         /// </summary>

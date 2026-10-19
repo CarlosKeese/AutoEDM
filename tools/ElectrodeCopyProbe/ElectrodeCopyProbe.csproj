@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sonda externa da cópia das faces de queima para a peça do eletrodo — console que se ANEXA a uma Solid Edge
+    já aberta e trabalha só em arquivos descartáveis da pasta temporária.
+
+    POR QUE EXISTE, e não é só um atalho de preguiça: o botão da ribbon só pode ser clicado
+    por um humano dentro da SE, e trocar o add-in exige fechar o CAD. Esta sonda exercita a
+    metade do código que os 513 testes NÃO alcançam — a leitura COM de verdade (vértices por
+    Face.Vertices, Body.Volume, Face.Area, pose por GetMatrix) — sem reinstalar nada, com a
+    SE aberta e sem escrever um bit no modelo. É o mesmo "console externo" que validou o
+    malha → sólido.
+
+    NÃO entra no AutoEDM.sln de propósito: é ferramenta de diagnóstico, não parte do produto,
+    e o pack.ps1 não deve empacotá-la.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM.Tools.ElectrodeCopyProbe</RootNamespace>
+    <AssemblyName>ElectrodeCopyProbe</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <!-- x64 obrigatório: um build 32 bits simplesmente não conecta na SE. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AutoEDM.Core\AutoEDM.Core.csproj" />
+  </ItemGroup>
+
+</Project>
+

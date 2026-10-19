@@ -1,5 +1,8 @@
 # Cópia entre peças (Inter-Part) — o que já falhou, o que nunca foi tentado
 
+> **ATUALIZAÇÃO 2026-10-19 — rota resolvida, sem in-place.** Ver a seção 8 no fim. Tudo
+> abaixo da seção 8 é histórico.
+
 > Levantamento de 2026-09-11, feito antes da rodada 2 da sonda
 > (`src/AutoEDM.Core/Experiments/InterPartProbe.cs`). Existe para que ninguém —
 > inclusive nós — volte a gastar rodada em beco já explorado.
@@ -202,3 +205,42 @@ A sonda (`InterPartProbe`, botão "Sonda inter-part") cobre 1 a 5 numa rodada.
 7. **O teste que só o usuário faz:** entrar em edição em contexto à mão, deixar
    aberta, rodar a sonda de novo. Comparar os dois logs responde o que 13
    execuções não responderam — se a cópia depende só desse estado.
+
+---
+
+## 8. Rodada 3 (2026-10-19): a rota completa, medida
+
+Sonda `tools/ElectrodeCopyProbe` (externa, só arquivos descartáveis). A cavidade de teste
+estava numa montagem com rotação de 30° em Z, inclinação de 10° em X e deslocamento.
+As faces do ressalto foram pintadas com RGB (0,127,255).
+
+| Passo | Ordenado | Síncrono |
+|---|---|---|
+| `Constructions.CopyConstructions.Add(arquivo, 1,1,1, –, –, CS, true, false,false,false, –, –, CopyColors=true)` | ✅ Status OK | ✅ |
+| As faces da cópia têm o **mesmo `Face.ID`** da peça de origem | ✅ 5/5 | ✅ 5/5 |
+| `CoordinateSystems.AddByMatrix(M)` como 7º argumento: a cópia cai em **M·p** (a translação T desloca +T; com rotação, erro 0,0000 mm contra R·p+t) | ✅ | ✅ |
+| `CopySurfaces.Add(n, Face[] tipado)` sobre as faces casadas pelo ID | ✅ | ✅ |
+| A cor de origem chega nas faces da superfície | ✅ | ❌ cinza padrão (129,135,140) |
+| `CopySurface.DropParents()` / `CopyConstruction.BreakLinks()` | ✅ / ✅ (`IsBroken = True`) | ❌ `InvalidCastException` (não se aplica) |
+| `CopyConstruction.Delete()`; a superfície continua com as faces e o status OK | ✅ `Constructions.Count = 1` | ✅ `Constructions.Count = 1` |
+
+**A matriz para o eletrodo:** M = E⁻¹·C, onde C é a pose da ocorrência dona das faces e E a
+do eletrodo. No "Criar eletrodo (manual)", E é C com a origem levada ao ponto de queima
+c (centro XY e fundo Z, local da cavidade), então M é a translação pura −c. Faces de OUTRA
+ocorrência pedem M com rotação, e ela também foi medida.
+
+**Ressalvas:** a cópia lê o ARQUIVO, então alterações não salvas da cavidade não entram. Em
+síncrono, a cor tem de ser repintada a partir do estilo das faces de origem.
+
+### 8.1 Implementado (2026-10-19)
+
+O "Criar eletrodo (manual)" copia as faces escolhidas para dentro da peça nova (`Electrode/BurnSurfaceCopier.cs`):
+- a peça nasce em **síncrono**;
+- cada face é **repintada** com o estilo de origem;
+- o vínculo é **quebrado**: a cópia do corpo é apagada e o sistema de coordenadas também.
+
+O eletrodo nasce nos **eixos da montagem**. A matriz de cada fonte é a pose da dona vista do eletrodo (`OccurrenceTransform.SeenFrom`).
+
+Validação pela sonda `tools/ElectrodeCopyProbe --real`: duas ocorrências com poses diferentes, uma delas virada como a 14973.102, com 24 vértices conferidos na montagem e erro 0,0000 mm.
+
+**Cuidado:** nunca rode `SaveCopyAs` + `Documents.Open` + `Close` em volta de uma peça que está em edição em contexto. Isso apagou da memória o corpo do EE01 e o trabalho não salvo (2026-10-19).

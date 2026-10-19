@@ -35,7 +35,7 @@ namespace AutoEDM.Drawing
             dynamic body = doc.Models.Item(1).Body;
             dynamic faces = body.Faces[1]; // igQueryAll
 
-            Dictionary<int, FeatureLook> featureLook = ReadFeatureStyles(doc);
+            Dictionary<int, FaceLook> featureLook = FaceLookReader.ReadFeatureStyles((object)doc);
 
             var raw = new List<RawFace>();
             int n = (int)faces.Count;
@@ -98,9 +98,7 @@ namespace AutoEDM.Drawing
             public Color? Color;
         }
 
-        private sealed class FeatureLook { public string StyleName; public Color? Color; }
-
-        private static RawFace ReadRaw(object face, Dictionary<int, FeatureLook> featureLook)
+        private static RawFace ReadRaw(object face, Dictionary<int, FaceLook> featureLook)
         {
             dynamic f = face;
             var r = new RawFace();
@@ -169,59 +167,9 @@ namespace AutoEDM.Drawing
             }
 
             // Cor: estilo POR FACE primeiro; sem ele, o da feature (pintura padrão do SE).
-            object style = null;
-            try { style = f.Style; } catch { }
-            if (style != null)
-            {
-                r.StyleName = StyleName(style);
-                if (FaceStyleColorReader.TryReadStyleColor(style, out Color col)) r.Color = col;
-                ComLifetime.Release(style);
-            }
-            if (r.StyleName == null && r.Color == null && featureLook.TryGetValue(r.Id, out FeatureLook look))
-            {
-                r.StyleName = look.StyleName; r.Color = look.Color;
-            }
+            FaceLook look = FaceLookReader.Resolve(face, featureLook);
+            if (look != null) { r.StyleName = look.StyleName; r.Color = look.Color; }
             return r;
-        }
-
-        private static Dictionary<int, FeatureLook> ReadFeatureStyles(dynamic doc)
-        {
-            var map = new Dictionary<int, FeatureLook>();
-            try
-            {
-                dynamic feats = doc.Models.Item(1).Features;
-                int n = (int)feats.Count;
-                for (int i = 1; i <= n; i++)
-                {
-                    dynamic feat = feats.Item(i);
-                    object st = null;
-                    try { st = feat.GetStyle(); } catch { }
-                    if (st == null) continue;
-                    var look = new FeatureLook { StyleName = StyleName(st) };
-                    if (FaceStyleColorReader.TryReadStyleColor(st, out Color c)) look.Color = c;
-                    dynamic ff = null;
-                    try { ff = feat.Faces[1]; } catch { try { ff = feat.Faces; } catch { } }
-                    if (ff == null) continue;
-                    int m = (int)ff.Count;
-                    for (int k = 1; k <= m; k++) { try { map[(int)ff.Item(k).ID] = look; } catch { } }
-                }
-            }
-            catch (Exception ex) { Log.Warn("Cor por feature ilegível: " + ex.GetBaseException().Message); }
-            return map;
-        }
-
-        private static string StyleName(object style)
-        {
-            foreach (string p in new[] { "StyleName", "Name" })
-            {
-                try
-                {
-                    object v = style.GetType().InvokeMember(p, BindingFlags.GetProperty, null, style, null);
-                    if (v is string s && s.Length > 0) return s;
-                }
-                catch { }
-            }
-            return null;
         }
 
         // ------------------------------------------------------------------ sistema do eixo

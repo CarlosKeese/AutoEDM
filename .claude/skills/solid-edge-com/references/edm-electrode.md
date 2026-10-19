@@ -123,6 +123,39 @@ Extending the rim up to the block by COM is still unsolved (`ExtendSurfaces.AddE
 sync; see `api-signatures.md`), so the human extends by hand and the button warns when the rim
 stops below the block.
 
+**✅ SOLVED without in-place (measured 2026-10-19, SE 2023 v223).** In the electrode part:
+`Constructions.CopyConstructions.Add(cavityFile, 1,1,1, Missing, Missing, cs, true, false,
+false, false, Missing, Missing, true /*CopyColors*/)` copies the cavity body from its FILE.
+The copied faces keep the **same `Face.ID`** as the source part, so the faces picked in the
+assembly are found by ID. `cs = CoordinateSystems.AddByMatrix(M)` places the copy at M·p (the
+same 16-double layout as `Occurrence.GetMatrix`; with rotation the error was 0.0000 mm). Use
+M = E⁻¹·C (electrode pose⁻¹ · owner pose). Then run `CopySurfaces.Add(n, Face[] typed)` on those
+faces (intra-part) and `CopyConstruction.Delete()`. The surface survives the delete, in both
+modes. Colors reach the surface in **ordered** only; synchronous gives default gray, so repaint
+from the source styles there. `DropParents`/`BreakLinks` work in ordered and throw in sync. The
+copy reads the saved file, so unsaved cavity edits do not come along. Read the
+copy faces' geometry BEFORE `CopySurfaces.Add`: in sync it rebuilds the model and those proxies
+then return nothing. Surface names must be unique, or the rename is ignored silently. Probe:
+`tools/ElectrodeCopyProbe`; details in the AutoEDM repo `docs/INTER-PART.md` §8.
+
+**✅ Closing + stitching + uniting the burn surface (measured 2026-10-19, SE 2023 v223, EE01).**
+- `StitchSurfaces.Add(n, SurfaceArray, Heal, Tol)` wants the surfaces' **BODIES**
+  (`feature.Faces[1].Item(1).Body`), not the features. An array of `CopySurface`, typed with the
+  PIA or as IDispatch, gives `E_NOINTERFACE`; the array of Body works.
+- To mix types (the user's stitch + a new `SurfaceByBoundary` patch), build the
+  `SAFEARRAY(IDispatch)` from a `[ComImport]` interface declared with **IID_IDispatch**
+  (`00020400-0000-0000-C000-000000000046`, `InterfaceIsIDispatch`). Every COM object accepts the
+  cast, and no PIA IID is involved.
+- A new stitch CONSUMES its inputs. The old proxies die (`0x80010114`), and even passing one as an
+  argument to a `dynamic` call throws, because the binder inspects it. Drop them and re-read
+  `Models.Item(1)`.
+- Uniting: `Model.Attach(1, Body[] of the stitch, true, fpcSide=2)` worked.
+  `BooleanFeatures.Add` with a PIA-typed `StitchSurface[]` → `E_NOINTERFACE`.
+- Classifying open edges: the **rim** is the highest closed loop, where the block touches. **Every
+  other closed loop** is a hole to patch, in any orientation (a horizontal pin hole in the floor
+  counts). **Coincident edge pairs** are an unclosed stitch, not a hole: a patch over a zero-width
+  slit gives `E_FAIL`.
+
 **Real workflow clarified (Carlos, 2026-07-17) — Inter-Part Copy DOES work, but only in-context.**
 The human creates the electrode as a new part **in the assembly**, then edits it **in-context**
 (in-place, `AssemblyDocument.ModelingInAssembly`-style) — that in-context mode is what makes

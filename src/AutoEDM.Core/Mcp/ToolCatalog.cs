@@ -311,7 +311,8 @@ namespace AutoEDM.Mcp
                 Description =
                     "Botão 'Criar eletrodo (manual)'. MONTAGEM ativa com a(s) FACE(s) do fundo do bolsão SELECIONADA(s) (o " +
                     "usuário clica na peça e clica de novo no mesmo ponto, ou segura Alt). Cria e posiciona UMA peça no " +
-                    "centro XY e no Z mais fundo das faces, e grava o Ra lido pela cor. Não salva a montagem."
+                    "centro XY e no Z mais fundo das faces, com as faces escolhidas COPIADAS para dentro dela (superfície 'Queima', " +
+                    "sem vínculo com a cavidade, na cor de origem, peça em síncrono), e grava o Ra lido pela cor. Não salva a montagem."
             },
             new ToolSpec
             {

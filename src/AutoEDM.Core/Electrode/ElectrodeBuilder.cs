@@ -24,6 +24,8 @@ namespace AutoEDM.Electrode
         public double CenterYmm { get; set; }
         public double DeepestZmm { get; set; }
         public double TopZmm { get; set; }
+        /// <summary>A cópia das faces de queima para dentro da peça (null se nem tentou).</summary>
+        public BurnCopyResult BurnCopy { get; set; }
     }
 
     /// <summary>
@@ -533,14 +535,14 @@ namespace AutoEDM.Electrode
                                        .Select(k => k.OccurrenceName).Distinct().ToList();
             if (owners.Count > 1)
                 Log.Warn($"Criar eletrodo manual: faces de {owners.Count} ocorrências ({string.Join(", ", owners)}) — " +
-                         $"centro pelas faces de todas; orientação de '{owners[0]}'.");
+                         $"centro pelas faces de todas, cada uma levada à montagem pela própria pose.");
 
-            double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
-            double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
-            int withBox = 0;
-            // Caixas de faces de OUTRA ocorrência vão para o espaço da ocorrência de referência
-            // (a que posiciona o eletrodo) pela pose de cada uma — juntar coordenadas locais de
-            // peças diferentes deslocava o eletrodo (dois postiços lado a lado, 2026-09-24).
+            // EIXOS DA MONTAGEM (Carlos, 2026-10-19: "era para ele gerar de acordo com a origem da
+            // montagem"). O eletrodo NÃO herda mais a orientação da cavidade — com a 14973.102
+            // virada de cabeça para baixo na montagem, ele nascia com o Z invertido. Agora toda
+            // caixa de face vai para o espaço da MONTAGEM pela pose da sua ocorrência, e o eletrodo
+            // fica com rotação identidade, origem no centro XY e no Z mais fundo DA MONTAGEM.
+            // (Substitui a decisão de 2026-09-10, "o eletrodo herda a inclinação".)
             var poses = new Dictionary<string, OccurrenceTransform>();
             OccurrenceTransform PoseOf(PickedFace k)
             {
@@ -549,73 +551,42 @@ namespace AutoEDM.Electrode
                     poses[k.OccurrenceName] = t = AssemblyContext.TryGetPose(WrapOccurrence(k.Occurrence));
                 return t;
             }
-            OccurrenceTransform refPose = PoseOf(owned);
-            int remapped = 0, unmapped = 0;
+
+            // Ocorrência dona quando a seleção não veio embrulhada: casamento por documento.
+            OccurrenceInfo cavity = firstParentOccurrence != null
+                ? WrapOccurrence(firstParentOccurrence)
+                : FindOwningOccurrence(ctx, faces[0]);
+            OccurrenceTransform cavityPose = owned != null ? PoseOf(owned) : (cavity != null ? AssemblyContext.TryGetPose(cavity) : null);
+            OccurrenceTransform PoseOfPick(PickedFace k) => k?.Occurrence != null ? PoseOf(k) : cavityPose;
+            if (cavity == null)
+                Log.Warn("Criar eletrodo manual: não achei a ocorrência (top-level) dona das faces selecionadas " +
+                         "— usando as coordenadas locais como se já fossem da montagem.");
+            else if (cavityPose != null && cavityPose.IsTilted())
+                Log.Info($"Criar eletrodo manual: '{cavity.Name}' está girada/inclinada na montagem ({cavityPose.Describe()}) — " +
+                         "o eletrodo fica nos eixos da MONTAGEM.");
+
+            double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
+            double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
+            int withBox = 0, unmapped = 0;
             foreach (PickedFace k in picks.Where(k => k?.Face != null))
             {
                 if (!FaceGeometry.TryGetRangeMm(k.Face, out double[] mn, out double[] mx)) continue;
-                if (owned != null && k.OccurrenceName != null && k.OccurrenceName != owned.OccurrenceName)
-                {
-                    OccurrenceTransform facePose = PoseOf(k);
-                    if (facePose != null && refPose != null)
-                    {
-                        OccurrenceTransform.MapBoxMm(facePose, refPose, mn, mx, out mn, out mx);
-                        remapped++;
-                    }
-                    else unmapped++;
-                }
+                OccurrenceTransform facePose = PoseOfPick(k);
+                if (facePose != null)
+                    OccurrenceTransform.MapBoxMm(facePose, OccurrenceTransform.Identity(facePose.Layout), mn, mx, out mn, out mx);
+                else unmapped++;
                 withBox++;
                 minX = Math.Min(minX, mn[0]); maxX = Math.Max(maxX, mx[0]);
                 minY = Math.Min(minY, mn[1]); maxY = Math.Max(maxY, mx[1]);
                 minZ = Math.Min(minZ, mn[2]); maxZ = Math.Max(maxZ, mx[2]);
             }
-            if (remapped > 0)
-                Log.Info($"Criar eletrodo manual: {remapped} face(s) de outra(s) ocorrência(s) levadas ao espaço de '{owned.OccurrenceName}' pela pose de cada uma.");
             if (unmapped > 0)
-                Log.Warn($"Criar eletrodo manual: {unmapped} face(s) de outra ocorrência SEM pose legível — entraram em coordenadas locais; confira a posição.");
+                Log.Warn($"Criar eletrodo manual: {unmapped} face(s) SEM pose legível — entraram em coordenadas locais; confira a posição.");
             if (withBox == 0)
             {
                 result.Message = "Não consegui ler a geometria (bounding box) das faces selecionadas.";
                 Log.Warn("Criar eletrodo manual: " + result.Message);
                 return result;
-            }
-
-            // Ocorrência dona das faces (top-level) -> transform peça->montagem, igual ao
-            // fluxo automático (translação + rotação Z; X/Y avisa e não aplica, Log 53).
-            // Preferência: .ImmediateParent capturado direto do embrulho da seleção (confirmado
-            // ao vivo 2026-07-21 — ver ReadSelectedFaces); fallback = casamento por nome de
-            // documento, p/ quando a seleção não vier embrulhada.
-            OccurrenceInfo cavity = firstParentOccurrence != null
-                ? WrapOccurrence(firstParentOccurrence)
-                : FindOwningOccurrence(ctx, faces[0]);
-            double occXmm = 0, occYmm = 0, occZmm = 0, occAz = 0;
-            OccurrenceTransform pose = null;
-            if (cavity != null)
-            {
-                double tiltRad = 0;
-                if (ctx.TryGetPlacement(cavity, out double coxM, out double coyM, out double cozM,
-                                         out double caxRad, out double cayRad, out double cazRad))
-                {
-                    occXmm = Units.MToMm(coxM); occYmm = Units.MToMm(coyM); occZmm = Units.MToMm(cozM);
-                    occAz = cazRad;
-                    tiltRad = Math.Abs(caxRad) + Math.Abs(cayRad);
-                    Log.Info($"Criar eletrodo manual: faces da ocorrência '{cavity.Name}' — origem ({occXmm:0.0}, {occYmm:0.0}, {occZmm:0.0}) mm.");
-                }
-                else Log.Warn($"Criar eletrodo manual: transform de '{cavity.Name}' ilegível — usando coordenadas locais como se fossem da montagem.");
-
-                // Mesma pose 3D do fluxo automático — os dois posicionam pelo mesmo método.
-                pose = AssemblyContext.TryGetPose(cavity);
-                if (pose == null && tiltRad > 1e-4)
-                    Log.Warn("Criar eletrodo manual: ocorrência INCLINADA (rotação X/Y ≠ 0) e matriz ilegível — " +
-                             "só a rotação Z é aplicada; confira a orientação.");
-                else if (pose != null && pose.IsTilted())
-                    Log.Info("Criar eletrodo manual: ocorrência INCLINADA — posicionamento pela matriz completa " +
-                             "(o eletrodo herda a inclinação).");
-            }
-            else
-            {
-                Log.Warn("Criar eletrodo manual: não achei a ocorrência (top-level) dona das faces selecionadas " +
-                         "— usando as coordenadas locais como se já fossem da montagem.");
             }
 
             string electrodeNamePrefix = ElectrodeNaming.ElectrodeNamePrefix(asmDoc);
@@ -635,26 +606,71 @@ namespace AutoEDM.Electrode
             result.DeepestZmm = e.DeepestZmm; result.TopZmm = e.TopZmm;
 
             // Cor->Ra (Carlos, 2026-07-21): lida AQUI, nas faces originais da CAVIDADE ainda na
-            // montagem — é a ÚNICA janela em que a cor de queima está disponível (depois de
-            // copiada/unida, a superfície não carrega mais a cor original, ver [[autoedm-decisions]]).
-            // Best-effort: só orienta o "Aplicar GAP" depois (RaVariableStore); nunca bloqueia a
-            // criação do eletrodo.
+            // montagem. Best-effort: só orienta o "Aplicar GAP" depois (RaVariableStore).
             double? detectedRa = DetectCommonRa(faces, app);
 
             string folder = ElectrodeNaming.ResolveElectrodeFolder(asmDoc, p);
             System.IO.Directory.CreateDirectory(folder);
 
+            // A pose do eletrodo: eixos da montagem, origem no ponto de queima (já em coordenadas
+            // da montagem). O layout do array é o que a SE devolveu no GetMatrix da cavidade.
+            OccurrenceTransform assemblyAxes = OccurrenceTransform.Identity(cavityPose?.Layout ?? MatrixLayout.TranslationLast);
+            OccurrenceTransform electrodePose = assemblyAxes.WithTranslationM(
+                Units.MmToM(e.CenterXmm), Units.MmToM(e.CenterYmm), Units.MmToM(e.DeepestZmm));
+
+            // As faces de queima vão para DENTRO da peça nova (Carlos, 2026-10-19). Uma fonte por
+            // ocorrência dona de faces; a matriz leva o local dela ao local do eletrodo.
+            List<BurnSource> burnSources = BuildBurnSources(picks, cavity, PoseOfPick, electrodePose);
+            var burnCopy = new BurnCopyResult();
+
             string electrodeName = $"{electrodeNamePrefix}{e.Index:00}";
             Log.Info($"Criar eletrodo manual: {electrodeName}, {e.FaceCount} face(s), " +
-                     $"centro local ({e.CenterXmm:0.0}, {e.CenterYmm:0.0}), fundo Z={e.DeepestZmm:0.0} (local).");
+                     $"centro ({e.CenterXmm:0.0}, {e.CenterYmm:0.0}), fundo Z={e.DeepestZmm:0.0} — na MONTAGEM, eixos da montagem.");
 
-            result.Created = CreateAndPlaceElectrode(app, asmDoc, folder, e, occXmm, occYmm, occZmm, occAz, detectedRa, pose);
+            // Ponto já na montagem e pose identidade: CreateAndPlaceElectrode leva o ponto por ela
+            // (fica igual) e escreve a matriz com rotação identidade.
+            result.Created = CreateAndPlaceElectrode(app, asmDoc, folder, e, 0, 0, 0, 0, detectedRa, assemblyAxes,
+                                                     burnSources, burnCopy);
+            result.BurnCopy = burnCopy;
             result.Path = System.IO.Path.Combine(folder, $"{electrodeName}.par");
             result.Message = result.Created
                 ? $"Eletrodo {electrodeName} criado e posicionado no centro de {e.FaceCount} face(s) (fundo Z={e.DeepestZmm:0.0} mm)." +
-                  (detectedRa.HasValue ? $" Ra {detectedRa.Value:0.0} detectado pela cor e gravado na peça." : "")
+                  (detectedRa.HasValue ? $" Ra {detectedRa.Value:0.0} detectado pela cor e gravado na peça." : "") +
+                  (burnSources.Count > 0 ? Environment.NewLine + burnCopy.Summary() : "")
                 : $"Falha ao criar o eletrodo {electrodeName} — veja o log.";
             return result;
+        }
+
+        /// <summary>
+        /// As fontes da cópia da queima: as faces escolhidas agrupadas pela ocorrência dona, cada
+        /// grupo com a matriz que leva o local da peça dele ao local do ELETRODO
+        /// (pose da dona vista do eletrodo). Sem pose legível, a peça é tratada como se o local
+        /// fosse a montagem — o mesmo que a caixa das faces assumiu — e o log avisa.
+        /// </summary>
+        private static List<BurnSource> BuildBurnSources(IList<PickedFace> picks, OccurrenceInfo refOcc,
+            Func<PickedFace, OccurrenceTransform> poseOf, OccurrenceTransform electrodePose)
+        {
+            var sources = new List<BurnSource>();
+            string refName = refOcc?.Name;
+            foreach (var g in picks.Where(k => k?.Face != null).GroupBy(k => k.OccurrenceName ?? refName ?? ""))
+            {
+                PickedFace first = g.First();
+                object occ = first.Occurrence ?? (g.Key == refName ? (object)refOcc?.ComOccurrence : null);
+                if (occ == null) { Log.Warn($"Cópia da queima: {g.Count()} face(s) sem ocorrência dona — ficam de fora."); continue; }
+
+                OccurrenceTransform own = poseOf(first);
+                if (own == null)
+                    Log.Warn($"Cópia da queima: pose de '{g.Key}' ilegível — copiada como se o local dela fosse a montagem; confira.");
+                OccurrenceTransform placement = (own ?? OccurrenceTransform.Identity(electrodePose.Layout)).SeenFrom(electrodePose);
+
+                string file = null; object doc = null;
+                try { file = (string)((dynamic)occ).OccurrenceFileName; } catch { }
+                try { doc = ((dynamic)occ).OccurrenceDocument; } catch { }
+                var src = new BurnSource { Label = g.Key, FilePath = file, SourceDocument = doc, Placement = placement };
+                src.Faces.AddRange(g.Select(k => k.Face));
+                sources.Add(src);
+            }
+            return sources;
         }
 
         /// <summary>
@@ -883,7 +899,8 @@ namespace AutoEDM.Electrode
         /// </summary>
         private bool CreateAndPlaceElectrode(dynamic app, dynamic asmDoc, string folder,
             Selection.ProposedElectrode e, double occXmm, double occYmm, double occZmm, double occAz,
-            double? detectedRa = null, OccurrenceTransform pose = null)
+            double? detectedRa = null, OccurrenceTransform pose = null,
+            IList<BurnSource> burnSources = null, BurnCopyResult burnCopy = null)
         {
             dynamic partDoc = null;
             try
@@ -938,6 +955,22 @@ namespace AutoEDM.Electrode
 
                 partDoc = app.Documents.Add("SolidEdge.PartDocument");
                 if (detectedRa.HasValue) RaVariableStore.TryWrite(partDoc, detectedRa.Value);
+
+                // A queima entra AGORA, com a peça ainda aberta e sem vínculo de montagem — a rota
+                // não precisa de edição em contexto (docs/INTER-PART.md §8). SÍNCRONO: é o ambiente
+                // dos passos seguintes (fechar/costurar, Criar Base, Unir superfícies).
+                if (burnSources != null && burnSources.Count > 0)
+                {
+                    try { if ((int)partDoc.ModelingMode != 1) partDoc.ModelingMode = 1; }
+                    catch (Exception me) { Log.Warn($"Eletrodo {e.Index}: não consegui pôr a peça em síncrono ({me.GetBaseException().Message})."); }
+                    BurnCopyResult copied = BurnSurfaceCopier.Copy((object)partDoc, burnSources);
+                    if (burnCopy != null)
+                    {
+                        burnCopy.Requested = copied.Requested; burnCopy.Copied = copied.Copied; burnCopy.Repainted = copied.Repainted;
+                        burnCopy.Surfaces.AddRange(copied.Surfaces); burnCopy.Warnings.AddRange(copied.Warnings);
+                    }
+                    Log.Info($"Eletrodo {e.Index}: " + copied.Summary());
+                }
 
                 partDoc.SaveAs(path);
                 partDoc.Close();

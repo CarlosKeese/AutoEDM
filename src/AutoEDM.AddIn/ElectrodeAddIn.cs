@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 24; // incrementar ao mudar a ribbon (v24 = botão "Ordenar PathFinder")
+            AddInEx.GuiVersion = 25; // incrementar ao mudar a ribbon (v25 = supertip do "Criar eletrodo (manual)" com a cópia da queima)
 
             Current = this;
             App = application;

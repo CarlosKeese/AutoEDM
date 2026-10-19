@@ -22,6 +22,31 @@ namespace AutoEDM.Electrode
 
         /// <summary>Z varia ao longo da aresta ⇒ é lateral (parede do vão X,Y), não rim horizontal.</summary>
         public bool IsVertical;
+
+        /// <summary>Caixa da aresta (mm), quando lida. Distingue uma aresta reta de um arco com as
+        /// mesmas pontas — sem ela, os dois lados de um furo em "D" pareceriam um par coincidente.</summary>
+        public double[] MinMm, MaxMm;
+    }
+
+    /// <summary>
+    /// O que as arestas abertas de uma superfície de queima SÃO (2026-10-19, EE01 do 14973.102):
+    /// <list type="bullet">
+    /// <item><see cref="Rim"/>: o contorno fechado mais ALTO — a boca da superfície, onde o bloco
+    /// encosta. Fica aberto de propósito (fechá-lo taparia a superfície).</item>
+    /// <item><see cref="Holes"/>: TODO outro contorno fechado, em qualquer orientação — região aberta a
+    /// fechar com "Limite" (furo de pino no piso, vão lateral…). Antes só contornos com aresta
+    /// VERTICAL eram fechados; um furo no piso passava como "rim" e a união desistia.</item>
+    /// <item><see cref="SeamEdges"/>: pares de arestas COINCIDENTES que a costura não juntou. Não são
+    /// buraco — "Limite" sobre uma fenda de largura zero dá E_FAIL; o remédio é a costura.</item>
+    /// <item><see cref="OpenLoops"/>: contornos que não fecham (pontas soltas).</item>
+    /// </list>
+    /// </summary>
+    public sealed class OpenEdgeAnalysis
+    {
+        public OpenEdgeLoop Rim;
+        public readonly List<OpenEdgeLoop> Holes = new List<OpenEdgeLoop>();
+        public readonly List<OpenEdgeSegment> SeamEdges = new List<OpenEdgeSegment>();
+        public readonly List<OpenEdgeLoop> OpenLoops = new List<OpenEdgeLoop>();
     }
 
     /// <summary>Um contorno formado por arestas abertas encadeadas ponta a ponta.</summary>
@@ -138,6 +163,67 @@ namespace AutoEDM.Electrode
                 loops.Add(loop);
             }
             return loops;
+        }
+
+        /// <summary>
+        /// Separa as arestas abertas em rim, furos, costura não fechada e contornos abertos (ver
+        /// <see cref="OpenEdgeAnalysis"/>). Os pares coincidentes saem ANTES do encadeamento: se
+        /// entrassem, o encadeamento misturaria as duas cópias e produziria "contornos" sem área.
+        /// </summary>
+        public static OpenEdgeAnalysis Analyze(IReadOnlyList<OpenEdgeSegment> segments, double tolMm = DefaultJoinToleranceMm)
+        {
+            var result = new OpenEdgeAnalysis();
+            if (segments == null) return result;
+            if (tolMm <= 0) tolMm = DefaultJoinToleranceMm;
+
+            var usable = new List<OpenEdgeSegment>();
+            foreach (OpenEdgeSegment s in segments)
+                if (s != null && s.StartMm != null && s.EndMm != null) usable.Add(s);
+
+            bool[] seam = new bool[usable.Count];
+            for (int i = 0; i < usable.Count; i++)
+            {
+                if (seam[i]) continue;
+                for (int j = i + 1; j < usable.Count; j++)
+                {
+                    if (seam[j] || !Coincident(usable[i], usable[j], tolMm)) continue;
+                    seam[i] = seam[j] = true;
+                    result.SeamEdges.Add(usable[i]);
+                    result.SeamEdges.Add(usable[j]);
+                    break;
+                }
+            }
+
+            var rest = new List<OpenEdgeSegment>();
+            for (int i = 0; i < usable.Count; i++) if (!seam[i]) rest.Add(usable[i]);
+
+            var closed = new List<OpenEdgeLoop>();
+            foreach (OpenEdgeLoop loop in Chain(rest, tolMm))
+                (loop.Closed ? closed : result.OpenLoops).Add(loop);
+
+            // O rim: o contorno fechado mais alto; empate de altura → o de maior pegada em XY.
+            foreach (OpenEdgeLoop loop in closed)
+            {
+                if (result.Rim == null) { result.Rim = loop; continue; }
+                double dz = loop.ZMaxMm - result.Rim.ZMaxMm;
+                if (dz > tolMm || (Math.Abs(dz) <= tolMm && Footprint(loop) > Footprint(result.Rim))) result.Rim = loop;
+            }
+            foreach (OpenEdgeLoop loop in closed) if (!ReferenceEquals(loop, result.Rim)) result.Holes.Add(loop);
+            return result;
+        }
+
+        private static double Footprint(OpenEdgeLoop l) => (l.XMaxMm - l.XMinMm) * (l.YMaxMm - l.YMinMm);
+
+        /// <summary>Mesmas pontas (em qualquer sentido) e, quando as duas têm caixa, a mesma caixa.</summary>
+        private static bool Coincident(OpenEdgeSegment a, OpenEdgeSegment b, double tolMm)
+        {
+            bool ends = (Near(a.StartMm, b.StartMm, tolMm) && Near(a.EndMm, b.EndMm, tolMm)) ||
+                        (Near(a.StartMm, b.EndMm, tolMm) && Near(a.EndMm, b.StartMm, tolMm));
+            if (!ends) return false;
+            // Aresta fechada (círculo: início == fim) só é par de outra com a mesma caixa.
+            if (a.MinMm == null || b.MinMm == null || a.MaxMm == null || b.MaxMm == null)
+                return !Near(a.StartMm, a.EndMm, tolMm);
+            return Near(a.MinMm, b.MinMm, tolMm) && Near(a.MaxMm, b.MaxMm, tolMm);
         }
 
         private static void Summarize(OpenEdgeLoop loop)
