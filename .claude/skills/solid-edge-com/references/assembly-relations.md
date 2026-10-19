@@ -286,6 +286,23 @@ the occurrence — which is the proof that the relation governs rather than mere
   redundancy of three planars is accepted by the solver; the over-definition was entirely
   the bad points. *(field)*
 
+## PathFinder order — `ReorderOccurrence`'s flag is INVERTED ✅ measured (SE 2023 v223)
+
+`Occurrences.ReorderOccurrence(OccurrenceToReorder, TargetOccurrence, AfterTarget)` moves a
+top-level occurrence in the PathFinder. Only the tree order changes; position, relations and
+files stay as they are. `Occurrences.Item(i)` reads back in PathFinder order, so you can verify.
+
+**The 3rd argument does the opposite of its name.** Measured with A|B|C:
+`Reorder(C, A, true)` → **C|A|B** (before), `Reorder(C, A, false)` → **A|C|B** (after).
+Name constants after the measurement (`Before = true`, `After = false`) and always read the
+order back. With the flag taken at face value the result comes out nearly reversed, and no
+exception is thrown.
+
+Sorting recipe: compute the target order, keep a simulated list, and for each position that is
+out of place call `Reorder(want, previousPlaced, After)` (position 0: `Reorder(want,
+currentFirst, Before)`). 151 shuffled occurrences took 1.8 s. AutoEDM:
+`AutoEDM.Core/Assembly/PathFinderOrder.cs`, sonda `tools/PathFinderProbe`.
+
 ## Navigation path
 
 ```

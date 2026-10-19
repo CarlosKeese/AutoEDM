@@ -1,4 +1,4 @@
-﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5, 7 e 8) para os botões do ribbon.
+﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5 e 7..10) para os botões do ribbon.
 # Sem rc.exe: monta o binário .res à mão (formato documentado) + bitmaps via System.Drawing.
 Add-Type -AssemblyName System.Drawing
 
@@ -53,6 +53,13 @@ function New-IconDib([int]$id) {
             $c = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(0,90,200)), 1
             $g.DrawLine($c, 1,2, 14,2); $g.DrawLine($c, 1,1, 1,5); $g.DrawLine($c, 14,1, 14,5)
             $g.DrawLine($c, 2,1, 3,2); $g.DrawLine($c, 2,3, 3,2); $g.DrawLine($c, 13,1, 12,2); $g.DrawLine($c, 13,3, 12,2) }
+        10 { # Ordenar PathFinder: 3 linhas de lista crescendo (cinza) + seta verde para baixo
+            $b = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(90,90,90))
+            $g.FillRectangle($b, 1,2, 4,2); $g.FillRectangle($b, 1,7, 6,2); $g.FillRectangle($b, 1,12, 8,2)
+            $a = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(0,150,60)), 2
+            $g.DrawLine($a, 12,1, 12,13)
+            $tip = [System.Drawing.Point[]]@([System.Drawing.Point]::new(9,10), [System.Drawing.Point]::new(15,10), [System.Drawing.Point]::new(12,15))
+            $g.FillPolygon((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0,150,60))), $tip) }
     }
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
@@ -83,7 +90,7 @@ function Write-ResHeader([UInt32]$dataSize, [UInt16]$typeOrd, [UInt16]$nameOrd, 
 # Cabeçalho nulo obrigatório no início do .res
 Write-ResHeader 0 0 0 0
 
-foreach ($id in @(1, 2, 3, 4, 5, 7, 8, 9)) {   # o 6 (sonda) segue sem imagem, só rótulo
+foreach ($id in @(1, 2, 3, 4, 5, 7, 8, 9, 10)) {   # o 6 (sonda) segue sem imagem, só rótulo
     [byte[]]$dib = New-IconDib $id
     Write-Output ("  id {0}: DIB {1} bytes" -f $id, $dib.Length)
     Write-ResHeader ([UInt32]$dib.Length) 2 ([UInt16]$id) 0x1030  # type 2 = RT_BITMAP

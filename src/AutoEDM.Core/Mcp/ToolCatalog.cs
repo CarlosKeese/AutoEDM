@@ -375,6 +375,26 @@ namespace AutoEDM.Mcp
             },
             new ToolSpec
             {
+                Name = "se_ordenar_pathfinder_plano",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Plano do botão 'Ordenar PathFinder'. MONTAGEM ativa: a ordem atual das ocorrências do 1º nível e a ordem " +
+                    "em sequência pelo código do arquivo, com os números comparados pelo valor (15335.99 < 15335.100 < 15335.101; " +
+                    "posições do mesmo arquivo por :1, :2…). Diz quantas mudam de lugar. Não altera nada."
+            },
+            new ToolSpec
+            {
+                Name = "se_ordenar_pathfinder",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Ordenar PathFinder'. Reordena as ocorrências do 1º nível da MONTAGEM ativa na sequência de " +
+                    "'se_ordenar_pathfinder_plano' e confere a árvore lida de volta. Só a ordem muda — posição, relações e " +
+                    "arquivos ficam como estão; submontagens não são abertas. Não salva a montagem."
+            },
+            new ToolSpec
+            {
                 Name = "se_lista_modificacoes",
                 Writes = false,
                 InputSchemaJson = NoArgs,

@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 23; // incrementar ao mudar a ribbon (v23 = supertip do "Desenho 2D" com GD&T)
+            AddInEx.GuiVersion = 24; // incrementar ao mudar a ribbon (v24 = botão "Ordenar PathFinder")
 
             Current = this;
             App = application;

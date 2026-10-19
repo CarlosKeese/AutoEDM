@@ -1,5 +1,11 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-10-19 — PathFinder order (SE 2023 v223)
+
+New section in `references/assembly-relations.md`: `Occurrences.ReorderOccurrence`'s
+`AfterTarget` flag does the opposite of its name (`true` = before), measured on a throwaway
+assembly, with the sorting recipe and its timing.
+
 ## 2026-10-19 — drawing views and dimensions (SE 2023 v223)
 
 New section in `references/draft-properties-events.md`, measured while building the AutoEDM

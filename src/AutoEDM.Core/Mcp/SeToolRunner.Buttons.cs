@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using AutoEDM.Assembly;
 using AutoEDM.Com;
 using AutoEDM.Config;
 using AutoEDM.Diagnostics;
@@ -54,6 +55,8 @@ namespace AutoEDM.Mcp
                 case "se_ficha": return SpecSheet(app, doc);
                 case "se_desenho_2d_plano": return TurnedDrawing(app, doc, create: false);
                 case "se_desenho_2d": return TurnedDrawing(app, doc, create: true);
+                case "se_ordenar_pathfinder_plano": return SortPathFinder(doc, apply: false);
+                case "se_ordenar_pathfinder": return SortPathFinder(doc, apply: true);
                 case "se_criar_base": return CreateBase(app, doc, argsJson);
                 case "se_unir_superficies": return UniteSurfaces(doc);
                 case "se_aplicar_gap": return ApplyGap(doc, argsJson);
@@ -297,6 +300,17 @@ namespace AutoEDM.Mcp
         /// desenho novo. O documento criado fica aberto e SEM salvar — salvar (e o nome) é do Carlos,
         /// e assim nenhum .dft que já existe ao lado da peça corre risco de ser sobrescrito.
         /// </summary>
+        /// <summary>Botão "Ordenar PathFinder": o plano (só leitura) ou a reordenação conferida.</summary>
+        private static string SortPathFinder(dynamic doc, bool apply)
+        {
+            PathFinderSortResult r = apply ? PathFinderSorter.Apply((object)doc) : PathFinderSorter.Plan((object)doc);
+            string text = r.Summary();
+            if (r.Ok && r.Moves > 0) text += Environment.NewLine + (apply ? "Ordem nova:" : "Ordem proposta (→ = muda de lugar):") +
+                                             Environment.NewLine + r.Listing(120);
+            if (apply && r.Ok && r.Moves > 0) text += "A montagem NÃO foi salva.";
+            return text;
+        }
+
         private static string TurnedDrawing(dynamic app, dynamic doc, bool create)
         {
             TurnedProfile profile = TurnedProfileReader.Read((object)doc, new FinishCatalog());

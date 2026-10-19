@@ -55,6 +55,7 @@ namespace AutoEDM.AddIn
         private const int CmdMalhaParaSolido = 28;  // ENG. REVERSA: malha → sólido pela rota prismática (cria PEÇA NOVA) — era 26 até a fusão com o grupo Molde
         private const int CmdLimparImportacao = 29; // IMPORTAÇÃO: peças geometricamente iguais -> uma cópia só, e relações óbvias
         private const int CmdDesenho2D = 30;        // DESENHO: .dft novo da peça torneada, cotado pelas cores das faces
+        private const int CmdOrdenarPathFinder = 31; // MOLDE: ocorrências do 1º nível em sequência pelo código (15335.100, .101…)
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -104,6 +105,7 @@ namespace AutoEDM.AddIn
                 case CmdMalhaParaSolido: MalhaParaSolido(); break;
                 case CmdLimparImportacao: LimparImportacao(); break;
                 case CmdDesenho2D: Desenho2D(); break;
+                case CmdOrdenarPathFinder: OrdenarPathFinder(); break;
             }
         }
 
@@ -643,6 +645,38 @@ namespace AutoEDM.AddIn
 
                 MessageBox.Show(res.Summary + Environment.NewLine + "O desenho está aberto e AINDA NÃO FOI SALVO.", title,
                     MessageBoxButtons.OK, res.Failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            });
+        }
+
+        /// <summary>
+        /// Botão "Ordenar PathFinder" (ambiente de MONTAGEM, Carlos, 2026-10-19): as ocorrências do 1º
+        /// nível em sequência pelo código do arquivo — 15335.100.par antes de 15335.101.par, e os
+        /// números comparados pelo valor (15335.99 antes de 15335.100). Mostra a ordem nova antes,
+        /// confere a árvore lida de volta depois e não salva a montagem.
+        /// </summary>
+        private void OrdenarPathFinder()
+        {
+            const string title = "AutoEDM — Ordenar PathFinder";
+            Run(CmdOrdenarPathFinder, (connector, doc, p) =>
+            {
+                AutoEDM.Assembly.PathFinderSortResult plan = AutoEDM.Assembly.PathFinderSorter.Plan((object)doc);
+                if (!plan.Ok || plan.AlreadySorted)
+                {
+                    MessageBox.Show(plan.Summary(), title, MessageBoxButtons.OK,
+                        plan.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    return;
+                }
+                Log.Info(plan.Summary());
+                string ask = plan.Summary() + Environment.NewLine +
+                    "Ordem nova (→ = muda de lugar):" + Environment.NewLine + plan.Listing() + Environment.NewLine +
+                    "Só a ORDEM da árvore muda — posição, relações e arquivos ficam como estão. " +
+                    "Submontagens não são abertas. A montagem NÃO é salva.";
+                if (!ShowReport(title, ask, "Ordenar")) return;
+
+                AutoEDM.Assembly.PathFinderSortResult res = AutoEDM.Assembly.PathFinderSorter.Apply((object)doc);
+                Log.Info(res.Summary());
+                MessageBox.Show(res.Summary() + Environment.NewLine + "Confira o PathFinder e SALVE se estiver certo.", title,
+                    MessageBoxButtons.OK, res.Ok && res.Failures.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             });
         }
 
@@ -1618,6 +1652,8 @@ namespace AutoEDM.AddIn
                 // relaciona). Não cria recurso de peça nenhum, então o ambiente de modelagem
                 // das peças não entra na conta.
                 { CmdLimparImportacao,    new CommandSpec("LIMPAR IMPORTAÇÃO (peças repetidas)",  DocKind.Assembly, ModelingEnv.Any) },
+                // Só muda a ORDEM da árvore — nada de geometria, então qualquer ambiente serve.
+                { CmdOrdenarPathFinder,   new CommandSpec("ORDENAR PATHFINDER",   DocKind.Assembly, ModelingEnv.Any) },
 
                 // --- peça: cada botão tem UM ambiente, o do recurso que ele cria ---
                 // Bloco + faixa + furos: extrusão e furação da família síncrona (BlankModeler),

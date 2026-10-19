@@ -182,7 +182,7 @@ Read only the file you need; each is self-contained.
 | Setting up discovery, the typelib dumper, the SPY, the action recorder | `references/discovery.md` |
 | A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts, ordered-tree groups, feature↔body face IDs, document properties, ribbon GuiVersion cache | `references/api-signatures.md` |
 | Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered | `references/modeling-recipes.md` |
-| Placing parts, ground/contact/flush/axial relations, and why relations say "solved" and govern nothing | `references/assembly-relations.md` |
+| Placing parts, ground/contact/flush/axial relations, and why relations say "solved" and govern nothing; reordering occurrences in the PathFinder (`ReorderOccurrence` flag is inverted) | `references/assembly-relations.md` |
 | Draft sheets and sections (a new draft has **6** sheets, not 1), drawing views in any orientation, dimensions from code (attach to `.Reference`, born-wrong flips, keypoint placement), tolerances, GD&T frames and datums, balloons, title block, PDF export, file properties, events and the message pump | `references/draft-properties-events.md` |
 | Putting a button inside SE: add-in registration, the two interfaces people confuse, ribbon XML, RT_BITMAP icons, HKCU registration, deploy folder, .NET 10 comhost, modeless dialogs, picking a face or edge | `references/addin-ribbon.md` |
 | The EDM electrode flow specifically: burn-surface copy, stitch, attach-to-block, GAP offset | `references/edm-electrode.md` |

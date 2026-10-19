@@ -24,6 +24,10 @@
               screentip="Canal de anel O’ring pela ISO 3601 (PEÇA, modelagem ORDENADA)"
               supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
               imageId="1" showLabel="true" />
+      <button id="31" size="large" label="Ordenar PathFinder"
+              screentip="Peças da MONTAGEM em sequência pelo código no PathFinder (15335.100, 15335.101…)"
+              supertip="Na MONTAGEM: reordena as ocorrências do 1º nível do PathFinder pelo nome do arquivo, com os números comparados pelo valor — 15335.100.par vem antes de 15335.101.par, 15335.99 antes de 15335.100, e as posições da mesma peça ficam juntas (:1, :2, :10). Mostra a ordem nova antes de mexer e confere a árvore lida de volta depois. Só a ORDEM muda: posição, relações e arquivos ficam como estão; submontagens não são abertas. Não salva a montagem."
+              imageId="10" showLabel="true" />
     </group>
     <group name="Importação">
       <button id="29" size="large" label="Limpar importação"
