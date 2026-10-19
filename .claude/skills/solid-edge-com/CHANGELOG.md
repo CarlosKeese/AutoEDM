@@ -11,6 +11,9 @@ display types, named-style switch and the title-block refresh. Second pass: plac
 key points copied from a hand-made drawing, and GD&T (FCF symbol codes from
 `DraftFCF.txt`, AddByTerminator + AddVertex placement, datum symbols, hidden edges).
 
+The SKILL.md description and routing table now name 2D drafting (views, dimensions,
+tolerances, GD&T, balloons, title block, PDF export), so drawing work triggers the skill.
+
 ## 2026-10-17 — reconnaissance pass against SE 2026 build 226.00.08.004 x64
 
 Everything below came out of a dedicated recon project (`E:\Code\SE-API-Recon`): a full
