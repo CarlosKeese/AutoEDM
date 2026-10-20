@@ -147,6 +147,10 @@ the dimension is created, attached to something, and shows a wrong number.
   different slopes). Concave arcs (groove) report k0 where the leader touches; use it.
 - Chamfer with leader: `TerminatorPosition = true`, `BreakPosition = 3`, `BreakDistance`
   = knee leg; `TrackDistance` = vertical leg, sign depends on the picked line — verify by k4.
+  The text side flips with `BreakPosition`: on a leader going UP, 3 puts the text right of
+  the knee and 1 puts it left (measured 2026-10-20; the leader going down already falls left with 3).
+- A radius label's text always runs to the RIGHT of the knee, whatever `BreakPosition` or
+  `TerminatorPosition` says — to get it out of the way, move the knee (lower), not the side.
 - Angle: `SetKeyPoint(6, x, y)` moves the text and the arc follows.
 - Circular Ø in an end view: `TrackAngle = π` makes it horizontal; check k6 is above.
 - Balloon with leader: `Balloons.Add(textX, textY, 0)` → `Leader/Callout=1/BalloonType=0`
@@ -168,12 +172,18 @@ the dimension is created, attached to something, and shows a wrong number.
   render as literal text — no error.)
 - Placement that works: `FeatureControlFrames.AddByTerminator(target, x, y, 0, false)` →
   `PrimaryFrame` → **`AddVertex(boxX, boxY, 0)`**: the box moves to the vertex and the leader
-  bends to the target. `Add(x,y)` + `SetTerminator` jumps the box onto the terminator;
-  `SetKeyPoint(0, …)` on it moves only Y.
-- `target` can be a **Dimension** (frame on a Ø dimension = controls the axis) — use its
-  key point 4 (top end of the dim line) as the terminator point.
+  bends to the target. The box is CENTERED on the vertex (≈18 mm wide with 2 cells, ≈20 mm
+  with 3, ≈6 mm tall at the house style). `Add(x,y)` + `SetTerminator` jumps the box onto the
+  terminator; `SetKeyPoint(0, …)` on it moves only Y.
+- `target` can be a **Dimension** (frame on a Ø dimension = controls the axis). The terminator
+  SNAPS to the dim line's TOP end (outer end, 3 mm past k4) whatever point you pass — passing
+  k5 still lands on top (measured 2026-10-20). Lay frames on Ø dimensions out ABOVE the stack.
 - Datum: `DatumFrames.AddByTerminator(dimOrEdgeRef, x, y, 0, false)` then `.Datum = "A"`;
   on a Ø dimension's k5 (bottom end) = axis datum, on a face edge = plane datum.
+  `AddVertex` on a datum frame does NOT move it to the vertex (it slides along its line).
+- Datum on the feature's own frame (ISO): `DatumFrames.AddByTerminator(fcf, x, boxBottomY, 0,
+  false)` hangs the symbol right under the box at x (≈5 mm wide, 6 mm tall). Passing the
+  frame's `Range` bottom instead lands on the leader end — use the box edge (vertex y − 3 mm).
 - Hidden edges for bores: `drawingView.Defaults_ShowHiddenEdges = true` before `Update()`;
   the hidden DV lines are matched and dimensioned like visible ones.
 

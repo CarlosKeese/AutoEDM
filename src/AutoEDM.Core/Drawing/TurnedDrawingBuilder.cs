@@ -628,7 +628,7 @@ namespace AutoEDM.Drawing
                     ApplyTolerance((object)d, spec.Finish, spec.Face.External);
 
                     // Chamada com joelho (Leader + BreakPosition 3); o joelho (ponto-chave 3) vai para uma
-                    // escada que desce ~10,5 mm por raio, da direita para a esquerda, como no desenho à mão.
+                    // escada que desce ~10,5 mm por raio, da direita para a esquerda.
                     // TrackDistance aqui NÃO é a inclinação da chamada (o Carlos tem 0,61 em todas, com
                     // inclinações diferentes) — mover o ponto-chave é o controle que funciona.
                     TrySet(() => d.Leader = true);
@@ -636,8 +636,9 @@ namespace AutoEDM.Drawing
                     TrySet(() => d.BreakPosition = 3);
                     double ax = KeyX((object)d, 0), ay = KeyY((object)d, 0);   // onde a chamada toca o arco
                     if (double.IsNaN(ax)) { ax = _m.SheetX(it.Item2.Cx); ay = _m.SheetY(it.Item2.Cy - it.Item2.R); }
-                    double y = Math.Min(bottom + 0.005 - k * 0.0105, ay - 0.008);
-                    double x = ax + Math.Max(0.016, (ay - y) * 0.9);
+                    // Bem abaixo da peça: o vão logo embaixo é das chamadas do GD&T das faces planas da direita.
+                    double y = Math.Min(bottom - 0.020 - k * 0.0105, ay - 0.008);
+                    double x = ax + Math.Max(0.010, (ay - y) * 0.5);
                     object rd = d;
                     TrySet(() => Call(rd, "SetKeyPoint", new object[] { 3, x, y, 0.0 }));
                     k++;
@@ -688,7 +689,10 @@ namespace AutoEDM.Drawing
                     double drop = down ? Math.Max(chY - (_m.SheetY(_m.BottomLocalY) - 0.015), 0.010)
                                        : Math.Max((_m.SheetY(_m.TopLocalY) + 0.025) - chY, 0.010);
                     TrySet(() => d.TerminatorPosition = true);
-                    TrySet(() => d.BreakPosition = 3);
+                    // Texto para FORA da peça: o de baixo com 3 já cai à esquerda; o de cima, com 3,
+                    // cairia à direita, em cima das linhas de chamada das cotas no eixo — com 1 vai à
+                    // esquerda (medido na SE em 2026-10-20).
+                    TrySet(() => d.BreakPosition = down ? 3 : 1);
                     TrySet(() => d.BreakDistance = 0.004);
                     PlaceAndVerify((object)d, drop, kd => down ? KeyY(kd, 4) < chY : KeyY(kd, 4) > chY);
                 }
@@ -734,16 +738,68 @@ namespace AutoEDM.Drawing
             /// </summary>
             public void Gdt(GdtPlan gdt)
             {
-                if (gdt.DatumA != null) DatumSymbol(gdt.DatumA, "A");
-                if (gdt.DatumB != null) DatumSymbol(gdt.DatumB, "B");
-                _slots[0] = _slots[1] = 0;
-                // Mais perto do eixo primeiro: as chamadas curtas ficam embaixo e não cruzam as longas.
-                foreach (GdtFrame f in gdt.Frames) ControlFrame(f);
+                // Um quadro por (alvo, texto): o Ø "3x" é uma cota só e duas faces planas na mesma
+                // aresta da vista pegam a mesma linha — sem isso saíam quadros repetidos.
+                var items = new List<FrameItem>();
+                foreach (GdtFrame f in gdt.Frames)
+                {
+                    FrameItem it = Anchor(f);
+                    if (it == null) continue;
+                    if (items.Any(o => ReferenceEquals(o.Target, it.Target) && o.Text == it.Text)) continue;
+                    if (ReferenceEquals(f.Face, gdt.DatumA)) it.Datum = "A";
+                    else if (ReferenceEquals(f.Face, gdt.DatumB)) it.Datum = "B";
+                    items.Add(it);
+                }
+
+                double left = _m.SheetX(_m.LeftLocalX), right = _m.SheetX(_m.RightLocalX), mid = (left + right) / 2;
+                double top = _m.SheetY(_m.TopLocalY);
+                foreach (FrameItem it in items.Where(i => i.Kind == AnchorKind.EndView))
+                    // Ø da vista de topo: logo acima da própria cota (a chamada não atravessa a folha).
+                    Place(it, KeyX(it.Target, 6) - it.Width / 2, KeyY(it.Target, 6) + 0.006);
+
+                // Ø da lateral: escada ACIMA da escadinha de Ø (a SE prende a chamada na ponta de CIMA
+                // da linha de cota, qualquer que seja o ponto pedido). Direita: caixa à direita da
+                // pega, a pega mais à direita no 1º degrau; esquerda, espelhado. Nessa ordem a
+                // chamada de um degrau nunca atravessa a caixa de outro.
+                var diam = items.Where(i => i.Kind == AnchorKind.Diameter).ToList();
+                Staircase(diam.Where(i => i.Ax >= mid).OrderByDescending(i => i.Ax), +1);
+                Staircase(diam.Where(i => i.Ax < mid).OrderBy(i => i.Ax), -1);
+
+                // Faces planas da esquerda: coluna ACIMA da peça, antes da ponta (a pega mais perto
+                // da coluna no degrau de baixo). As da direita: em cima elas cruzariam as cotas no
+                // eixo e a escada de Ø, então descem — chamada no pé da aresta, coluna além da ponta,
+                // a pega mais à direita no degrau de cima.
+                var planes = items.Where(i => i.Kind == AnchorKind.Plane).ToList();
+                Column(planes.Where(i => i.Ax < mid).OrderBy(i => i.Ax), i => left - FrameGap - i.Width, top);
+                var lower = planes.Where(i => i.Ax >= mid).OrderByDescending(i => i.Ax).ToList();
+                foreach (FrameItem it in lower)
+                    if (AnchorOnFace(it.Frame.Face, below: true, out object t, out double bx, out double by)) { it.Target = t; it.Ax = bx; it.Ay = by; }
+                double yDown = Math.Min(LowestDiameterEnd(), _m.SheetY(_m.BottomLocalY)) - FrameGap - 0.006;
+                double xDown = right + 0.015;
+                foreach (FrameItem it in lower)
+                {
+                    // Cada degrau 3 mm mais à esquerda: a chamada do de baixo passa por baixo da caixa de cima.
+                    Place(it, xDown + it.Width / 2, yDown);
+                    xDown -= 0.003;
+                    yDown -= FrameRow + (it.Datum != null ? DatumRoom : 0);
+                }
+
+                // Referência sem quadro onde pendurar (o quadro falhou): na própria feição, como antes.
+                if (gdt.DatumA != null && !items.Any(i => i.Datum == "A" && i.Placed)) DatumSymbol(gdt.DatumA, "A");
+                if (gdt.DatumB != null && !items.Any(i => i.Datum == "B" && i.Placed)) DatumSymbol(gdt.DatumB, "B");
             }
 
-            /// <summary>Quadros empilhados por lado (0 = esquerda, 1 = direita).</summary>
-            private readonly int[] _slots = new int[2];
+            private enum AnchorKind { EndView, Diameter, Plane }
+
+            private sealed class FrameItem
+            {
+                public GdtFrame Frame; public object Target; public double Ax, Ay, Width;
+                public string Text, Datum; public AnchorKind Kind; public bool Placed;
+            }
+
             private const double FrameRow = 0.008, FrameGap = 0.004;
+            /// <summary>Altura que o símbolo de referência ocupa embaixo da caixa (caixa ~6 mm + folga).</summary>
+            private const double DatumRoom = 0.007;
 
             private void DatumSymbol(RevolvedFace face, string letter)
             {
@@ -762,45 +818,87 @@ namespace AutoEDM.Drawing
             }
 
             /// <summary>
-            /// Quadro de controle numa COLUNA além da ponta da peça do lado da feição, empilhado de
-            /// 8 mm em 8 mm acima da peça (abaixo da fileira de cotas no eixo), com chamada até a cota
-            /// de Ø (ponta de cima da linha de cota) ou até a aresta da face plana.
+            /// Onde a chamada do quadro pega: Ø da lateral na ponta de BAIXO da linha de cota (é o
+            /// eixo que se controla; a de cima fica livre), Ø da vista de topo na própria cota, face
+            /// plana no alto da aresta.
             /// </summary>
-            private void ControlFrame(GdtFrame f)
+            private FrameItem Anchor(GdtFrame f)
             {
-                string what = "GD&T " + f;
+                var it = new FrameItem { Frame = f, Text = FrameText(f), Width = f.Datum == null ? 0.018 : 0.020 };
+                if (_diamDims.TryGetValue(f.Face, out object dim))
+                {
+                    it.Target = dim;
+                    if (_endViewDims.Contains(dim)) { it.Kind = AnchorKind.EndView; it.Ax = KeyX(dim, 4); it.Ay = KeyY(dim, 4); return it; }
+                    it.Kind = AnchorKind.Diameter;
+                    int high = KeyY(dim, 4) >= KeyY(dim, 5) ? 4 : 5;
+                    it.Ax = KeyX(dim, high); it.Ay = KeyY(dim, high);
+                    return it;
+                }
+                if (!AnchorOnFace(f.Face, below: false, out object target, out double ax, out double ay))
+                { _r.Failed.Add("GD&T " + f + ": aresta não achada"); return null; }
+                it.Target = target; it.Ax = ax; it.Ay = ay; it.Kind = AnchorKind.Plane;
+                return it;
+            }
+
+            /// <summary>Degraus de 8 mm subindo a partir de logo acima da escadinha de Ø (o 1º degrau é o de baixo).</summary>
+            private void Staircase(IEnumerable<FrameItem> ordered, int side)
+            {
+                double y = Math.Max(DiameterEnds().DefaultIfEmpty(_m.SheetY(_m.TopLocalY)).Max(), _m.SheetY(_m.TopLocalY)) + FrameGap + 0.006;
+                foreach (FrameItem it in ordered)
+                {
+                    if (it.Datum != null) y += DatumRoom;   // o símbolo pendura embaixo da caixa
+                    double x = side > 0 ? it.Ax + 0.003 + it.Width / 2 : it.Ax - 0.003 - it.Width / 2;
+                    Place(it, x, y);
+                    y += FrameRow;
+                }
+            }
+
+            /// <summary>Pontas (Y de folha) das linhas de cota de Ø da vista lateral.</summary>
+            private IEnumerable<double> DiameterEnds() =>
+                _diamDims.Values.Distinct().Where(d => !_endViewDims.Contains(d))
+                         .SelectMany(d => new[] { KeyY(d, 4), KeyY(d, 5) }).Where(v => !double.IsNaN(v));
+
+            private double LowestDiameterEnd() => DiameterEnds().DefaultIfEmpty(_m.SheetY(_m.BottomLocalY)).Min();
+
+            /// <summary>Coluna subindo de 8 mm em 8 mm a partir de logo acima da peça.</summary>
+            private void Column(IEnumerable<FrameItem> ordered, Func<FrameItem, double> x, double top)
+            {
+                double y = top + FrameGap;
+                foreach (FrameItem it in ordered)
+                {
+                    if (it.Datum != null) y += DatumRoom;   // o símbolo pendura embaixo da caixa
+                    Place(it, x(it) + it.Width / 2, y);
+                    y += FrameRow;
+                }
+            }
+
+            /// <summary>
+            /// Cria o quadro com a caixa centrada em (<paramref name="x"/>, <paramref name="y"/>) e,
+            /// se a face é referência, pendura o símbolo embaixo da caixa (ISO: referência no quadro
+            /// da própria feição).
+            /// </summary>
+            private void Place(FrameItem it, double x, double y)
+            {
+                string what = "GD&T " + it.Frame;
                 try
                 {
-                    double ax, ay; object target;
-                    if (!_diamDims.TryGetValue(f.Face, out object dim)) dim = null;
-                    if (dim != null) { target = dim; ax = KeyX(dim, 4); ay = KeyY(dim, 4); }
-                    else if (!AnchorOnFace(f.Face, below: false, out target, out ax, out ay)) { _r.Failed.Add(what + ": aresta não achada"); return; }
-
-                    double left = _m.SheetX(_m.LeftLocalX), right = _m.SheetX(_m.RightLocalX);
-                    string text = FrameText(f);
-                    double width = 0.007 * (f.Datum == null ? 2 : 3);
-                    double x, y;
-                    if (dim != null && _endViewDims.Contains(dim))
-                    {
-                        // Ø da vista de topo: o quadro fica logo acima da própria cota, não na coluna
-                        // da vista lateral (a chamada atravessaria a folha).
-                        x = KeyX(dim, 6) - width / 2; y = KeyY(dim, 6) + 0.006;
-                    }
-                    else
-                    {
-                        int side = ax >= (left + right) / 2 ? 1 : 0;
-                        y = _m.SheetY(_m.TopLocalY) + FrameGap + _slots[side]++ * FrameRow;
-                        // Direita: afastada o bastante para não cruzar a última cota no eixo.
-                        x = side == 1 ? right + 0.020 : left - FrameGap - width;
-                    }
-
                     // Ordem que funciona (2026-10-19): criar PRESO à cota, preencher, e só então
-                    // AddVertex — a caixa vai para o vértice e a chamada dobra até a cota. Com Add +
-                    // SetTerminator a caixa salta para cima da ponta da chamada e ignora a posição.
-                    dynamic fcf = _sheet.FeatureControlFrames.AddByTerminator(target, ax, ay, 0.0, false);
-                    fcf.PrimaryFrame = text;
+                    // AddVertex — a caixa vai para o vértice (centro) e a chamada dobra até a cota. Com
+                    // Add + SetTerminator a caixa salta para cima da ponta da chamada e ignora a posição.
+                    dynamic fcf = _sheet.FeatureControlFrames.AddByTerminator(it.Target, it.Ax, it.Ay, 0.0, false);
+                    fcf.PrimaryFrame = it.Text;
                     fcf.AddVertex(x, y, 0.0);
                     _r.Created++;
+                    it.Placed = true;
+                    if (it.Datum == null) return;
+                    // Preso à borda de baixo da caixa (y − 3 mm), o símbolo pendura dali para baixo.
+                    try
+                    {
+                        dynamic df = _sheet.DatumFrames.AddByTerminator((object)fcf, x - it.Width / 2 + 0.002, y - 0.003, 0.0, false);
+                        df.Datum = it.Datum;
+                        _r.Created++;
+                    }
+                    catch (Exception ex) { it.Placed = false; _r.Failed.Add($"referência {it.Datum} no quadro: {Msg(ex)}"); }
                 }
                 catch (Exception ex) { _r.Failed.Add(what + ": " + Msg(ex)); }
             }
