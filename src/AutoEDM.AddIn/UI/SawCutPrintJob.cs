@@ -213,6 +213,29 @@ namespace AutoEDM.AddIn.UI
             _font = _bold = _title = null;
         }
 
+        /// <summary>Impressora virtual do Windows 10/11 que grava PDF — vem instalada por padrão.</summary>
+        public const string PdfPrinterName = "Microsoft Print to PDF";
+
+        /// <summary>
+        /// "Exportar PDF" (Carlos, 2026-10-20): a MESMA folha da impressão, mandada para a
+        /// <see cref="PdfPrinterName"/> com <c>PrintToFile</c> — sem diálogo de impressora nem de
+        /// "Salvar como", e sem dependência nova. Papel A4 quando a impressora oferece. O spooler grava
+        /// o arquivo de forma assíncrona: quem chama confere se ele apareceu.
+        /// </summary>
+        public void ExportPdf(string path)
+        {
+            PrinterSettings ps = Document.PrinterSettings;
+            ps.PrinterName = PdfPrinterName;
+            if (!ps.IsValid)
+                throw new InvalidOperationException($"a impressora \"{PdfPrinterName}\" não está instalada no Windows");
+            ps.PrintToFile = true;
+            ps.PrintFileName = path;
+            PaperSize a4 = ps.PaperSizes.Cast<PaperSize>().FirstOrDefault(p => p.Kind == PaperKind.A4);
+            if (a4 != null) Document.DefaultPageSettings.PaperSize = a4;
+            Document.PrintController = new StandardPrintController(); // sem a janela "Imprimindo página N"
+            Document.Print();
+        }
+
         /// <summary>Não descarta as miniaturas — elas são dos itens (a janela da lista reaproveita).</summary>
         public void Dispose()
         {

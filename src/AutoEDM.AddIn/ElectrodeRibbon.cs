@@ -702,8 +702,10 @@ namespace AutoEDM.AddIn
                 }
                 string asmName = null;
                 try { asmName = (string)doc.Name; } catch { }
+                string asmFolder = null;
+                try { asmFolder = System.IO.Path.GetDirectoryName((string)doc.FullName); } catch { }
                 using (var form = new SawCutListForm(items, builder.BlankCatalog, asmName,
-                           it => builder.RenderElectrodeThumbnail(it.PartDocument)))
+                           it => builder.RenderElectrodeThumbnail(it.PartDocument), asmFolder))
                 {
                     form.ShowDialog();
                 }

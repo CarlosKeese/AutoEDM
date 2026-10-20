@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using AutoEDM.Diagnostics;
@@ -25,6 +26,7 @@ namespace AutoEDM.AddIn.UI
         private bool _filling;
         private readonly IReadOnlyList<SawCutListItem> _items;
         private readonly Func<SawCutListItem, Image> _thumbnailProvider;
+        private readonly string _assemblyFolder;
 
         /// <summary>Item da lista de perfis (precisa ser público com propriedades p/ o data binding do combo).</summary>
         public sealed class ProfileOption
@@ -34,9 +36,11 @@ namespace AutoEDM.AddIn.UI
         }
 
         /// <param name="thumbnailProvider">Gera a miniatura de um item (lê a peça no SE). Null = imprime sem imagens.</param>
+        /// <param name="assemblyFolder">Pasta onde o "Exportar PDF" abre. Null = a última do Windows.</param>
         public SawCutListForm(IReadOnlyList<SawCutListItem> items, IReadOnlyList<BlankSpec> catalog, string assemblyName,
-            Func<SawCutListItem, Image> thumbnailProvider = null)
+            Func<SawCutListItem, Image> thumbnailProvider = null, string assemblyFolder = null)
         {
+            _assemblyFolder = assemblyFolder;
             items = items ?? new SawCutListItem[0];
             _items = items;
             _thumbnailProvider = thumbnailProvider;
@@ -136,10 +140,21 @@ namespace AutoEDM.AddIn.UI
             btnPrint.Click += (s, e) => PrintDirect();
             Controls.Add(btnPrint);
 
+            var btnPdf = new Button
+            {
+                Text = "Exportar PDF...",
+                Width = 120, Height = 28,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+            };
+            btnPdf.Left = btnPrint.Left - btnPdf.Width - 8;
+            btnPdf.Top = btnClose.Top;
+            btnPdf.Click += (s, e) => ExportPdf();
+            Controls.Add(btnPdf);
+
             _status = new Label
             {
                 AutoSize = false,
-                Left = 8, Top = btnClose.Top, Height = 28, Width = btnPrint.Left - 16,
+                Left = 8, Top = btnClose.Top, Height = 28, Width = btnPdf.Left - 16,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 Text = "Linhas em laranja pedem conferência. Troque o perfil clicando na coluna \"Perfil\".",
@@ -215,14 +230,19 @@ namespace AutoEDM.AddIn.UI
             return _grid.Rows.Cast<DataGridViewRow>().Select(r => (SawCutListItem)r.Tag).ToList();
         }
 
+        /// <summary>Avisa das linhas sem medida de corte; false = o usuário desistiu.</summary>
+        private bool ConfirmPending(List<SawCutListItem> items, string action)
+        {
+            int pending = SawCutReportFormatter.PendingCount(items);
+            return pending == 0 || MessageBox.Show(this,
+                    $"{pending} eletrodo(s) ainda sem medida de corte (perfil não identificado).\n\n{action} mesmo assim?",
+                    "AutoEDM — Lista de corte", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+        }
+
         private void PrintDirect()
         {
             List<SawCutListItem> items = GridItems();
-            int pending = SawCutReportFormatter.PendingCount(items);
-            if (pending > 0 && MessageBox.Show(this,
-                    $"{pending} eletrodo(s) ainda sem medida de corte (perfil não identificado).\n\nImprimir mesmo assim?",
-                    "AutoEDM — Lista de corte", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                return;
+            if (!ConfirmPending(items, "Imprimir")) return;
 
             GenerateThumbnails(items);
             try
@@ -243,6 +263,71 @@ namespace AutoEDM.AddIn.UI
             {
                 _status.Text = "A impressão falhou — " + ex.GetBaseException().Message;
                 Log.Warn("Lista de corte: impressão falhou — " + ex.GetBaseException().Message);
+            }
+        }
+
+        /// <summary>
+        /// Mesma folha do "Imprimir" (com miniaturas), gravada em PDF. Abre na pasta da montagem com o
+        /// nome dela; ao terminar oferece abrir o arquivo.
+        /// </summary>
+        private void ExportPdf()
+        {
+            List<SawCutListItem> items = GridItems();
+            if (!ConfirmPending(items, "Exportar")) return;
+
+            string path;
+            using (var dialog = new SaveFileDialog
+            {
+                Title = "Exportar lista de corte em PDF",
+                Filter = "PDF (*.pdf)|*.pdf",
+                DefaultExt = "pdf",
+                OverwritePrompt = true,
+                FileName = "Lista de corte" +
+                           (string.IsNullOrWhiteSpace(_assemblyName) ? "" : " - " + Path.GetFileNameWithoutExtension(_assemblyName)) + ".pdf",
+            })
+            {
+                if (!string.IsNullOrEmpty(_assemblyFolder) && Directory.Exists(_assemblyFolder))
+                    dialog.InitialDirectory = _assemblyFolder;
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                path = dialog.FileName;
+            }
+
+            GenerateThumbnails(items);
+            Cursor old = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            try
+            {
+                // A impressora PDF não sobrescreve um arquivo aberto em outro programa: falha aqui, com mensagem clara.
+                if (File.Exists(path)) File.Delete(path);
+                using (var job = new SawCutPrintJob(items, _assemblyName, DateTime.Now))
+                    job.ExportPdf(path);
+
+                // O spooler grava depois que o Print() volta — espera o arquivo aparecer (até 15 s).
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                while (!(File.Exists(path) && new FileInfo(path).Length > 0) && sw.ElapsedMilliseconds < 15000)
+                    System.Threading.Thread.Sleep(200);
+
+                if (!File.Exists(path))
+                {
+                    _status.Text = "O PDF não apareceu — confira a fila da impressora \"" + SawCutPrintJob.PdfPrinterName + "\".";
+                    Log.Warn($"Lista de corte: PDF não encontrado após a impressão em '{path}'.");
+                    return;
+                }
+                _status.Text = "PDF gravado: " + path;
+                Log.Info($"Lista de corte: PDF exportado em '{path}' ({items.Count} linha(s)).");
+                Cursor.Current = old;
+                if (MessageBox.Show(this, "PDF gravado em:\n" + path + "\n\nAbrir agora?", "AutoEDM — Lista de corte",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                    System.Diagnostics.Process.Start(path);
+            }
+            catch (Exception ex)
+            {
+                _status.Text = "A exportação para PDF falhou — " + ex.GetBaseException().Message;
+                Log.Warn("Lista de corte: exportação PDF falhou — " + ex.GetBaseException().Message);
+            }
+            finally
+            {
+                Cursor.Current = old;
             }
         }
 
