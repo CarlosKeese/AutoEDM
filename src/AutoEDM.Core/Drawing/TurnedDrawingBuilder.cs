@@ -163,14 +163,14 @@ namespace AutoEDM.Drawing
             catch (Exception ex) { result.Failed.Add("isométrica: " + Msg(ex)); }
 
             // --- cotas
-            var dims = new DimensionWriter((object)sheet, map, options, result) { EndView = endView, IsoView = isoView, AllFaces = profile.Faces };
+            var dims = new DimensionWriter((object)sheet, map, options, result) { EndView = endView, IsoView = isoView, AllFaces = profile.Faces, DatumA = gdt.DatumA };
             dims.CenterLine();
             dims.Stations(plan, OriginZ(profile, plan, gdt, map));
             dims.Diameters(plan);
-            dims.Radii(plan);
             dims.Chamfers(plan);
             dims.Angles(plan);
             dims.Gdt(gdt);
+            dims.Radii(plan);   // depois do GD&T: o rótulo desce além dos quadros de baixo
             dims.PropertyBalloon();
 
             // Carimbo: os campos ligados às propriedades da peça só resolvem depois do vínculo.
@@ -429,9 +429,25 @@ namespace AutoEDM.Drawing
                 _sheet = sheet; _dims = ((dynamic)sheet).Dimensions; _m = map; _o = o; _r = r;
             }
 
+            /// <summary>
+            /// Linha de centro PRESA às arestas das duas pontas da peça (AddByStartEnd): acompanha a
+            /// vista e a peça. O estilo já a prolonga ~3,5 mm além de cada ponta (medido 2026-10-20).
+            /// Sem as arestas, cai na linha solta de antes.
+            /// </summary>
             public void CenterLine()
             {
                 double y = _m.SheetY(0);
+                DvLine l = EndEdge(_m.LeftLocalX), r = EndEdge(_m.RightLocalX);
+                if (l != null && r != null)
+                {
+                    try
+                    {
+                        _centerLine = (object)_sheet.CenterLines.AddByStartEnd(
+                            l.Ref, _m.SheetX(l.X1), y, 0.0, false, r.Ref, _m.SheetX(r.X1), y, 0.0, false);
+                        return;
+                    }
+                    catch (Exception ex) { _r.Failed.Add("linha de centro presa às pontas (ficou solta): " + Msg(ex)); }
+                }
                 try
                 {
                     _centerLine = (object)_sheet.CenterLines.Add(
@@ -439,6 +455,11 @@ namespace AutoEDM.Drawing
                 }
                 catch (Exception ex) { _r.Failed.Add("linha de centro: " + Msg(ex)); }
             }
+
+            /// <summary>Aresta vertical mais comprida na ponta (x local) que atravessa o eixo.</summary>
+            private DvLine EndEdge(double localX) =>
+                _m.Lines.Where(e => e.Vertical && Math.Abs(e.X1 - localX) < SideViewMap.Tol && e.MinY < 0 && e.MaxY > 0)
+                        .OrderByDescending(e => e.MaxY - e.MinY).FirstOrDefault();
 
             // ---------------------------------------------------------------- estações no eixo
 
@@ -469,8 +490,9 @@ namespace AutoEDM.Drawing
                     try { d = _dims.AddCoordinateEx(origin, e.Ref, e.X, e.Y, 0.0, e.KeyPoint, e.X, textY, 0.0); }
                     catch (Exception ex) { _r.Failed.Add(what + ": " + Msg(ex)); continue; }
                     if (!Check((object)d, Math.Abs(s.Z - o.Z), what)) continue;
-                    // Posição de face colorida leva a tolerância da cor (coluna de eixos/ressaltos).
-                    ApplyTolerance((object)d, s.Finish, true);
+                    // Posição de face colorida leva a tolerância da cor (coluna de eixos/ressaltos) —
+                    // só os afastamentos: classe de ajuste (g6/H7) é de Ø, não de comprimento.
+                    ApplyTolerance((object)d, s.Finish, true, withFit: false);
                 }
             }
 
@@ -512,9 +534,28 @@ namespace AutoEDM.Drawing
                 var specs = plan.Diameters.Where(d => !ReferenceEquals(d, flange)).ToList();
                 var rightSide = specs.Where(d => FaceCenterX(d.Face) >= center).OrderBy(d => d.Diameter).ToList();
                 var leftSide = specs.Where(d => FaceCenterX(d.Face) < center).OrderBy(d => d.Diameter).ToList();
-                for (int i = 0; i < rightSide.Count; i++) SideDiameter(rightSide[i], right + FirstStep + i * Pitch, +1);
-                for (int i = 0; i < leftSide.Count; i++) SideDiameter(leftSide[i], left - FirstStep - i * Pitch, -1);
+                Ladder(rightSide, right, +1);
+                Ladder(leftSide, left, -1);
             }
+
+            /// <summary>Face da referência A: o símbolo pendura na ponta da cota de Ø dela.</summary>
+            public RevolvedFace DatumA { get; set; }
+
+            /// <summary>
+            /// Escadinha de Ø para fora da ponta. Depois da cota da referência A o passo cresce:
+            /// o símbolo pendura do lado de fora da linha (~6 mm) e cairia em cima do texto da próxima.
+            /// </summary>
+            private void Ladder(List<DiameterSpec> specs, double edge, int side)
+            {
+                double offset = FirstStep;
+                foreach (DiameterSpec spec in specs)
+                {
+                    SideDiameter(spec, edge + side * offset, side);
+                    offset += Pitch + (ReferenceEquals(spec.Face, DatumA) ? DatumRoom : 0);
+                }
+            }
+
+            private const double DatumRoom = 0.007;
 
             /// <summary>Guarda a cota para a face e para as faces iguais que ela representa ("2x").</summary>
             private void Remember(DiameterSpec spec, object dim)
@@ -546,7 +587,8 @@ namespace AutoEDM.Drawing
                 double pickX = _m.SheetX(lx);
 
                 // A pega na linha de centro decide o LADO: a ponta dela do lado da escadinha.
-                double clX = side > 0 ? _m.SheetX(_m.RightLocalX) + 0.003 : _m.SheetX(_m.LeftLocalX) - 0.003;
+                // Dentro do prolongamento de ~3,5 mm da linha de centro presa às pontas.
+                double clX = side > 0 ? _m.SheetX(_m.RightLocalX) + 0.002 : _m.SheetX(_m.LeftLocalX) - 0.002;
                 dynamic d;
                 try
                 {
@@ -638,6 +680,8 @@ namespace AutoEDM.Drawing
                     if (double.IsNaN(ax)) { ax = _m.SheetX(it.Item2.Cx); ay = _m.SheetY(it.Item2.Cy - it.Item2.R); }
                     // Bem abaixo da peça: o vão logo embaixo é das chamadas do GD&T das faces planas da direita.
                     double y = Math.Min(bottom - 0.020 - k * 0.0105, ay - 0.008);
+                    // O texto fica ~4 mm acima do patamar; a caixa de baixo vai até 3 mm sob o centro.
+                    if (!double.IsNaN(LowestFrameY)) y = Math.Min(y, LowestFrameY - 0.011 - k * 0.0105);
                     double x = ax + Math.Max(0.010, (ay - y) * 0.5);
                     object rd = d;
                     TrySet(() => Call(rd, "SetKeyPoint", new object[] { 3, x, y, 0.0 }));
@@ -732,12 +776,15 @@ namespace AutoEDM.Drawing
             }
 
             /// <summary>
-            /// GD&amp;T: símbolo de referência e quadros de controle. Face com cota de Ø recebe o quadro
-            /// pendurado na PONTA DE CIMA da linha de cota (é o eixo que se controla) e o símbolo de
-            /// referência na ponta de BAIXO; face plana recebe na própria aresta.
+            /// GD&amp;T: só tolerância de posição. As referências levam o símbolo na própria feição
+            /// (A na ponta de baixo da cota de Ø, B no pé da aresta); cada quadro tem chamada
+            /// VERTICAL saindo da pega e linha de quebra (patamar) até a caixa.
             /// </summary>
             public void Gdt(GdtPlan gdt)
             {
+                if (gdt.DatumA != null) DatumSymbol(gdt.DatumA, "A");
+                if (gdt.DatumB != null) DatumSymbol(gdt.DatumB, "B");
+
                 // Um quadro por (alvo, texto): o Ø "3x" é uma cota só e duas faces planas na mesma
                 // aresta da vista pegam a mesma linha — sem isso saíam quadros repetidos.
                 var items = new List<FrameItem>();
@@ -746,60 +793,68 @@ namespace AutoEDM.Drawing
                     FrameItem it = Anchor(f);
                     if (it == null) continue;
                     if (items.Any(o => ReferenceEquals(o.Target, it.Target) && o.Text == it.Text)) continue;
-                    if (ReferenceEquals(f.Face, gdt.DatumA)) it.Datum = "A";
-                    else if (ReferenceEquals(f.Face, gdt.DatumB)) it.Datum = "B";
                     items.Add(it);
                 }
 
                 double left = _m.SheetX(_m.LeftLocalX), right = _m.SheetX(_m.RightLocalX), mid = (left + right) / 2;
-                double top = _m.SheetY(_m.TopLocalY);
                 foreach (FrameItem it in items.Where(i => i.Kind == AnchorKind.EndView))
                     // Ø da vista de topo: logo acima da própria cota (a chamada não atravessa a folha).
-                    Place(it, KeyX(it.Target, 6) - it.Width / 2, KeyY(it.Target, 6) + 0.006);
+                    Place(it, -1, KeyX(it.Target, 6), KeyY(it.Target, 6) + 0.006, vertical: false);
 
                 // Ø da lateral: escada ACIMA da escadinha de Ø (a SE prende a chamada na ponta de CIMA
-                // da linha de cota, qualquer que seja o ponto pedido). Direita: caixa à direita da
-                // pega, a pega mais à direita no 1º degrau; esquerda, espelhado. Nessa ordem a
-                // chamada de um degrau nunca atravessa a caixa de outro.
+                // da linha de cota, qualquer que seja o ponto pedido). Caixa do lado de fora da pega,
+                // a pega mais de fora no 1º degrau: a chamada vertical de um degrau nunca atravessa
+                // a caixa de outro. Se a caixa de fora passaria da margem da folha, o lado inteiro
+                // vira para dentro (caixa antes da pega, a pega mais de dentro no 1º degrau).
+                double sheetRight = SheetWidth() - SheetMargin;
                 var diam = items.Where(i => i.Kind == AnchorKind.Diameter).ToList();
-                Staircase(diam.Where(i => i.Ax >= mid).OrderByDescending(i => i.Ax), +1);
-                Staircase(diam.Where(i => i.Ax < mid).OrderBy(i => i.Ax), -1);
+                double y = Math.Max(DiameterEnds().DefaultIfEmpty(_m.SheetY(_m.TopLocalY)).Max(), _m.SheetY(_m.TopLocalY)) + FrameGap + 0.006;
+                var rightDiam = diam.Where(i => i.Ax >= mid).ToList();
+                if (rightDiam.Any(i => i.Ax + BreakLeg + i.Width > sheetRight))
+                    Staircase(rightDiam.OrderBy(i => i.Ax), -1, y, +FrameRow);
+                else
+                    Staircase(rightDiam.OrderByDescending(i => i.Ax), +1, y, +FrameRow);
+                var leftDiam = diam.Where(i => i.Ax < mid).ToList();
+                if (leftDiam.Any(i => i.Ax - BreakLeg - i.Width < SheetMargin))
+                    Staircase(leftDiam.OrderByDescending(i => i.Ax), +1, y, +FrameRow);
+                else
+                    Staircase(leftDiam.OrderBy(i => i.Ax), -1, y, +FrameRow);
 
-                // Faces planas da esquerda: coluna ACIMA da peça, antes da ponta (a pega mais perto
-                // da coluna no degrau de baixo). As da direita: em cima elas cruzariam as cotas no
-                // eixo e a escada de Ø, então descem — chamada no pé da aresta, coluna além da ponta,
-                // a pega mais à direita no degrau de cima.
+                // Faces planas: em cima a chamada vertical cairia sobre a linha de chamada da cota no
+                // eixo da mesma face, então todas descem — pega no pé da aresta, escada abaixo da
+                // escadinha de Ø, caixa à direita, a pega mais à direita no 1º degrau. As duas metades
+                // da peça começam no mesmo degrau: as da esquerda não empurram as da direita para baixo.
                 var planes = items.Where(i => i.Kind == AnchorKind.Plane).ToList();
-                Column(planes.Where(i => i.Ax < mid).OrderBy(i => i.Ax), i => left - FrameGap - i.Width, top);
-                var lower = planes.Where(i => i.Ax >= mid).OrderByDescending(i => i.Ax).ToList();
-                foreach (FrameItem it in lower)
+                foreach (FrameItem it in planes)
                     if (AnchorOnFace(it.Frame.Face, below: true, out object t, out double bx, out double by)) { it.Target = t; it.Ax = bx; it.Ay = by; }
-                double yDown = Math.Min(LowestDiameterEnd(), _m.SheetY(_m.BottomLocalY)) - FrameGap - 0.006;
-                double xDown = right + 0.015;
-                foreach (FrameItem it in lower)
-                {
-                    // Cada degrau 3 mm mais à esquerda: a chamada do de baixo passa por baixo da caixa de cima.
-                    Place(it, xDown + it.Width / 2, yDown);
-                    xDown -= 0.003;
-                    yDown -= FrameRow + (it.Datum != null ? DatumRoom : 0);
-                }
-
-                // Referência sem quadro onde pendurar (o quadro falhou): na própria feição, como antes.
-                if (gdt.DatumA != null && !items.Any(i => i.Datum == "A" && i.Placed)) DatumSymbol(gdt.DatumA, "A");
-                if (gdt.DatumB != null && !items.Any(i => i.Datum == "B" && i.Placed)) DatumSymbol(gdt.DatumB, "B");
+                y = Math.Min(LowestDiameterEnd(), _m.SheetY(_m.BottomLocalY)) - FrameGap - 0.006;
+                double a = Staircase(planes.Where(i => i.Ax >= mid).OrderByDescending(i => i.Ax), +1, y, -FrameRow);
+                double b = Staircase(planes.Where(i => i.Ax < mid).OrderByDescending(i => i.Ax), +1, y, -FrameRow);
+                LowestFrameY = double.IsNaN(a) ? b : double.IsNaN(b) ? a : Math.Min(a, b);
             }
+
+            /// <summary>Margem da moldura da folha (m): o template da casa desenha a borda a 10 mm.</summary>
+            private const double SheetMargin = 0.012;
+
+            private double SheetWidth()
+            {
+                try { return (double)_sheet.SheetSetup.SheetWidth; } catch { return 0.420; }
+            }
+
+            /// <summary>Y (folha) do degrau mais baixo usado pelo GD&amp;T embaixo da peça — os raios descem além dele.</summary>
+            public double LowestFrameY { get; private set; } = double.NaN;
 
             private enum AnchorKind { EndView, Diameter, Plane }
 
             private sealed class FrameItem
             {
                 public GdtFrame Frame; public object Target; public double Ax, Ay, Width;
-                public string Text, Datum; public AnchorKind Kind; public bool Placed;
+                public string Text; public AnchorKind Kind;
             }
 
             private const double FrameRow = 0.008, FrameGap = 0.004;
-            /// <summary>Altura que o símbolo de referência ocupa embaixo da caixa (caixa ~6 mm + folga).</summary>
-            private const double DatumRoom = 0.007;
+            /// <summary>Patamar da linha de quebra entre a chamada e a caixa.</summary>
+            private const double BreakLeg = 0.005;
 
             private void DatumSymbol(RevolvedFace face, string letter)
             {
@@ -818,13 +873,14 @@ namespace AutoEDM.Drawing
             }
 
             /// <summary>
-            /// Onde a chamada do quadro pega: Ø da lateral na ponta de BAIXO da linha de cota (é o
-            /// eixo que se controla; a de cima fica livre), Ø da vista de topo na própria cota, face
-            /// plana no alto da aresta.
+            /// Onde a chamada do quadro pega: Ø da lateral na ponta de CIMA da linha de cota (é o
+            /// eixo que se controla), Ø da vista de topo na própria cota, face plana na aresta.
             /// </summary>
             private FrameItem Anchor(GdtFrame f)
             {
-                var it = new FrameItem { Frame = f, Text = FrameText(f), Width = f.Datum == null ? 0.018 : 0.020 };
+                // Largura da caixa (m de folha) no estilo da casa: ~6,5 mm por célula.
+                // Largura medida da caixa no estilo da casa: 3 células ~20 mm, com o Ø ~27 mm.
+                var it = new FrameItem { Frame = f, Text = FrameText(f), Width = f.DiameterZone ? 0.027 : f.Datum == null ? 0.014 : 0.020 };
                 if (_diamDims.TryGetValue(f.Face, out object dim))
                 {
                     it.Target = dim;
@@ -840,17 +896,20 @@ namespace AutoEDM.Drawing
                 return it;
             }
 
-            /// <summary>Degraus de 8 mm subindo a partir de logo acima da escadinha de Ø (o 1º degrau é o de baixo).</summary>
-            private void Staircase(IEnumerable<FrameItem> ordered, int side)
+            /// <summary>
+            /// Degraus a partir de <paramref name="y"/>, andando <paramref name="step"/> por quadro;
+            /// caixa do lado <paramref name="side"/> da pega. Devolve o último Y usado.
+            /// </summary>
+            private double Staircase(IEnumerable<FrameItem> ordered, int side, double y, double step)
             {
-                double y = Math.Max(DiameterEnds().DefaultIfEmpty(_m.SheetY(_m.TopLocalY)).Max(), _m.SheetY(_m.TopLocalY)) + FrameGap + 0.006;
+                double last = double.NaN;
                 foreach (FrameItem it in ordered)
                 {
-                    if (it.Datum != null) y += DatumRoom;   // o símbolo pendura embaixo da caixa
-                    double x = side > 0 ? it.Ax + 0.003 + it.Width / 2 : it.Ax - 0.003 - it.Width / 2;
-                    Place(it, x, y);
-                    y += FrameRow;
+                    Place(it, side, it.Ax, y, vertical: true);
+                    last = y;
+                    y += step;
                 }
+                return last;
             }
 
             /// <summary>Pontas (Y de folha) das linhas de cota de Ø da vista lateral.</summary>
@@ -860,47 +919,50 @@ namespace AutoEDM.Drawing
 
             private double LowestDiameterEnd() => DiameterEnds().DefaultIfEmpty(_m.SheetY(_m.BottomLocalY)).Min();
 
-            /// <summary>Coluna subindo de 8 mm em 8 mm a partir de logo acima da peça.</summary>
-            private void Column(IEnumerable<FrameItem> ordered, Func<FrameItem, double> x, double top)
-            {
-                double y = top + FrameGap;
-                foreach (FrameItem it in ordered)
-                {
-                    if (it.Datum != null) y += DatumRoom;   // o símbolo pendura embaixo da caixa
-                    Place(it, x(it) + it.Width / 2, y);
-                    y += FrameRow;
-                }
-            }
-
             /// <summary>
-            /// Cria o quadro com a caixa centrada em (<paramref name="x"/>, <paramref name="y"/>) e,
-            /// se a face é referência, pendura o símbolo embaixo da caixa (ISO: referência no quadro
-            /// da própria feição).
+            /// Cria o quadro com linha de quebra: chamada da pega até (<paramref name="x"/>, y), patamar
+            /// e a caixa do lado <paramref name="side"/>. Com <paramref name="vertical"/>, a ponta da
+            /// chamada fica em x exato: o deslocamento entre o vértice pedido e onde a SE põe a ponta
+            /// depende do lado e da largura real da caixa, então mede-se (k1) e, se errou, recria-se
+            /// corrigido — o AddVertex é uma translação, uma correção basta.
             /// </summary>
-            private void Place(FrameItem it, double x, double y)
+            private void Place(FrameItem it, int side, double x, double y, bool vertical)
             {
                 string what = "GD&T " + it.Frame;
                 try
                 {
-                    // Ordem que funciona (2026-10-19): criar PRESO à cota, preencher, e só então
-                    // AddVertex — a caixa vai para o vértice (centro) e a chamada dobra até a cota. Com
-                    // Add + SetTerminator a caixa salta para cima da ponta da chamada e ignora a posição.
-                    dynamic fcf = _sheet.FeatureControlFrames.AddByTerminator(it.Target, it.Ax, it.Ay, 0.0, false);
-                    fcf.PrimaryFrame = it.Text;
-                    fcf.AddVertex(x, y, 0.0);
-                    _r.Created++;
-                    it.Placed = true;
-                    if (it.Datum == null) return;
-                    // Preso à borda de baixo da caixa (y − 3 mm), o símbolo pendura dali para baixo.
-                    try
+                    // Palpite medido em 2026-10-20: caixa à direita, a ponta sai ~meia caixa antes do
+                    // vértice; à esquerda o vértice é o centro da caixa.
+                    double vx = side > 0 ? x + it.Width / 2 : x - BreakLeg - it.Width / 2;
+                    dynamic fcf = Frame(it, vx, y, side);
+                    if (vertical && fcf != null)
                     {
-                        dynamic df = _sheet.DatumFrames.AddByTerminator((object)fcf, x - it.Width / 2 + 0.002, y - 0.003, 0.0, false);
-                        df.Datum = it.Datum;
-                        _r.Created++;
+                        double err = x - KeyX((object)fcf, 1);
+                        if (!double.IsNaN(err) && Math.Abs(err) > 0.0003)
+                        {
+                            try { fcf.Delete(); } catch { }
+                            fcf = Frame(it, vx + err, y, side);
+                        }
                     }
-                    catch (Exception ex) { it.Placed = false; _r.Failed.Add($"referência {it.Datum} no quadro: {Msg(ex)}"); }
+                    if (fcf != null) _r.Created++;
                 }
                 catch (Exception ex) { _r.Failed.Add(what + ": " + Msg(ex)); }
+            }
+
+            private dynamic Frame(FrameItem it, double vx, double y, int side)
+            {
+                // Ordem que funciona (2026-10-19): criar PRESO à cota, preencher, e só então
+                // AddVertex — a caixa vai para o vértice e a chamada dobra até a cota. Com Add +
+                // SetTerminator a caixa salta para cima da ponta da chamada e ignora a posição.
+                dynamic fcf = _sheet.FeatureControlFrames.AddByTerminator(it.Target, it.Ax, it.Ay, 0.0, false);
+                fcf.PrimaryFrame = it.Text;
+                fcf.AddVertex(vx, y, 0.0);
+                // Linha de quebra (patamar entre a chamada e a caixa); a direção põe a caixa à
+                // esquerda (true) ou à direita (false) da ponta da chamada.
+                TrySet(() => fcf.BreakLine = true);
+                TrySet(() => fcf.BreakLineDistance = BreakLeg);
+                TrySet(() => fcf.BreakLineDirection = side < 0);
+                return fcf;
             }
 
             /// <summary>Texto do quadro na sintaxe da SE: símbolo, separador de célula e referência.</summary>
@@ -909,15 +971,16 @@ namespace AutoEDM.Drawing
                 string sym;
                 switch (f.Symbol)
                 {
-                    // Códigos da própria SE (Template\Reports\DraftFCF.txt): %CY cilindricidade,
-                    // %PP perpendicularidade, %PR paralelismo; células separadas por "|".
+                    // Códigos da própria SE (Template\Reports\DraftFCF.txt): %PO posição, %DI Ø,
+                    // %CY cilindricidade, %PP perpendicularidade, %PR paralelismo; células separadas por "|".
+                    case GdtSymbol.Position: sym = "%PO"; break;
                     case GdtSymbol.Cylindricity: sym = "%CY"; break;
                     case GdtSymbol.Flatness: sym = "%FL"; break;
                     case GdtSymbol.Perpendicularity: sym = "%PP"; break;
                     case GdtSymbol.Parallelism: sym = "%PR"; break;
                     default: sym = "%CR"; break;
                 }
-                string t = f.Tolerance.ToString("0.0##", CultureInfo.GetCultureInfo("pt-BR"));
+                string t = (f.DiameterZone ? "%DI" : "") + f.Tolerance.ToString("0.0##", CultureInfo.GetCultureInfo("pt-BR"));
                 return f.Datum == null ? $"{sym}|{t}" : $"{sym}|{t}|{f.Datum}";
             }
 
@@ -1014,13 +1077,13 @@ namespace AutoEDM.Drawing
                 try { return (double)d.Value * 1000.0; } catch { return double.NaN; }
             }
 
-            private void ApplyTolerance(object dimObj, FinishClass finish, bool external)
+            private void ApplyTolerance(object dimObj, FinishClass finish, bool external, bool withFit = true)
             {
                 if (finish == null) return;
                 dynamic d = dimObj;
                 ToleranceBand band = finish.For(external);
                 if (band == null) return; // "Verificar": sem número na tabela
-                string fit = finish.FitFor(external);
+                string fit = withFit ? finish.FitFor(external) : null;
                 try
                 {
                     d.DisplayType = fit != null ? DisplayHoleShaftWithTol : DisplayTolerance;

@@ -35,7 +35,7 @@ namespace AutoEDM.Drawing
             foreach (AngleSpec a in plan.Angles) sb.AppendLine($"  {N(a.IncludedDeg)}°{Why("cone de saída", a.Face.Finish)}");
 
             GdtPlan gdt = GdtPlan.Build(profile);
-            sb.AppendLine($"GD&T (forma e posição 0,01 — nota da tabela): {gdt.Frames.Count} quadro(s)");
+            sb.AppendLine($"GD&T (posição 0,01 — nota da tabela): {gdt.Frames.Count} quadro(s)");
             if (gdt.DatumA != null) sb.AppendLine($"  referência A = eixo do Ø{N(2 * gdt.DatumA.R0)} ({gdt.DatumA.Finish.ColorName})");
             if (gdt.DatumB != null) sb.AppendLine($"  referência B = face plana em Z={N(gdt.DatumB.Z0)} ({gdt.DatumB.Finish.ColorName})");
             foreach (GdtFrame f in gdt.Frames) sb.AppendLine($"  {Feature(f.Face)}: {f}");

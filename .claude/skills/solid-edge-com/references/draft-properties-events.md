@@ -181,6 +181,22 @@ the dimension is created, attached to something, and shows a wrong number.
 - Datum: `DatumFrames.AddByTerminator(dimOrEdgeRef, x, y, 0, false)` then `.Datum = "A"`;
   on a Ø dimension's k5 (bottom end) = axis datum, on a face edge = plane datum.
   `AddVertex` on a datum frame does NOT move it to the vertex (it slides along its line).
+- **Break line (dog-leg) on a frame** (measured 2026-10-20): `fcf.BreakLine = true`,
+  `BreakLineDistance` = shelf length, `BreakLineDirection` false = box RIGHT of the leader end,
+  true = box LEFT. Key points: k0 terminator, **k1 = leader end** (shelf start), k4 = shelf end
+  at the box, k2 = vertex. Where `AddVertex(x, …)` puts k1 depends on the side and on the box's
+  real width (box right: k1 ≈ x − w/2; box left: x is the box center). `SetVertex(1, …)` and
+  `Move` are inconsistent across frames — for a VERTICAL leader create, read k1, and if it
+  missed, `Delete` and recreate with x corrected by the error (AddVertex is a translation).
+- Measured box widths at the house style: 3 cells ≈ 20 mm; `%PO|%DI0,01|A` (position, Ø zone)
+  ≈ 27 mm. Position = `%PO`, Ø in a cell = `%DI` prefix of the value.
+- A datum frame on a dimension cannot be moved off the dimension line: `Leader = true` +
+  `AddVertex` slides it horizontally, `AddByTerminator` beyond the line end leaves it floating.
+  Leave room next to the dimension line instead.
+- Associative centerline: `CenterLines.AddByStartEnd(edgeRef1, x1, y1, 0, false, edgeRef2, x2,
+  y2, 0, false)` on the two end edges of the part (DVLine `.Reference`) — follows the view, and
+  the style extends it ~3.5 mm past each end. `CenterLines.Add(x1,y1,0,x2,y2,0)` is loose
+  geometry. Deleting a centerline deletes the symmetric Ø dimensions hanging on it.
 - Datum on the feature's own frame (ISO): `DatumFrames.AddByTerminator(fcf, x, boxBottomY, 0,
   false)` hangs the symbol right under the box at x (≈5 mm wide, 6 mm tall). Passing the
   frame's `Range` bottom instead lands on the leader end — use the box edge (vertex y − 3 mm).

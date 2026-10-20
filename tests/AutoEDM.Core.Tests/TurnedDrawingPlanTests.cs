@@ -179,31 +179,39 @@ namespace AutoEDM.Core.Tests
         }
 
         [Fact]
-        public void Gdt_FramesFollowTheColors()
+        public void Gdt_FramesFollowTheColors_AllPosition()
         {
             GdtPlan g = GdtPlan.Build(Cdt());
-            Assert.Contains(g.Frames, f => f.Face.Id == 25 && f.Symbol == GdtSymbol.Cylindricity && f.Datum == null);
-            Assert.Contains(g.Frames, f => f.Face.Id == 102 && f.Symbol == GdtSymbol.Perpendicularity && f.Datum == "A");
-            // Os outros cilindros verdes: batimento a A.
+            // As referências levam só o símbolo, sem quadro.
+            Assert.DoesNotContain(g.Frames, f => f.Face.Id == 25 || f.Face.Id == 102);
+            // Os outros cilindros verdes: posição Ø a A (zona cilíndrica no eixo).
             foreach (int id in new[] { 97, 148, 56 })
-                Assert.Contains(g.Frames, f => f.Face.Id == id && f.Symbol == GdtSymbol.CircularRunout && f.Datum == "A");
-            // A outra ponta azul-clara: paralelismo a B.
-            Assert.Contains(g.Frames, f => f.Face.Id == 410 && f.Symbol == GdtSymbol.Parallelism && f.Datum == "B");
+                Assert.Contains(g.Frames, f => f.Face.Id == id && f.Symbol == GdtSymbol.Position && f.Datum == "A" && f.DiameterZone);
+            // A outra ponta azul-clara: posição a B, sem Ø.
+            Assert.Contains(g.Frames, f => f.Face.Id == 410 && f.Symbol == GdtSymbol.Position && f.Datum == "B" && !f.DiameterZone);
+            Assert.All(g.Frames, f => Assert.Equal(GdtSymbol.Position, f.Symbol));
             // Vedação e água não pedem forma nem posição.
             Assert.DoesNotContain(g.Frames, f => f.Face.Finish != null && (f.Face.Finish.Code == "20" || f.Face.Finish.Code == "21"));
-            Assert.Equal(6, g.Frames.Count);   // cilindricidade + ⊥ + 3 batimentos + ∥
+            Assert.Equal(4, g.Frames.Count);   // 3 cilindros + 1 plano
         }
 
         [Fact]
-        public void Gdt_WithoutPrecisionCylinder_HasNoDatumA_AndPlaneGetsFlatness()
+        public void Gdt_WithoutPrecisionCylinder_HasNoDatumA_AndNoFrame()
         {
             var p = new TurnedProfile();
             p.Faces.Add(Plane(1, 0, 0, 10, Fecham));
             p.Faces.Add(Cyl(2, 0, 20, 10, "21 - PASS DE AGUA (±0,2)"));
             GdtPlan g = GdtPlan.Build(p);
             Assert.Null(g.DatumA);
-            GdtFrame only = Assert.Single(g.Frames);
-            Assert.Equal(GdtSymbol.Flatness, only.Symbol);
+            Assert.Equal(1, g.DatumB.Id);
+            Assert.Empty(g.Frames);   // só a referência B, nada posicionado contra ela
+        }
+
+        [Fact]
+        public void Gdt_PositionFrameText_UsesDiameterZoneOnCylinders()
+        {
+            var f = new GdtFrame { Symbol = GdtSymbol.Position, Tolerance = 0.01, Datum = "A", DiameterZone = true };
+            Assert.Equal("posição Ø0,01 | A", f.ToString());
         }
 
         [Fact]

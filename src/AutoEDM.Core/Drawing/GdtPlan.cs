@@ -6,7 +6,7 @@ using System.Linq;
 namespace AutoEDM.Drawing
 {
     /// <summary>Característica geométrica (ISO 1101) que o desenho automático usa.</summary>
-    public enum GdtSymbol { Cylindricity, Flatness, Perpendicularity, Parallelism, CircularRunout }
+    public enum GdtSymbol { Cylindricity, Flatness, Perpendicularity, Parallelism, CircularRunout, Position }
 
     /// <summary>Um quadro de controle: a face, a característica, o valor e a referência (null = forma).</summary>
     public sealed class GdtFrame
@@ -15,10 +15,12 @@ namespace AutoEDM.Drawing
         public GdtSymbol Symbol { get; set; }
         public double Tolerance { get; set; }
         public string Datum { get; set; }
+        /// <summary>Zona cilíndrica (Ø antes do valor): posição do eixo de um cilindro.</summary>
+        public bool DiameterZone { get; set; }
 
         public override string ToString()
         {
-            string t = Tolerance.ToString("0.0##", CultureInfo.GetCultureInfo("pt-BR"));
+            string t = (DiameterZone ? "Ø" : "") + Tolerance.ToString("0.0##", CultureInfo.GetCultureInfo("pt-BR"));
             return Datum == null ? $"{Name(Symbol)} {t}" : $"{Name(Symbol)} {t} | {Datum}";
         }
 
@@ -30,6 +32,7 @@ namespace AutoEDM.Drawing
                 case GdtSymbol.Flatness: return "planeza";
                 case GdtSymbol.Perpendicularity: return "perpendicularidade";
                 case GdtSymbol.Parallelism: return "paralelismo";
+                case GdtSymbol.Position: return "posição";
                 default: return "batimento circular";
             }
         }
@@ -40,15 +43,16 @@ namespace AutoEDM.Drawing
     /// ("faltava", 2026-10-19); a regra vem da nota da tabela da ferramentaria: "Tolerâncias de
     /// forma e posição = 0,01 mm (sempre que possível)".
     ///
+    /// Desde 2026-10-20 o controle é só TOLERÂNCIA DE POSIÇÃO (pedido do Carlos, no lugar de
+    /// cilindricidade, perpendicularidade, batimento e paralelismo):
     /// • Só as faces de PRECISÃO recebem quadro — as cores de ajuste/fechamento de faixa
     ///   apertada (10, 11, 15, 16, 17, 19 e as de Ra de erosão). Vedação (±0,1), água (±0,2) e
     ///   folgas não pedem forma nem posição.
-    /// • Referência A = eixo do cilindro de precisão de maior área (o ajuste que centra a peça);
-    ///   leva cilindricidade 0,01.
-    /// • Referência B = face plana de precisão de maior área (o encosto/fechamento); leva
-    ///   perpendicularidade 0,01 a A.
-    /// • Demais cilindros e cones de precisão: batimento circular 0,01 a A.
-    /// • Demais planos de precisão: paralelismo 0,01 a B.
+    /// • Referência A = eixo do cilindro de precisão de maior área (o ajuste que centra a peça).
+    /// • Referência B = face plana de precisão de maior área (o encosto/fechamento).
+    ///   As referências levam só o símbolo, sem quadro.
+    /// • Demais cilindros de precisão: posição Ø0,01 a A (zona cilíndrica no eixo); cones: posição 0,01 a A.
+    /// • Demais planos de precisão: posição 0,01 a B.
     /// Sem cilindro de precisão não há A (e nada que dependa dele); sem plano de precisão não há B.
     /// </summary>
     public sealed class GdtPlan
@@ -72,23 +76,17 @@ namespace AutoEDM.Drawing
             g.DatumA = precise.Where(f => f.Kind == RevolvedKind.Cylinder).OrderByDescending(Area).FirstOrDefault();
             g.DatumB = precise.Where(f => f.Kind == RevolvedKind.Plane).OrderByDescending(Area).FirstOrDefault();
 
-            if (g.DatumA != null)
-                g.Frames.Add(new GdtFrame { Face = g.DatumA, Symbol = GdtSymbol.Cylindricity, Tolerance = tolerance });
-            if (g.DatumB != null)
-                g.Frames.Add(g.DatumA != null
-                    ? new GdtFrame { Face = g.DatumB, Symbol = GdtSymbol.Perpendicularity, Tolerance = tolerance, Datum = "A" }
-                    : new GdtFrame { Face = g.DatumB, Symbol = GdtSymbol.Flatness, Tolerance = tolerance });
-
             foreach (RevolvedFace f in precise)
             {
                 if (ReferenceEquals(f, g.DatumA) || ReferenceEquals(f, g.DatumB)) continue;
                 if ((f.Kind == RevolvedKind.Cylinder || f.Kind == RevolvedKind.Cone) && g.DatumA != null)
                 {
-                    g.Frames.Add(new GdtFrame { Face = f, Symbol = GdtSymbol.CircularRunout, Tolerance = tolerance, Datum = "A" });
+                    g.Frames.Add(new GdtFrame { Face = f, Symbol = GdtSymbol.Position, Tolerance = tolerance, Datum = "A",
+                                                DiameterZone = f.Kind == RevolvedKind.Cylinder });
                 }
                 else if (f.Kind == RevolvedKind.Plane && g.DatumB != null)
                 {
-                    g.Frames.Add(new GdtFrame { Face = f, Symbol = GdtSymbol.Parallelism, Tolerance = tolerance, Datum = "B" });
+                    g.Frames.Add(new GdtFrame { Face = f, Symbol = GdtSymbol.Position, Tolerance = tolerance, Datum = "B" });
                 }
             }
             return g;

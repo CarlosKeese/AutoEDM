@@ -511,6 +511,18 @@ e registra o erro exato do que falha — que é o dado que ela existe para traze
 
 ## Histórico
 
+- **2026-10-20 (Desenho 2D, 2ª rodada — pedido do Carlos)** — O GD&T virou **só tolerância de
+  posição**: cilindros de precisão `⌖ Ø0,01 | A`, cones `⌖ 0,01 | A`, planos `⌖ 0,01 | B`.
+  As referências A e B levam só o símbolo, na própria feição, sem quadro.
+  - **Linha de quebra** em todo quadro: chamada vertical saindo da pega e patamar de 5 mm até a
+    caixa. Os quadros de Ø ficam em escada acima da escadinha de Ø; os de plano, abaixo da peça.
+    Se a caixa passaria da margem, o lado inteiro vira para dentro.
+  - **Linha de centro presa às arestas das pontas** (`AddByStartEnd`), não mais solta.
+  - **Cotas no eixo sem classe de ajuste** (sem g6), só os afastamentos.
+  - Folga extra na escadinha depois do Ø da referência A, para o símbolo não pisar no texto
+    vizinho. O rótulo do raio desce abaixo do último quadro.
+  - Receitas medidas na skill: k1 e lado da linha de quebra, larguras das caixas, linha de
+    centro associativa. 567 testes.
 - **2026-10-20 (validação da rodada de 19/10 + layout do Desenho 2D)** — O Carlos validou no SE o
   **Ordenar PathFinder** e o **Desenho 2D** ("está bom, mas sobrepõe cotas e referências").
   Diagnóstico pelo desenho exportado e pelos pontos-chave lidos por COM:
