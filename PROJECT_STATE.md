@@ -1,7 +1,8 @@
-﻿# PROJECT_STATE — AutoEDM
+# PROJECT_STATE — AutoEDM
 
 > Fonte de verdade do estado deste projeto. Atualize ao fechar cada sessão,
-> e reflita a mesma coisa na linha do `HUB.md`.
+> e reflita a mesma coisa na nota `_Gestao/Projetos/AutoEDM.md` do vault (o `HUB.md` não
+> existe mais; o índice agora é o `_Gestao/00 Painel.md`).
 
 - **Pasta:** `/AutoEDM`
 - **Tipo de tarefa:** paralelizável (cada comando da ribbon é uma ferramenta independente)
@@ -97,7 +98,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release; depois da fusão com o grupo Molde o botão é o **id 28** e a ribbon `GuiVersion` 19); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 467 passando, 0 falhas |
+| Testes de unidade | ✅ 566 passando, 0 falhas (2026-10-20) |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -108,6 +109,9 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Refrigeração (molde) | 🚧 construída (2026-09-24), plano coberto por teste, **aguardando o 1º run no SE** |
 | Grupo **Molde** (Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
 | **Limpar importação** (grupo Importação, botão id 29) | ✅ **núcleo validado no SE (2026-10-18)** por sonda externa e teste ponta a ponta em geometria real: 2 arquivos → 1 com **posição preservada em 0,0000 mm**, e as duas buchas guia Ø30/Ø32 da base de molde **corretamente NÃO unificadas**. 60 testes novos (527 no total). Dois caminhos de prova: encaixe vértice a vértice e **perfil de revolução** (peça torneada, 0 vértices). 🚧 o BOTÃO em si (as duas janelas de conferência) e a etapa de RELAÇÕES ainda não foram clicados por um humano |
+| **Desenho 2D** (grupo Desenho; peça torneada cotada pelas cores + GD&T) | ✅ **validado no SE (2026-10-20)** no 15335.202; layout do GD&T refeito no mesmo dia (sem quadros repetidos, sem chamadas cruzadas, referência pendurada no quadro) — conferido pela sonda `tools/DrawingProbe`, **falta reinstalar o add-in** |
+| **Ordenar PathFinder** (grupo Molde, botão id 31) | ✅ **validado no SE (2026-10-20)** |
+| Criar eletrodo (manual) com a **queima copiada** para dentro | 🚧 validado no EE01 do 14973.102 pela sonda (2026-10-19); **aguardando o clique no botão** |
 
 ## Regra de ouro
 
@@ -506,6 +510,41 @@ apagá-los, nunca salva). Confere presença de membro por introspecção **antes
 e registra o erro exato do que falha — que é o dado que ela existe para trazer.
 
 ## Histórico
+
+- **2026-10-20 (validação da rodada de 19/10 + layout do Desenho 2D)** — O Carlos validou no SE o
+  **Ordenar PathFinder** e o **Desenho 2D** ("está bom, mas sobrepõe cotas e referências").
+  Diagnóstico pelo desenho exportado e pelos pontos-chave lidos por COM:
+  - o que parecia peça à direita eram as linhas de chamada da escadinha de Ø — as cotas já estavam
+    fora da peça;
+  - a sobreposição real vinha do GD&T: 14 quadros (3 repetidos: o Ø "3x" levava um por face, e
+    duas faces planas na mesma aresta), em duas colunas com chamadas cruzando a vista inteira, e o
+    símbolo A em cima do texto do Ø11,12.
+
+  Correção em `TurnedDrawingBuilder`:
+  - um quadro por (alvo, texto);
+  - quadros de Ø em escada **acima** da escadinha — a SE prende a chamada do quadro na ponta de
+    **cima** da linha de cota, qualquer que seja o ponto pedido (medido);
+  - faces planas da direita em coluna **abaixo** da peça, chamada no pé da aresta; as da
+    esquerda, na coluna de cima;
+  - em toda escada a pega mais perto da coluna fica no 1º degrau, então nenhuma chamada cruza
+    caixa ou outra chamada;
+  - as referências A e B penduradas embaixo do quadro da própria feição
+    (`DatumFrames.AddByTerminator(fcf, x, borda de baixo)`, forma ISO);
+  - texto do chanfro de cima para a esquerda (`BreakPosition = 1`);
+  - rótulo do raio mais baixo, fora do caminho das chamadas.
+
+  Iterado pela sonda `tools/DrawingProbe` sem reiniciar a SE. 566 testes.
+- **2026-10-19** — Quatro commits na `feat/desenho-2d`:
+  - **Desenho 2D:** peça torneada cotada pelas cores, GD&T pela nota da tabela, vistas e balão
+    de propriedades; toda cota conferida contra o 3D.
+  - **Ordenar PathFinder:** ordem natural pelo código; o `AfterTarget` do `ReorderOccurrence`
+    faz o contrário do nome.
+  - **Criar eletrodo (manual):** a queima é copiada para dentro do eletrodo sem editar em
+    contexto, e o eletrodo nasce nos eixos da montagem.
+  - **Unir superfícies:** passa a fechar furos em qualquer orientação e costura pelos corpos.
+  - **Skill `solid-edge-com`:** passa a ser acionada por desenho 2D.
+
+  Detalhes nas mensagens dos commits `525fe8e`, `a09c643` e `978dc07`.
 
 - **2026-10-18 (2º run real — projeto importado de verdade)** — **Três defeitos achados pelo
   Carlos num projeto de 508 ocorrências / 138 arquivos, e os três eram diferentes do que o relato
@@ -1012,6 +1051,11 @@ As 7 falhas registradas em `701725f` (testes escritos contra uma especificação
 alojamento foi validado no SE em 2026-09-21. Vale a tabela de catálogo.
 
 ## Próxima ação
+
+**2026-10-20:** reinstalar o add-in com a SE fechada (`tools\deploy-dev.ps1 -Configuration Release
+-IncludeMcp`) para levar o layout novo do Desenho 2D. Depois, validar o **Limpar importação** pelo
+botão (janelas de conferência e relações) e corrigir o desempenho dele (ler as faces uma vez por
+arquivo).
 
 **Eng. Reversa (2026-10-12):** reinstalar o add-in com a SE fechada
 (`powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 -Configuration Release`) e
