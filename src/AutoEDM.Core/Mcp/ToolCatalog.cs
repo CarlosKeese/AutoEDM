@@ -495,7 +495,13 @@ namespace AutoEDM.Mcp
                     "\"pressao\":{\"type\":\"string\",\"enum\":[\"interna\",\"externa\"],\"description\":\"Só canal de face: lado da pressão. interna (PADRÃO) = anel apoia no Ø externo do canal; externa/vácuo = no Ø interno.\"}," +
                     "\"secaoMm\":{\"type\":\"number\",\"description\":\"Seção do cordão (d2). Omitido = cada aresta usa a que o diâmetro dela pede.\"}," +
                     "\"afastamentoMm\":{\"type\":\"number\",\"minimum\":0,\"description\":\"Eixo/furo: aresta → centro do canal, no eixo (padrão 5). Face: parede entre a aresta e o canal (padrão e mínimo 1).\"}," +
-                    "\"anel\":{\"type\":\"string\",\"description\":\"Designação do anel, só com UMA aresta. Omitido = o melhor da lista.\"}," +
+                    "\"anel\":{\"type\":\"string\",\"description\":\"Designação do anel, só com UMA aresta. Omitido = o melhor da lista. Um anel trocado à mão tem o canal desenhado PARA ELE (ver 'calculo').\"}," +
+                    "\"folgaMm\":{\"type\":\"number\",\"minimum\":0,\"description\":\"Eixo/furo: folga DIAMETRAL até o conjugado (furo que recebe o eixo / eixo que entra no furo) — a altura do alojamento é medida até ele, folga maior = canal mais raso. Omitido/0 = lido em contexto de montagem, senão o mesmo Ø nominal. Face: vão entre as faces montadas.\"}," +
+                    "\"pressaoBar\":{\"type\":\"number\",\"minimum\":0,\"description\":\"Pressão de trabalho (padrão 10 bar, água de refrigeração). Decide se a folga pede anel de apoio.\"}," +
+                    "\"ajuste\":{\"type\":\"string\",\"description\":\"Ajuste ISO furo/eixo do pior caso (padrão H7/g6; aceita H/h/g/f nos graus 6–8). 'nenhum' desliga o pior caso.\"}," +
+                    "\"tolCanalMm\":{\"type\":\"number\",\"minimum\":0,\"description\":\"Tolerância ± das cotas do canal no pior caso (padrão 0,03).\"}," +
+                    "\"calculo\":{\"type\":\"string\",\"enum\":[\"auto\",\"tabela\",\"anel\"],\"description\":\"auto (PADRÃO) = recomendado pela tabela (ou pelo anel quando nenhum anel serve na tabela), anel trocado à mão pelo anel. tabela/anel forçam.\"}," +
+                    "\"acabamento\":{\"type\":\"boolean\",\"description\":\"Corta o raio do fundo e a quebra de canto depois do canal (PADRÃO true). Se a SE recusar, o canal fica e a resposta diz o que faltou.\"}," +
                     "\"aceitarForaDaNorma\":{\"type\":\"boolean\",\"description\":\"Corta mesmo com alojamento fora da norma. Só com o de acordo do usuário.\"}}," +
                     "\"additionalProperties\":false}",
                 Description =

@@ -76,8 +76,49 @@ namespace AutoEDM.Sealing
             motion == SealMotion.Rotary ? -0.02 : 0.02;
 
         /// <summary>Folga máxima tolerável (estiramento negativo) antes de o anel ficar solto
-        /// no canal e correr risco de torcer na montagem.</summary>
+        /// no canal e correr risco de torcer na montagem. Acima dela o canal de EIXO é
+        /// REPROVADO (Carlos, 2026-10-21: antes era só aviso, e um 2-009 com 35 % de folga
+        /// passou e foi cortado).</summary>
         public const double MaxSlack = 0.05;
+
+        /// <summary>Folga do Ø externo tolerada num canal de FURO no modo "pelo anel" — o anel
+        /// que abre no canal tem de encostar no fundo.</summary>
+        public const double MaxOuterSlack = 0.005;
+
+        /// <summary>Pressão padrão (bar) quando a janela não informa: água de refrigeração de
+        /// molde, o caso comum na ferramentaria (Carlos, 2026-10-21).</summary>
+        public const double DefaultPressureBar = 10.0;
+
+        /// <summary>Tolerância ± padrão das cotas do canal (mm) — escolha do Carlos (2026-10-21),
+        /// junto com o ajuste <see cref="IsoFits.DefaultFit"/>.</summary>
+        public const double DefaultGrooveTolerance = 0.03;
+
+        /// <summary>
+        /// Acima desta pressão (bar), com a folga de montagem passando do jogo da tabela, o anel
+        /// de 70 Shore pede ANEL DE APOIO (back-up) — prática dos manuais Parker para vedação
+        /// estática. Abaixo dela a folga grande só gera aviso.
+        /// </summary>
+        public const double BackupRingPressureBar = 100.0;
+
+        /// <summary>
+        /// Tolerância ± da SEÇÃO do anel (mm), ISO 3601-1 / AS568, por faixa de d2.
+        /// </summary>
+        public static double CrossSectionTolerance(double crossSectionMm) =>
+            crossSectionMm <= 1.85 ? 0.08
+          : crossSectionMm <= 2.70 ? 0.09
+          : crossSectionMm <= 3.60 ? 0.10
+          : crossSectionMm <= 5.40 ? 0.13
+          : 0.15;
+
+        /// <summary>
+        /// Tolerância ± do d1 (mm) quando o catálogo não informa: fórmula da ISO 3601-1 classe A,
+        /// ±(0,009·d1^0,95 + 0,11). Bate com a AS568 nos casos conferidos (2-007 ±0,13; 2-214
+        /// ±0,25 contra 0,14 e 0,30 da fórmula — a fórmula fica do lado seguro).
+        /// </summary>
+        public static double InnerDiameterTolerance(ORingSize ring) =>
+            ring == null ? 0.0
+          : ring.Tolerance > 0 ? ring.Tolerance
+          : 0.009 * Math.Pow(Math.Max(ring.InnerDiameter, 0.0), 0.95) + 0.11;
 
         /// <summary>
         /// COMPRESSÃO máxima do diâmetro EXTERNO num canal de FURO: ali o anel entra apertado

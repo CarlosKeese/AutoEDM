@@ -31,13 +31,17 @@ namespace AutoEDM.Sealing
         /// avisar em vez de recusar).
         /// </summary>
         public static ORingGrooveSpec Compute(ORingSize ring, GrooveKind kind, double sealingDiameterMm,
-            SealMotion motion, Elastomer elastomer, FacePressure pressure = FacePressure.Internal)
+            SealMotion motion, Elastomer elastomer, FacePressure pressure = FacePressure.Internal,
+            ORingGlandContext context = null)
         {
             if (ring == null) throw new ArgumentNullException(nameof(ring));
+            var ctx = context ?? ORingGlandContext.Default;
 
             double d2 = ring.CrossSection;
-            double sqMin, sqTarget, sqMax;
-            ORingGrooveRules.Squeeze(motion, out sqMin, out sqTarget, out sqMax);
+            double sqMin, sqMax;
+            SqueezeRange(d2, motion, out sqMin, out sqMax);
+            double sqTarget, ignoreMin, ignoreMax;
+            ORingGrooveRules.Squeeze(motion, out ignoreMin, out sqTarget, out ignoreMax);
 
             // TABELA PRIMEIRO. A cota do alojamento é publicada por seção e por movimento
             // (catálogo Parker 001-5 BR), e a tabela sabe coisas que a fórmula não sabia: o
@@ -50,8 +54,6 @@ namespace AutoEDM.Sealing
             {
                 depth = housing.Depth;
                 width = housing.Width;
-                sqMin = housing.SqueezeMinPct / 100.0;
-                sqMax = housing.SqueezeMaxPct / 100.0;
             }
             else
             {
@@ -62,6 +64,8 @@ namespace AutoEDM.Sealing
                 width = GrooveWidth(d2, motion, elastomer);
             }
 
+            // "depth" daqui em diante é a ALTURA DO ALOJAMENTO (L): do fundo do canal até o
+            // conjugado. A profundidade CORTADA na peça sai dela descontando a folga de montagem.
             var spec = new ORingGrooveSpec
             {
                 Ring = ring,
@@ -71,10 +75,13 @@ namespace AutoEDM.Sealing
                 Pressure = pressure,
                 SealingDiameter = sealingDiameterMm,
                 Depth = depth,
+                GlandDepth = depth,
                 Width = width,
+                Sizing = ctx.Sizing,
+                MatingSource = ctx.MatingSource,
+                PressureBar = ctx.PressureBar,
                 BottomRadius = housing != null ? housing.Radius : ORingGrooveRules.BottomRadius(d2),
                 EdgeBreak = ORingGrooveRules.EdgeBreak(d2),
-                Fill = ring.SectionArea / (width * depth),
                 Source = housing != null
                     ? $"tabela de alojamento {(motion == SealMotion.Static ? "ESTÁTICO" : "DINÂMICO")} " +
                       "(catálogo Parker 001-5 BR, p. 5)"
@@ -90,21 +97,52 @@ namespace AutoEDM.Sealing
                 Eccentricity = housing != null ? housing.Eccentricity : 0.0
             };
 
+            bool fromRing = ctx.Sizing == GrooveSizing.FromRing;
             switch (kind)
             {
                 case GrooveKind.RadialExternal: // canal no EIXO: o anel é esticado por cima
-                    spec.GrooveBottomDiameter = sealingDiameterMm - 2.0 * depth;
+                {
+                    // A altura do alojamento é medida a partir do FURO conjugado: com folga
+                    // grande, o fundo sobe e o canal cortado no eixo fica mais raso.
+                    double bore = ctx.MatingDiameterMm ?? sealingDiameterMm;
+                    double bottom = bore - 2.0 * depth;
+                    if (fromRing && ring.InnerDiameter > 0)
+                        // Pelo anel: o fundo vai até onde o anel aceita (estiramento entre a folga
+                        // máxima e o limite do elastômero) e, dentro disso, o mais perto do
+                        // esmagamento de projeto.
+                        bottom = Clamp(bottom, ring.InnerDiameter * (1.0 - ORingGrooveRules.MaxSlack),
+                                               ring.InnerDiameter * (1.0 + ORingGrooveRules.MaxStretch(motion, elastomer)));
+                    spec.MatingDiameter = bore;
+                    spec.NominalClearance = bore - sealingDiameterMm;
+                    spec.GrooveBottomDiameter = bottom;
+                    spec.GlandDepth = (bore - bottom) / 2.0;
+                    spec.Depth = (sealingDiameterMm - bottom) / 2.0;
                     spec.Stretch = ring.InnerDiameter > 0
                         ? (spec.GrooveBottomDiameter - ring.InnerDiameter) / ring.InnerDiameter : 0.0;
                     break;
+                }
 
                 case GrooveKind.RadialInternal: // canal no FURO: o anel entra comprimido
-                    spec.GrooveBottomDiameter = sealingDiameterMm + 2.0 * depth;
+                {
+                    double shaft = ctx.MatingDiameterMm ?? sealingDiameterMm;
+                    double bottom = shaft + 2.0 * depth;
+                    if (fromRing && ring.OuterDiameter > 0)
+                        bottom = Clamp(bottom, ring.OuterDiameter * (1.0 - ORingGrooveRules.MaxOuterCompression(elastomer)),
+                                               ring.OuterDiameter * (1.0 + ORingGrooveRules.MaxOuterSlack));
+                    spec.MatingDiameter = shaft;
+                    spec.NominalClearance = sealingDiameterMm - shaft;
+                    spec.GrooveBottomDiameter = bottom;
+                    spec.GlandDepth = (bottom - shaft) / 2.0;
+                    spec.Depth = (bottom - sealingDiameterMm) / 2.0;
                     spec.Stretch = ring.OuterDiameter > 0
                         ? (ring.OuterDiameter - spec.GrooveBottomDiameter) / ring.OuterDiameter : 0.0;
                     break;
+                }
 
                 default: // AxialFace — o anel deita no canal ENCOSTADO na parede que segura a pressão
+                    // O vão entre as faces montadas entra na altura do alojamento: corta-se menos.
+                    spec.FaceGap = Math.Max(0.0, ctx.FaceGapMm);
+                    spec.Depth = depth - spec.FaceGap;
                     double fit = ORingGrooveRules.FaceSeatFit;
                     if (pressure == FacePressure.External)
                     {
@@ -125,22 +163,197 @@ namespace AutoEDM.Sealing
                     break;
             }
 
+            // Pelo anel, a largura acompanha a altura do alojamento: canal mais raso pede canal
+            // mais largo para a borracha ter para onde escoar (preenchimento de projeto).
+            if (fromRing && kind != GrooveKind.AxialFace && spec.GlandDepth > 0)
+            {
+                double forFill = ring.SectionArea / (ORingGrooveRules.TargetFill(motion, elastomer) * spec.GlandDepth);
+                spec.Width = Math.Max(width, Math.Min(forFill, ORingGrooveRules.MaxWidthFactor * d2));
+            }
+            if (fromRing)
+                spec.Source += kind == GrooveKind.AxialFace
+                    ? " — posição pelo anel escolhido"
+                    : " — fundo desenhado PELO ANEL escolhido (estiramento dentro do limite)";
+
+            spec.Fill = spec.GlandDepth > 0 ? ring.SectionArea / (spec.Width * spec.GlandDepth) : 1.0;
+
             // Esticar AFINA o cordão, e cordão mais fino é menos esmagamento — o número que
-            // interessa é o depois, não o de catálogo.
+            // interessa é o depois, não o de catálogo. Quem esmaga é a altura do ALOJAMENTO.
             double effectiveD2 = !spec.StretchIsOuterCompression
                 ? ORingGrooveRules.EffectiveCrossSection(d2, spec.Stretch)
                 : d2;
-            spec.Squeeze = effectiveD2 > 0 ? (effectiveD2 - depth) / effectiveD2 : 0.0;
+            spec.Squeeze = effectiveD2 > 0 ? (effectiveD2 - spec.GlandDepth) / effectiveD2 : 0.0;
 
-            Review(spec, sqMin, sqMax, motion, elastomer, sealingDiameterMm);
+            spec.WorstCase = ComputeWorstCase(spec, ctx);
+            Review(spec, sqMin, sqMax, motion, elastomer, sealingDiameterMm, housing);
             return spec;
         }
 
+        /// <summary>Faixa de esmagamento admissível: a publicada na tabela, ou a de projeto fora dela.</summary>
+        private static void SqueezeRange(double crossSectionMm, SealMotion motion, out double min, out double max)
+        {
+            var housing = ORingHousingTable.Find(crossSectionMm, motion);
+            if (housing != null)
+            {
+                min = housing.SqueezeMinPct / 100.0;
+                max = housing.SqueezeMaxPct / 100.0;
+                return;
+            }
+            double target;
+            ORingGrooveRules.Squeeze(motion, out min, out target, out max);
+        }
+
+        /// <summary>
+        /// Empilha as tolerâncias do ajuste (furo/eixo), das cotas do canal e do anel para o
+        /// lado ruim de cada critério. As cotas do canal levam ± <see cref="ORingGlandContext.GrooveToleranceMm"/>
+        /// cada uma, como saem no desenho (Ø do fundo, largura, profundidade).
+        /// </summary>
+        private static GrooveWorstCase ComputeWorstCase(ORingGrooveSpec spec, ORingGlandContext ctx)
+        {
+            string holeZone, shaftZone;
+            if (!IsoFits.TrySplitFit(ctx.Fit, out holeZone, out shaftZone)) return null;
+
+            var ring = spec.Ring;
+            double t = Math.Max(0.0, ctx.GrooveToleranceMm);
+            double d2 = ring.CrossSection;
+            double td2 = ORingGrooveRules.CrossSectionTolerance(d2);
+            double td1 = ORingGrooveRules.InnerDiameterTolerance(ring);
+            double d1Min = ring.InnerDiameter - td1, d1Max = ring.InnerDiameter + td1;
+            double odMin = d1Min + 2.0 * (d2 - td2), odMax = d1Max + 2.0 * (d2 + td2);
+
+            var wc = new GrooveWorstCase
+            {
+                Fit = ctx.Fit, GrooveTolerance = t, RingSectionTolerance = td2, RingInnerTolerance = td1
+            };
+            double lMin, lMax;
+            double bottomMin = spec.GrooveBottomDiameter - t, bottomMax = spec.GrooveBottomDiameter + t;
+
+            if (spec.Kind == GrooveKind.AxialFace)
+            {
+                lMin = spec.GlandDepth - t;
+                lMax = spec.GlandDepth + t;
+                if (spec.Pressure == FacePressure.External)
+                {
+                    wc.StretchMin = (spec.GrooveInnerDiameter - t - d1Max) / d1Max;
+                    wc.StretchMax = (spec.GrooveInnerDiameter + t - d1Min) / d1Min;
+                }
+                else
+                {
+                    wc.StretchMin = (odMin - (spec.GrooveOuterDiameter + t)) / odMin;
+                    wc.StretchMax = (odMax - (spec.GrooveOuterDiameter - t)) / odMax;
+                }
+            }
+            else
+            {
+                // A peça leva a zona do seu papel: eixo (g6) no canal de eixo, furo (H7) no de furo.
+                bool external = spec.Kind == GrooveKind.RadialExternal;
+                double boreNom = external ? spec.MatingDiameter : spec.SealingDiameter;
+                double shaftNom = external ? spec.SealingDiameter : spec.MatingDiameter;
+                double hLo, hHi, sLo, sHi;
+                if (!IsoFits.TryDeviations(holeZone, boreNom, out hLo, out hHi) ||
+                    !IsoFits.TryDeviations(shaftZone, shaftNom, out sLo, out sHi)) return null;
+                double boreMin = boreNom + hLo, boreMax = boreNom + hHi;
+                double shaftMin = shaftNom + sLo, shaftMax = shaftNom + sHi;
+                wc.ClearanceMin = boreMin - shaftMax;
+                wc.ClearanceMax = boreMax - shaftMin;
+
+                if (external)
+                {
+                    lMin = (boreMin - bottomMax) / 2.0;
+                    lMax = (boreMax - bottomMin) / 2.0;
+                    wc.StretchMin = (bottomMin - d1Max) / d1Max;
+                    wc.StretchMax = (bottomMax - d1Min) / d1Min;
+                }
+                else
+                {
+                    lMin = (bottomMin - shaftMax) / 2.0;
+                    lMax = (bottomMax - shaftMin) / 2.0;
+                    wc.StretchMin = (odMin - bottomMax) / odMin;
+                    wc.StretchMax = (odMax - bottomMin) / odMax;
+                }
+            }
+
+            // Menos esmagamento: cordão fino, mais esticado, alojamento alto. Mais: o contrário.
+            bool compression = spec.StretchIsOuterCompression;
+            double thin = compression ? d2 - td2 : ORingGrooveRules.EffectiveCrossSection(d2 - td2, wc.StretchMax);
+            double thick = compression ? d2 + td2 : ORingGrooveRules.EffectiveCrossSection(d2 + td2, wc.StretchMin);
+            wc.SqueezeMin = thin > 0 ? (thin - lMax) / thin : 0.0;
+            wc.SqueezeMax = thick > 0 ? (thick - lMin) / thick : 0.0;
+            double widthMin = spec.Width - t;
+            wc.FillMax = lMin > 0 && widthMin > 0 ? Math.PI / 4.0 * (d2 + td2) * (d2 + td2) / (widthMin * lMin) : 1.0;
+            return wc;
+        }
+
+        /// <summary>
+        /// Confere se o canal CABE na face escolhida, com o afastamento pedido — antes de cortar.
+        /// No canal radial, o canal tem de ficar inteiro dentro da faixa axial da face (afastamento
+        /// menor que meia largura abre o canal na aresta; maior que a face o leva para fora dela,
+        /// e o recorte nasce com falha). No canal de face, não pode passar por cima da aresta.
+        /// Acrescenta os apontamentos ao <paramref name="spec"/>.
+        /// </summary>
+        public static void CheckPlacement(ORingGrooveSpec spec, ORingTarget target, double offsetMm)
+        {
+            if (spec == null || target == null || !target.Ok) return;
+            void Add(GrooveIssueLevel level, string msg) =>
+                spec.Issues.Add(new GrooveIssue { Level = level, Message = msg });
+
+            if (spec.Kind == GrooveKind.AxialFace)
+            {
+                double land = FaceGrooveWall(spec, target.EdgeDiameterMm, target.FaceGrooveOutward);
+                if (land < 0)
+                    Add(GrooveIssueLevel.Error,
+                        $"o canal passa POR CIMA da aresta em {-land:0.00} mm de raio — aumente a parede ou escolha outro anel.");
+                return;
+            }
+
+            double half = spec.Width / 2.0;
+            double center = target.EdgeAxialMm + target.MaterialDirection * offsetMm;
+            if (offsetMm < half - 0.005)
+                Add(GrooveIssueLevel.Error,
+                    $"afastamento {offsetMm:0.00} mm menor que meia largura do canal ({half:0.00} mm): o canal sai " +
+                    $"{half - offsetMm:0.00} mm pela aresta e fica ABERTO na ponta. Use pelo menos {half:0.00} mm.");
+
+            if (target.FaceAxialMaxMm - target.FaceAxialMinMm > 1e-6)
+            {
+                double lo = center - half, hi = center + half;
+                double past = Math.Max(target.FaceAxialMinMm - lo, hi - target.FaceAxialMaxMm);
+                if (past > 0.005 && offsetMm >= half - 0.005)
+                    Add(GrooveIssueLevel.Error,
+                        $"o canal passa {past:0.00} mm do fim da face cilíndrica (face de {target.FaceAxialMaxMm - target.FaceAxialMinMm:0.00} mm " +
+                        $"no eixo): diminua o afastamento para no máximo " +
+                        $"{Math.Max(half, offsetMm - past):0.00} mm.");
+            }
+        }
+
         private static void Review(ORingGrooveSpec spec, double sqMin, double sqMax,
-            SealMotion motion, Elastomer elastomer, double sealingDiameterMm)
+            SealMotion motion, Elastomer elastomer, double sealingDiameterMm, ORingHousing housing)
         {
             void Add(GrooveIssueLevel level, string msg) =>
                 spec.Issues.Add(new GrooveIssue { Level = level, Message = msg });
+
+            if (spec.Kind != GrooveKind.AxialFace)
+            {
+                string mating = spec.Kind == GrooveKind.RadialExternal ? "furo" : "eixo";
+                if (spec.NominalClearance < -0.0005)
+                    Add(GrooveIssueLevel.Error,
+                        $"o {mating} conjugado (Ø {spec.MatingDiameter:0.00}) INTERFERE com a peça (Ø {sealingDiameterMm:0.00}).");
+                else if (spec.GlandDepth <= 0)
+                    Add(GrooveIssueLevel.Error, $"o fundo do canal passa do {mating} conjugado — o anel não tem onde ficar.");
+                else if (spec.Depth <= 0.005)
+                    Add(GrooveIssueLevel.Error,
+                        $"a folga até o {mating} conjugado (Ø {spec.MatingDiameter:0.00}) já é maior que a altura do " +
+                        "alojamento: não sobra canal para cortar e o anel não seria esmagado. Reduza a folga ou use um cordão mais grosso.");
+
+                if (housing != null && spec.NominalClearance > housing.ClearanceMax + 0.0005)
+                {
+                    bool high = spec.PressureBar > ORingGrooveRules.BackupRingPressureBar;
+                    Add(GrooveIssueLevel.Warning,
+                        $"jogo diametral {spec.NominalClearance:0.00} mm acima do {housing.ClearanceMax:0.00} da tabela: " +
+                        (high
+                            ? $"a {spec.PressureBar:0} bar o anel EXTRUDA pela folga — use ANEL DE APOIO (back-up) ou reduza a folga."
+                            : $"a {spec.PressureBar:0} bar o risco de extrusão é baixo, mas a folga é maior que a recomendada."));
+                }
+            }
 
             if (spec.Kind == GrooveKind.RadialExternal)
             {
@@ -149,13 +362,15 @@ namespace AutoEDM.Sealing
                     Add(GrooveIssueLevel.Error,
                         $"vedação ROTATIVA com o anel esticado {Pct(spec.Stretch)}: borracha esticada contrai ao " +
                         "esquentar (efeito Gow-Joule) e o anel aperta o eixo até queimar. Use um anel de d1 maior.");
-                else if (spec.Stretch > maxStretch)
+                // Margem numérica: o canal "pelo anel" para EXATAMENTE no limite.
+                else if (spec.Stretch > maxStretch + 1e-6)
                     Add(GrooveIssueLevel.Error,
                         $"estiramento {Pct(spec.Stretch)} acima do limite de {Pct(maxStretch)} para " +
                         $"{(elastomer == Elastomer.Fkm ? "FKM" : "NBR")} — o anel perde seção e vida útil.");
-                else if (spec.Stretch < -ORingGrooveRules.MaxSlack)
-                    Add(GrooveIssueLevel.Warning,
-                        $"anel sobrando {Pct(-spec.Stretch)} no fundo do canal: pode torcer na montagem.");
+                else if (spec.Stretch < -ORingGrooveRules.MaxSlack - 1e-6)
+                    Add(GrooveIssueLevel.Error,
+                        $"anel FOLGADO {Pct(-spec.Stretch)} no fundo do canal (limite {Pct(ORingGrooveRules.MaxSlack)}): " +
+                        "fica solto, torce na montagem e não veda. Use um anel de d1 menor.");
 
                 if (spec.GrooveBottomDiameter <= 0)
                     Add(GrooveIssueLevel.Error, "o canal come o eixo inteiro — seção do anel grande demais para este diâmetro.");
@@ -197,6 +412,10 @@ namespace AutoEDM.Sealing
                         $"{Pct(ORingGrooveRules.MaxOuterCompression(elastomer))}: ele enruga dentro do canal.");
                 if (spec.GrooveInnerDiameter <= 0)
                     Add(GrooveIssueLevel.Error, "o canal fecha no centro — anel pequeno demais para um canal de face.");
+                if (spec.Depth <= 0.005)
+                    Add(GrooveIssueLevel.Error,
+                        $"o vão entre as faces ({spec.FaceGap:0.00} mm) já é maior que a altura do alojamento " +
+                        $"({spec.GlandDepth:0.00} mm): o anel não seria esmagado.");
             }
 
             if (spec.Fill > ORingGrooveRules.MaxFill)
@@ -204,12 +423,39 @@ namespace AutoEDM.Sealing
                     $"preenchimento {Pct(spec.Fill)} acima de {Pct(ORingGrooveRules.MaxFill)}: sem espaço para a " +
                     "borracha dilatar, o próprio anel arrebenta o alojamento.");
 
-            if (spec.Squeeze < sqMin)
+            if (spec.Squeeze < 0.5 * sqMin)
+                Add(GrooveIssueLevel.Error,
+                    $"esmagamento efetivo {Pct(spec.Squeeze)}, menos da metade do mínimo de {Pct(sqMin)}: o anel " +
+                    "praticamente não é apertado e não veda.");
+            else if (spec.Squeeze < sqMin)
                 Add(GrooveIssueLevel.Warning,
                     $"esmagamento efetivo {Pct(spec.Squeeze)} abaixo do mínimo de {Pct(sqMin)} para esta vedação: risco de vazar.");
             else if (spec.Squeeze > sqMax)
                 Add(GrooveIssueLevel.Warning,
                     $"esmagamento efetivo {Pct(spec.Squeeze)} acima do máximo de {Pct(sqMax)}: anel deforma permanente.");
+
+            // Pior caso: só avisa o que o nominal ainda não acusou (um erro nominal já basta).
+            var wc = spec.WorstCase;
+            if (wc != null && spec.IsWithinStandard)
+            {
+                string why = $"no pior caso ({wc.Fit}, canal ±{wc.GrooveTolerance:0.00})";
+                if (wc.SqueezeMin < sqMin && spec.Squeeze >= sqMin)
+                    Add(GrooveIssueLevel.Warning, $"{why} o esmagamento cai para {Pct(wc.SqueezeMin)} (mínimo {Pct(sqMin)}): pode vazar.");
+                if (wc.SqueezeMax > sqMax && spec.Squeeze <= sqMax)
+                    Add(GrooveIssueLevel.Warning, $"{why} o esmagamento sobe para {Pct(wc.SqueezeMax)} (máximo {Pct(sqMax)}).");
+                if (wc.FillMax > ORingGrooveRules.MaxFill && spec.Fill <= ORingGrooveRules.MaxFill)
+                    Add(GrooveIssueLevel.Warning, $"{why} o preenchimento chega a {Pct(wc.FillMax)} (máximo {Pct(ORingGrooveRules.MaxFill)}).");
+                if (spec.Kind == GrooveKind.RadialExternal)
+                {
+                    double maxStretch = ORingGrooveRules.MaxStretch(motion, elastomer);
+                    if (wc.StretchMax > maxStretch && motion != SealMotion.Rotary)
+                        Add(GrooveIssueLevel.Warning, $"{why} o anel estica até {Pct(wc.StretchMax)} (limite {Pct(maxStretch)}).");
+                    if (wc.StretchMin < -ORingGrooveRules.MaxSlack)
+                        Add(GrooveIssueLevel.Warning, $"{why} o anel pode ficar folgado {Pct(-wc.StretchMin)} no fundo.");
+                }
+                if (spec.Kind != GrooveKind.AxialFace && wc.ClearanceMin < 0)
+                    Add(GrooveIssueLevel.Warning, $"{why} o conjugado pode interferir ({wc.ClearanceMin:0.000} mm no diâmetro).");
+            }
 
             if (!spec.Ring.Verified)
                 Add(GrooveIssueLevel.Note,
@@ -224,9 +470,15 @@ namespace AutoEDM.Sealing
         /// </summary>
         public static IReadOnlyList<ORingCandidate> Rank(ORingCatalog catalog, GrooveKind kind,
             double sealingDiameterMm, SealMotion motion, Elastomer elastomer, double? crossSectionMm = null,
-            FacePressure pressure = FacePressure.Internal, double sectionTolerance = 0.0)
+            FacePressure pressure = FacePressure.Internal, double sectionTolerance = 0.0,
+            ORingGlandContext context = null)
         {
             if (catalog == null || catalog.Count == 0) return new List<ORingCandidate>();
+
+            // A fila é sempre pela TABELA: é ela que diz qual anel serve ao canal de projeto. O
+            // modo "pelo anel" entra depois, só no anel que o operador escolher à mão.
+            var ctx = (context ?? ORingGlandContext.Default).Clone();
+            ctx.Sizing = GrooveSizing.Table;
 
             // sectionTolerance > 0: aceita seções VIZINHAS (fração da pedida) — é o que deixa os
             // anéis métricos (1,5 / 2,0 / 2,5…) entrarem quando a seção sugerida é a AS568 (1,78…).
@@ -242,8 +494,23 @@ namespace AutoEDM.Sealing
             foreach (var ring in pool)
             {
                 ORingGrooveSpec spec;
-                try { spec = Compute(ring, kind, sealingDiameterMm, motion, elastomer, pressure); }
+                try { spec = Compute(ring, kind, sealingDiameterMm, motion, elastomer, pressure, ctx); }
                 catch { continue; }
+
+                // Canal de tabela reprovado para este anel? Tenta o canal desenhado PARA ele —
+                // num diâmetro em que a série não tem o anel certo (Ø6 com cordão 1,78, por
+                // exemplo), é o que deixa um anel de prateleira vedar dentro da norma.
+                if (!spec.IsWithinStandard && kind != GrooveKind.AxialFace)
+                {
+                    var ringCtx = ctx.Clone();
+                    ringCtx.Sizing = GrooveSizing.FromRing;
+                    try
+                    {
+                        var alt = Compute(ring, kind, sealingDiameterMm, motion, elastomer, pressure, ringCtx);
+                        if (alt.IsWithinStandard) spec = alt;
+                    }
+                    catch { /* fica o da tabela, reprovado */ }
+                }
 
                 double score;
                 if (kind == GrooveKind.AxialFace)
@@ -256,6 +523,15 @@ namespace AutoEDM.Sealing
                     double dev = spec.Stretch - target;
                     score = Math.Abs(dev) * (dev < 0 ? ORingGrooveRules.LoosePenalty : 1.0) * 1000.0;
                 }
+
+                // Esmagamento fora da faixa pesa mais que qualquer desvio de estiramento: é o que veda.
+                double sqLo, sqHi;
+                SqueezeRange(ring.CrossSection, motion, out sqLo, out sqHi);
+                double outside = spec.Squeeze < sqLo ? sqLo - spec.Squeeze : spec.Squeeze > sqHi ? spec.Squeeze - sqHi : 0.0;
+                score += outside * 1e4;
+
+                // Empate técnico: o canal de tabela (norma) vem antes do desenhado pelo anel.
+                if (spec.Sizing == GrooveSizing.FromRing) score += 50.0;
 
                 // Um candidato reprovado vai para o fim da fila, mas continua na lista: o
                 // operador pode ter motivo para aceitar, e ver o "quase" ajuda a decidir.
@@ -272,16 +548,17 @@ namespace AutoEDM.Sealing
         /// </summary>
         public static double IdealInnerDiameter(GrooveKind kind, double sealingDiameterMm,
             double crossSectionMm, SealMotion motion, Elastomer elastomer = Elastomer.Nbr,
-            FacePressure pressure = FacePressure.Internal)
+            FacePressure pressure = FacePressure.Internal, double? matingDiameterMm = null)
         {
             double depth = GrooveDepth(crossSectionMm, motion);
+            double mating = matingDiameterMm ?? sealingDiameterMm;
 
             switch (kind)
             {
                 case GrooveKind.RadialExternal:
-                    return (sealingDiameterMm - 2.0 * depth) / (1.0 + ORingGrooveRules.TargetStretch(motion));
+                    return (mating - 2.0 * depth) / (1.0 + ORingGrooveRules.TargetStretch(motion));
                 case GrooveKind.RadialInternal:
-                    return (sealingDiameterMm + 2.0 * depth) / (1.0 - ORingGrooveRules.TargetOuterCompression)
+                    return (mating + 2.0 * depth) / (1.0 - ORingGrooveRules.TargetOuterCompression)
                            - 2.0 * crossSectionMm;
                 default:
                 {

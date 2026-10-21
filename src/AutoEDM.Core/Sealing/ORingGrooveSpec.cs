@@ -45,8 +45,37 @@ namespace AutoEDM.Sealing
         /// o Ø médio pedido para o canal na face plana.</summary>
         public double SealingDiameter { get; set; }
 
-        /// <summary>Profundidade do canal — RADIAL no canal de eixo/furo, AXIAL no de face.</summary>
+        /// <summary>Profundidade CORTADA na peça — RADIAL no canal de eixo/furo, AXIAL no de face.</summary>
         public double Depth { get; set; }
+
+        /// <summary>
+        /// Altura do ALOJAMENTO (L): do fundo do canal até a superfície do conjugado. É ela que
+        /// esmaga o anel — não a profundidade cortada. As duas só coincidem quando o conjugado
+        /// está no mesmo Ø nominal (canal radial) ou encostado (canal de face); com folga, o
+        /// canal fica mais raso para o esmagamento continuar o mesmo.
+        /// </summary>
+        public double GlandDepth { get; set; }
+
+        /// <summary>Tabela ou desenhado pelo anel (ver <see cref="GrooveSizing"/>).</summary>
+        public GrooveSizing Sizing { get; set; }
+
+        /// <summary>Ø nominal do conjugado usado na conta (furo do canal de eixo, eixo do canal
+        /// de furo); 0 no canal de face.</summary>
+        public double MatingDiameter { get; set; }
+
+        /// <summary>De onde veio o Ø conjugado — null quando foi suposto igual ao da peça.</summary>
+        public string MatingSource { get; set; }
+
+        /// <summary>Canal de face: vão entre as faces montadas (mm).</summary>
+        public double FaceGap { get; set; }
+
+        /// <summary>Jogo DIAMETRAL nominal entre a peça e o conjugado (mm) — só canal radial.</summary>
+        public double NominalClearance { get; set; }
+
+        public double PressureBar { get; set; }
+
+        /// <summary>Extremos com as tolerâncias; null quando o ajuste não foi informado/entendido.</summary>
+        public GrooveWorstCase WorstCase { get; set; }
 
         /// <summary>Largura do canal — AXIAL no canal de eixo/furo, RADIAL no de face.</summary>
         public double Width { get; set; }
@@ -121,8 +150,16 @@ namespace AutoEDM.Sealing
             if (!Ring.Verified) sb.AppendLine("  ⚠ medida do anel AINDA NÃO CONFERIDA no catálogo do fornecedor.");
             sb.AppendLine($"Vedação: {motion} em {kind}, elastômero {(Elastomer == Elastomer.Nbr ? "NBR" : "FKM (Viton)")}");
             sb.AppendLine($"Referência medida na peça: Ø {Mm(SealingDiameter)}");
+            if (Kind != GrooveKind.AxialFace)
+                sb.AppendLine($"Conjugado ({(Kind == GrooveKind.RadialExternal ? "furo" : "eixo")}): Ø {Mm(MatingDiameter)}" +
+                              (string.IsNullOrEmpty(MatingSource) ? " — suposto no mesmo Ø nominal" : " — " + MatingSource) +
+                              $"   jogo diametral nominal {Mm(NominalClearance)}");
+            else if (FaceGap > 0)
+                sb.AppendLine($"Vão entre as faces montadas: {Mm(FaceGap)}");
+            sb.AppendLine($"Pressão de trabalho: {PressureBar.ToString("0.#", CultureInfo.CurrentCulture)} bar");
             sb.AppendLine();
-            sb.AppendLine($"CANAL:  largura {Mm(Width)}   profundidade {Mm(Depth)}");
+            sb.AppendLine($"CANAL:  largura {Mm(Width)}   profundidade {Mm(Depth)}" +
+                          (System.Math.Abs(GlandDepth - Depth) > 0.0005 ? $"   (altura do alojamento até o conjugado {Mm(GlandDepth)})" : ""));
             if (DepthMax > 0)
                 sb.AppendLine($"        (faixa publicada: largura {Mm(WidthMin)}–{Mm(WidthMax)}, " +
                               $"profundidade {Mm(DepthMin)}–{Mm(DepthMax)})");
@@ -144,6 +181,17 @@ namespace AutoEDM.Sealing
             sb.AppendLine($"Esmagamento {Pct(Squeeze)}   " +
                           (StretchIsOuterCompression ? "compressão do Ø externo " : "estiramento ") + Pct(Stretch) +
                           $"   preenchimento {Pct(Fill)}");
+            if (WorstCase != null)
+            {
+                var w = WorstCase;
+                sb.AppendLine($"Pior caso ({w.Fit}, canal ±{Mm(w.GrooveTolerance)}, anel d2 ±{Mm(w.RingSectionTolerance)} " +
+                              $"d1 ±{Mm(w.RingInnerTolerance)}):");
+                sb.AppendLine($"        esmagamento {Pct(w.SqueezeMin)}–{Pct(w.SqueezeMax)}   " +
+                              (StretchIsOuterCompression ? "compressão " : "estiramento ") +
+                              $"{Pct(w.StretchMin)}–{Pct(w.StretchMax)}   preenchimento até {Pct(w.FillMax)}");
+                if (Kind != GrooveKind.AxialFace)
+                    sb.AppendLine($"        jogo diametral {Mm(w.ClearanceMin)}–{Mm(w.ClearanceMax)}");
+            }
             if (Issues.Count > 0)
             {
                 sb.AppendLine();

@@ -1,4 +1,6 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using AutoEDM.Diagnostics;
 using AutoEDM.Selection;
 using AutoEDM.Model;
@@ -120,24 +122,13 @@ namespace AutoEDM.Sealing
             if (comFace == null) return ORingTarget.Fail("nenhuma FACE selecionada.");
             if (comEdge == null) return ORingTarget.Fail("nenhuma ARESTA selecionada.");
 
-            double[] eMin, eMax;
-            if (!FaceGeometry.TryGetRangeMm(comEdge, out eMin, out eMax))
-                return ORingTarget.Fail("não deu para ler a caixa envolvente da aresta — o item selecionado é mesmo uma aresta?");
-
-            // O eixo é a direção em que a aresta circular não tem espessura.
-            var span = new[] { eMax[0] - eMin[0], eMax[1] - eMin[1], eMax[2] - eMin[2] };
-            int axis = -1;
-            for (int i = 0; i < 3; i++) if (Math.Abs(span[i]) <= Tol) { axis = i; break; }
-            if (axis < 0)
-                return ORingTarget.Fail(
-                    "a aresta selecionada não está num plano paralelo a XY, XZ ou YZ. " +
-                    "O alojamento de O'ring só é criado com o eixo paralelo a X, Y ou Z.");
-
+            int axis;
+            double[] center;
+            double diameter;
+            string edgeError;
+            if (!ReadCircle(comEdge, out axis, out center, out diameter, out edgeError))
+                return ORingTarget.Fail(edgeError);
             int r1 = (axis + 1) % 3, r2 = (axis + 2) % 3;
-            if (Math.Abs(span[r1] - span[r2]) > Math.Max(Tol, 0.01 * span[r1]))
-                return ORingTarget.Fail(
-                    $"a aresta não é circular (caixa {span[r1]:0.###} × {span[r2]:0.###} mm). " +
-                    "Selecione a aresta CIRCULAR que dá o diâmetro de referência.");
 
             var t = new ORingTarget
             {
@@ -145,8 +136,8 @@ namespace AutoEDM.Sealing
                 Edge = comEdge,
                 Face = comFace,
                 AxisIndex = axis,
-                CenterMm = new[] { (eMin[0] + eMax[0]) / 2.0, (eMin[1] + eMax[1]) / 2.0, (eMin[2] + eMax[2]) / 2.0 },
-                EdgeDiameterMm = (span[r1] + span[r2]) / 2.0
+                CenterMm = center,
+                EdgeDiameterMm = diameter
             };
             t.EdgeAxialMm = t.CenterMm[axis];
             LogEdgeType(comEdge);
@@ -201,6 +192,129 @@ namespace AutoEDM.Sealing
             t.Description = Describe(t);
             Log.Info("Alojamento de O'ring — " + t.Description);
             return t;
+        }
+
+        /// <summary>
+        /// Eixo, centro e Ø da aresta circular. Primeiro pela CAIXA envolvente (o caminho de
+        /// sempre); se a SE recusar a caixa — visto ao vivo em 2026-10-21, <c>GetRange</c> e
+        /// <c>GetExactRange</c> com E_FAIL em arestas de face plana, e o operador tinha de clicar
+        /// de novo até "pegar" —, pelo próprio CÍRCULO: <c>Edge.Geometry.GetCircleData</c> dá
+        /// centro, normal e raio sem depender da caixa.
+        /// </summary>
+        private static bool ReadCircle(object comEdge, out int axis, out double[] centerMm, out double diameterMm, out string error)
+        {
+            axis = -1; centerMm = null; diameterMm = 0; error = null;
+            double[] eMin, eMax;
+            if (FaceGeometry.TryGetRangeMm(comEdge, out eMin, out eMax))
+            {
+                // O eixo é a direção em que a aresta circular não tem espessura.
+                var span = new[] { eMax[0] - eMin[0], eMax[1] - eMin[1], eMax[2] - eMin[2] };
+                for (int i = 0; i < 3; i++) if (Math.Abs(span[i]) <= Tol) { axis = i; break; }
+                if (axis < 0)
+                {
+                    error = "a aresta selecionada não está num plano paralelo a XY, XZ ou YZ. " +
+                            "O alojamento de O'ring só é criado com o eixo paralelo a X, Y ou Z.";
+                    return false;
+                }
+                int a1 = (axis + 1) % 3, a2 = (axis + 2) % 3;
+                if (Math.Abs(span[a1] - span[a2]) > Math.Max(Tol, 0.01 * span[a1]))
+                {
+                    error = $"a aresta não é circular (caixa {span[a1]:0.###} × {span[a2]:0.###} mm). " +
+                            "Selecione a aresta CIRCULAR que dá o diâmetro de referência.";
+                    return false;
+                }
+                centerMm = new[] { (eMin[0] + eMax[0]) / 2.0, (eMin[1] + eMax[1]) / 2.0, (eMin[2] + eMax[2]) / 2.0 };
+                diameterMm = (span[a1] + span[a2]) / 2.0;
+                return true;
+            }
+
+            // Plano B: o círculo.
+            object geo = GeometryOf(comEdge);
+            var args = new object[] { new double[3], new double[3], 0.0 };
+            if (geo == null || GeomTypeOf(comEdge) != igCircle || AutoEDM.Drawing.TurnedProfileReader.TryCall(geo, "GetCircleData", args, 0, 1, 2) == null)
+            {
+                error = "não deu para ler a aresta (nem a caixa envolvente nem o círculo) — clique numa aresta CIRCULAR.";
+                return false;
+            }
+            double[] c = ToDoubles(args[0]), n = ToDoubles(args[1]);
+            double r = Convert.ToDouble(args[2]) * 1000.0;
+            if (c == null || n == null || c.Length < 3 || n.Length < 3 || r <= 0)
+            {
+                error = "o círculo da aresta veio vazio — clique de novo na aresta circular.";
+                return false;
+            }
+            double nLen = Math.Sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+            for (int i = 0; i < 3; i++) if (nLen > 0 && Math.Abs(n[i]) / nLen > 0.9999) { axis = i; break; }
+            if (axis < 0)
+            {
+                error = "a aresta selecionada não está num plano paralelo a XY, XZ ou YZ. " +
+                        "O alojamento de O'ring só é criado com o eixo paralelo a X, Y ou Z.";
+                return false;
+            }
+            centerMm = new[] { c[0] * 1000.0, c[1] * 1000.0, c[2] * 1000.0 };
+            diameterMm = 2.0 * r;
+            Log.Info($"  [O'ring] caixa da aresta indisponível — lida pelo círculo: Ø{diameterMm:0.000}, eixo {"XYZ"[axis]}.");
+            return true;
+        }
+
+        /// <summary>
+        /// O tipo de canal que a FACE sozinha pede — para a janela acertar o tipo já no clique
+        /// da face, antes de qualquer aresta: plana = canal de face; cilíndrica = eixo ou furo
+        /// pela normal (aponta para fora do material). null quando a face não é nenhuma das duas
+        /// ou a normal não pôde ser lida.
+        /// </summary>
+        public static GrooveKind? KindOfFace(object comFace)
+        {
+            if (comFace == null) return null;
+            int type = GeomTypeOf(comFace);
+            if (type == igPlane) return GrooveKind.AxialFace;
+            if (type != igCylinder) return null;
+
+            object geo = GeometryOf(comFace);
+            var args = new object[] { new double[3], new double[3], 0.0 };
+            if (geo == null || AutoEDM.Drawing.TurnedProfileReader.TryCall(geo, "GetCylinderData", args, 0, 1, 2) == null) return null;
+            double[] b = ToDoubles(args[0]), u = ToDoubles(args[1]);
+            if (b == null || u == null || b.Length < 3 || u.Length < 3) return null;
+            int axis = -1;
+            double uLen = Math.Sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+            for (int i = 0; i < 3; i++) if (uLen > 0 && Math.Abs(u[i]) / uLen > 0.9999) { axis = i; break; }
+            if (axis < 0) return null;   // eixo inclinado: o Read recusa de qualquer jeito
+
+            var probe = new ORingTarget { AxisIndex = axis, CenterMm = new[] { b[0] * 1000.0, b[1] * 1000.0, b[2] * 1000.0 } };
+            bool? away = NormalPointsAwayFromAxis(comFace, probe);
+            return away.HasValue ? (away.Value ? GrooveKind.RadialExternal : GrooveKind.RadialInternal) : (GrooveKind?)null;
+        }
+
+        /// <summary>
+        /// As arestas CIRCULARES da face, uma por círculo (lidas pelo mesmo <see cref="ReadCircle"/>).
+        /// Com uma só — a boca do único furo numa face plana, por exemplo — a janela nem precisa
+        /// pedir a aresta.
+        /// </summary>
+        public static List<object> CircularEdgesOf(object comFace)
+        {
+            var result = new List<object>();
+            var seen = new List<double[]>();
+            object edges = null;
+            try { edges = comFace?.GetType().InvokeMember("Edges", System.Reflection.BindingFlags.GetProperty, null, comFace, null); }
+            catch { }
+            int n = 0;
+            try { n = Convert.ToInt32(edges?.GetType().InvokeMember("Count", System.Reflection.BindingFlags.GetProperty, null, edges, null)); }
+            catch { }
+            for (int i = 1; i <= n; i++)
+            {
+                object e;
+                try { e = edges.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, edges, new object[] { i }); }
+                catch { continue; }
+                if (GeomTypeOf(e) != igCircle) continue;
+                int axis; double[] c; double d; string err;
+                if (!ReadCircle(e, out axis, out c, out d, out err)) continue;
+                var key = new[] { c[0], c[1], c[2], d };
+                if (seen.Any(k => Math.Abs(k[0] - key[0]) < 0.01 && Math.Abs(k[1] - key[1]) < 0.01 &&
+                                  Math.Abs(k[2] - key[2]) < 0.01 && Math.Abs(k[3] - key[3]) < 0.01)) continue;
+                seen.Add(key);
+                result.Add(e);
+            }
+            return result;
         }
 
         /// <summary>

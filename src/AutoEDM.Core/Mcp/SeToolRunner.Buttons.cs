@@ -619,6 +619,51 @@ namespace AutoEDM.Mcp
             }
 
             string ring = ReadString(argsJson, "anel");
+            // Mesmos campos da janela: folga até o conjugado (ou vão de face), pressão, ajuste e modo.
+            double gap = ReadDouble(argsJson, "folgaMm", 0.0, 0.0, 50.0);
+            string sizingArg = (ReadString(argsJson, "calculo") ?? "").Trim().ToLowerInvariant();
+            GrooveSizing? forcedSizing = sizingArg.StartsWith("tab") ? GrooveSizing.Table
+                                       : sizingArg.StartsWith("anel") ? GrooveSizing.FromRing : (GrooveSizing?)null;
+            var matingRead = new Dictionary<GroovePlan, Tuple<double?, string>>();
+            ORingGlandContext Context(GroovePlan pl, GrooveSizing sizing)
+            {
+                var ctx = new ORingGlandContext
+                {
+                    Sizing = sizing,
+                    PressureBar = ReadDouble(argsJson, "pressaoBar", ORingGrooveRules.DefaultPressureBar, 0.0, 1000.0),
+                    Fit = ReadString(argsJson, "ajuste") ?? IsoFits.DefaultFit,
+                    GrooveToleranceMm = ReadDouble(argsJson, "tolCanalMm", ORingGrooveRules.DefaultGrooveTolerance, 0.0, 1.0)
+                };
+                if (string.Equals(ctx.Fit, "nenhum", StringComparison.OrdinalIgnoreCase)) ctx.Fit = "";
+                if (faceKind) ctx.FaceGapMm = gap;
+                else if (gap > 0)
+                {
+                    ctx.MatingDiameterMm = kind == GrooveKind.RadialExternal ? pl.SealingDiameterMm + gap : pl.SealingDiameterMm - gap;
+                    ctx.MatingSource = $"folga de {gap:0.00} mm informada";
+                }
+                else
+                {
+                    Tuple<double?, string> hit;
+                    if (!matingRead.TryGetValue(pl, out hit))
+                    {
+                        double d; string src;
+                        double axial = pl.Target.EdgeAxialMm + pl.Target.MaterialDirection * offset;
+                        bool found = ORingMatingReader.TryRead((object)app, (object)doc, pl.Target, kind, axial, out d, out src);
+                        matingRead[pl] = hit = Tuple.Create(found ? (double?)d : null, src);
+                    }
+                    ctx.MatingDiameterMm = hit.Item1;
+                    ctx.MatingSource = hit.Item2;
+                }
+                return ctx;
+            }
+            ORingGrooveSpec Finalize(GroovePlan pl, ORingCandidate c, bool byHand)
+            {
+                var s = ORingGrooveCalculator.Compute(c.Ring, kind, pl.SealingDiameterMm, motion, rubber, pressure,
+                    Context(pl, forcedSizing ?? (byHand ? GrooveSizing.FromRing : c.Spec.Sizing)));
+                ORingGrooveCalculator.CheckPlacement(s, pl.Target, offset);
+                return s;
+            }
+
             foreach (GroovePlan plan in plans)
             {
                 ORingTarget t = plan.Target;
@@ -627,22 +672,26 @@ namespace AutoEDM.Mcp
                 plan.SealingDiameterMm = faceKind
                     ? ORingGrooveCalculator.FaceSealingDiameter(t.EdgeDiameterMm, offset, plan.SectionMm, motion, rubber, t.FaceGrooveOutward)
                     : t.SealingDiameterMm;
+                var gland = Context(plan, GrooveSizing.Table);
                 plan.Candidates = ORingGrooveCalculator.Rank(catalog, kind, plan.SealingDiameterMm, motion, rubber, plan.SectionMm, pressure,
-                    metric && double.IsNaN(fixedSection) ? 0.30 : 0.0);
+                    metric && double.IsNaN(fixedSection) ? 0.30 : 0.0, gland);
                 if (plan.Candidates.Count == 0)
                 {
-                    double ideal = ORingGrooveCalculator.IdealInnerDiameter(kind, plan.SealingDiameterMm, plan.SectionMm, motion, rubber, pressure);
+                    double ideal = ORingGrooveCalculator.IdealInnerDiameter(kind, plan.SealingDiameterMm, plan.SectionMm, motion, rubber, pressure,
+                        gland.MatingDiameterMm);
                     plan.Problem = $"nenhum anel no catálogo para a seção {plan.SectionMm:0.00} mm (o ideal seria d1 ≈ {ideal:0.00} × d2 {plan.SectionMm:0.00}).";
                     continue;
                 }
                 ORingCandidate pick = plan.Candidates[0];
+                bool byHand = false;
                 // Anel à mão só com UMA aresta — com várias, cada uma leva o melhor para o diâmetro dela, como na janela.
                 if (!string.IsNullOrWhiteSpace(ring) && plans.Count == 1)
                 {
                     pick = plan.Candidates.FirstOrDefault(c => string.Equals(c.Ring.Designation.Trim(), ring.Trim(), StringComparison.OrdinalIgnoreCase));
                     if (pick == null) { plan.Problem = $"o anel '{ring}' não está entre os que servem a esta aresta."; continue; }
+                    byHand = !ReferenceEquals(pick, plan.Candidates[0]);
                 }
-                plan.Spec = pick.Spec;
+                plan.Spec = Finalize(plan, pick, byHand);
             }
 
             foreach (GroovePlan plan in plans)
@@ -689,6 +738,8 @@ namespace AutoEDM.Mcp
 
             var done = new List<string>();
             var failed = new List<string>();
+            var finishIssues = new List<string>();
+            bool finish = ReadBool(argsJson, "acabamento", true);
             Log.Info($"===== ALOJAMENTO DE O'RING (MCP, {ready.Count} aresta(s)) =====");
             foreach (GroovePlan plan in ready)
             {
@@ -698,8 +749,10 @@ namespace AutoEDM.Mcp
                     Log.Info("--- aresta " + label + " ---");
                     Log.Info(plan.Spec.Describe());
                     string featureName;
-                    bool ok = ORingGrooveModeler.Cut((object)app, plan.Target, plan.Spec, offset, out featureName);
+                    List<string> finishProblems;
+                    bool ok = ORingGrooveModeler.Cut((object)app, plan.Target, plan.Spec, offset, finish, out featureName, out finishProblems);
                     (ok ? done : failed).Add(label + (ok && featureName != null ? $"  (feature \"{featureName}\")" : ""));
+                    if (ok) finishIssues.AddRange(finishProblems.Select(p => label + ": " + p));
                 }
                 catch (Exception ex)
                 {
@@ -713,8 +766,9 @@ namespace AutoEDM.Mcp
             sb.AppendLine();
             foreach (string d in done) sb.AppendLine("  ✓ criado " + d);
             foreach (string f in failed) sb.AppendLine("  ✗ falhou " + f);
-            if (done.Count > 0)
-                sb.Append("O raio de fundo e a quebra de canto NÃO são cortados pelo AutoEDM — estão no relatório acima.");
+            if (done.Count > 0 && !finish)
+                sb.AppendLine("Raio do fundo e quebra de canto NÃO cortados ('acabamento': false) — estão no relatório acima.");
+            foreach (string f in finishIssues) sb.AppendLine("  ! acabamento que faltou: " + f);
             return sb.ToString();
         }
 

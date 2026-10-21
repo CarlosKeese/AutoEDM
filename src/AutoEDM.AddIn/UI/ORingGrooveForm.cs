@@ -59,6 +59,10 @@ namespace AutoEDM.AddIn.UI
             public double SealingDiameterMm;
             public string Problem;          // por que esta aresta não vai virar alojamento
 
+            // Ø do conjugado achado sozinho (peça em contexto de montagem); null = não achou.
+            public double? AutoMatingMm;
+            public string AutoMatingSource;
+
             public bool Ready { get { return Problem == null && Spec != null && Target != null && Target.Ok; } }
             public string EdgeLabel { get { return Target != null && Target.Ok ? $"Ø{Target.EdgeDiameterMm:0.000}" : "aresta"; } }
         }
@@ -82,13 +86,17 @@ namespace AutoEDM.AddIn.UI
         private bool _offsetIsFaceMode;             // o campo de afastamento está no modo canal-de-face?
         private bool _offsetUiReady;
         private object _hlFace, _hlEdge;          // HighlightSets — realce do que já foi pego
+        private object _kindSuggestedFor;         // face cujo palpite de tipo já foi aplicado
 
         private Label _lblFace, _lblEdge;
         private Button _btnFace, _btnEdge, _btnCreate, _btnClose, _btnCatalog;
-        private ComboBox _cboKind, _cboMotion, _cboElastomer, _cboPressure, _cboSection, _cboRing;
-        private NumericUpDown _numOffset;
-        private CheckBox _chkMetric;
-        private Label _lblOffset;
+        private ComboBox _cboKind, _cboMotion, _cboElastomer, _cboPressure, _cboSection, _cboRing, _cboFit, _cboSizing;
+        private NumericUpDown _numOffset, _numMating, _numBar, _numTol;
+        private CheckBox _chkMetric, _chkFinish;
+        private Label _lblOffset, _lblMating;
+
+        /// <summary>Ajustes oferecidos para o pior caso; o último item desliga o pior caso.</summary>
+        private static readonly string[] FitItems = { "H7/g6", "H7/h6", "H8/f7", "H8/h7", "sem pior caso" };
         private TextBox _txtReport;
         private readonly ToolTip _tips = new ToolTip();
 
@@ -203,6 +211,67 @@ namespace AutoEDM.AddIn.UI
                                          " mm). O canal inteiro fica para fora dessa parede.");
             y += 34;
 
+            // ---- o que está do outro lado do anel: a peça conjugada, a pressão, as tolerâncias
+            _lblMating = Add(new Label { Left = 12, Top = y + 4, Width = 200, Text = MatingCaption(GrooveKind.RadialInternal) });
+            _numMating = Add(new NumericUpDown
+            {
+                Left = 220, Top = y, Width = 90, DecimalPlaces = 2, Increment = 0.05M,
+                Minimum = 0M, Maximum = 50M, Value = 0M
+            });
+            _tips.SetToolTip(_numMating, "Canal de EIXO/FURO: folga DIAMETRAL entre a peça e o conjugado (furo que recebe " +
+                                         "o eixo, ou eixo que entra no furo). A altura do alojamento é medida até o " +
+                                         "conjugado, então folga maior = canal mais raso.\r\n" +
+                                         "0 = automático: com a peça em contexto de montagem, o AutoEDM procura a peça " +
+                                         "coaxial; sozinha, supõe o conjugado no mesmo Ø nominal (só o ajuste separa).\r\n" +
+                                         "Canal de FACE: vão entre as faces montadas (0 = encostadas).");
+            _numMating.ValueChanged += (s, e) => RefillRings();
+            Add(new Label { Left = 320, Top = y + 4, Width = 110, Text = "Pressão (bar)", TextAlign = ContentAlignment.TopRight });
+            _numBar = Add(new NumericUpDown
+            {
+                Left = 438, Top = y, Width = 70, DecimalPlaces = 0, Increment = 5M,
+                Minimum = 0M, Maximum = 1000M, Value = (decimal)ORingGrooveRules.DefaultPressureBar
+            });
+            _tips.SetToolTip(_numBar, "Pressão de trabalho. Com folga acima do jogo da tabela e pressão acima de " +
+                                      ORingGrooveRules.BackupRingPressureBar.ToString("0") + " bar, o relatório pede anel de apoio.");
+            _numBar.ValueChanged += (s, e) => RefillRings();
+            y += 30;
+
+            _cboFit = Combo("Ajuste furo/eixo · tol. canal ±", 12, ref y, FitItems);
+            _cboFit.Width = 110;
+            _tips.SetToolTip(_cboFit, "Para o PIOR CASO: o esmagamento, o estiramento e o preenchimento são recalculados " +
+                                      "com as tolerâncias do ajuste, das cotas do canal e do anel (ISO 3601-1).");
+            _cboFit.SelectedIndexChanged += (s, e) => RefillRings();
+            _numTol = Add(new NumericUpDown
+            {
+                Left = 338, Top = y - 30, Width = 70, DecimalPlaces = 2, Increment = 0.01M,
+                Minimum = 0M, Maximum = 1M, Value = (decimal)ORingGrooveRules.DefaultGrooveTolerance
+            });
+            _tips.SetToolTip(_numTol, "Tolerância ± das cotas do canal (Ø do fundo, largura, profundidade).");
+            _numTol.ValueChanged += (s, e) => RefillRings();
+
+            _cboSizing = Combo("Cálculo do canal", 12, ref y, new[]
+            {
+                "automático (tabela; pelo anel ao trocar)",
+                "sempre pela tabela",
+                "sempre pelo anel"
+            });
+            _cboSizing.Width = 328;
+            _tips.SetToolTip(_cboSizing, "TABELA: a cota do catálogo, e o anel é escolhido para ela.\r\n" +
+                                         "PELO ANEL: o fundo do canal segue o anel escolhido (estiramento dentro do " +
+                                         "limite) e a largura acompanha o preenchimento.\r\n" +
+                                         "Automático: o recomendado sai da tabela (ou pelo anel, quando nenhum anel " +
+                                         "da série serve na tabela); trocar o anel na lista recalcula o canal para ele.");
+            _cboSizing.SelectedIndexChanged += (s, e) => RefillRings();
+
+            _chkFinish = Add(new CheckBox
+            {
+                Left = 220, Top = y, Width = 328, Height = 22, Checked = true,
+                Text = "Cortar raio do fundo e quebra de canto"
+            });
+            _tips.SetToolTip(_chkFinish, "Depois do canal, arredonda as arestas do FUNDO (raio da tabela) e chanfra as da " +
+                                         "ENTRADA (quebra de canto). Se a SE recusar, o canal fica e o aviso diz o que faltou.");
+            y += 28;
+
             _txtReport = Add(new TextBox
             {
                 Left = 12, Top = y, Width = 536, Height = 232,
@@ -230,6 +299,8 @@ namespace AutoEDM.AddIn.UI
             _cboMotion.SelectedIndex = 0;
             _cboElastomer.SelectedIndex = 0;
             _cboPressure.SelectedIndex = 0;
+            _cboFit.SelectedIndex = 0;
+            _cboSizing.SelectedIndex = 0;
             _cboSection.Items.Add(AutoSectionItem);   // índice 0 = cada aresta escolhe a sua
             foreach (double d2 in _catalog.CrossSections) _cboSection.Items.Add(d2.ToString("0.00"));
             _cboSection.SelectedIndex = 0;
@@ -312,6 +383,8 @@ namespace AutoEDM.AddIn.UI
             try
             {
                 _lblOffset.Text = OffsetCaption(Kind());
+                _lblMating.Text = MatingCaption(Kind());
+                _numMating.Value = 0M;
                 _numOffset.Minimum = face ? (decimal)MinFaceOffsetMm : 0M;
                 _numOffset.Value = face ? (decimal)MinFaceOffsetMm : (decimal)DefaultRadialOffsetMm;
                 _cboPressure.Enabled = face;
@@ -326,6 +399,11 @@ namespace AutoEDM.AddIn.UI
             kind == GrooveKind.AxialFace
                 ? "Parede entre a aresta e o canal (mm)"
                 : "Aresta → centro do canal, no EIXO (mm)";
+
+        private static string MatingCaption(GrooveKind kind) =>
+            kind == GrooveKind.AxialFace
+                ? "Vão entre as faces montadas (mm)"
+                : "Folga diametral até o conjugado (mm)";
 
         // Ø de vedação: agora é POR ARESTA — ver SealingDiameterOf(GroovePlan).
 
@@ -452,9 +530,28 @@ namespace AutoEDM.AddIn.UI
                 _comFace = graphic;
                 Highlight(ref _hlFace, graphic, Rgb(255, 128, 0), append: false);
                 Ok(_lblFace, "face selecionada — lendo…");
+                ApplyKindFromFace(graphic);
+
+                // A face com UMA aresta circular só (a boca do único furo, o contorno do topo de
+                // um eixo) não precisa da etapa 2: a aresta entra sozinha.
+                if (_comEdges.Count == 0)
+                {
+                    var circles = ORingTargetReader.CircularEdgesOf(graphic);
+                    if (circles.Count == 1)
+                    {
+                        _comEdges.Add(circles[0]);
+                        Highlight(ref _hlEdge, circles[0], Rgb(0, 176, 80), append: false);
+                        Log.Info("Alojamento de O'ring: a face tem uma aresta circular só — selecionada automaticamente.");
+                        Recompute();
+                        UpdateStepUi();
+                        return;
+                    }
+                    Recompute();
+                    // Como num recurso nativo, a etapa 1 emenda na 2 sem pedir licença.
+                    StartStep(Step.Edge);
+                    return;
+                }
                 Recompute();
-                // Como num recurso nativo, a etapa 1 emenda na 2 sem pedir licença.
-                if (_comEdges.Count == 0) { StartStep(Step.Edge); return; }
             }
             else
             {
@@ -469,6 +566,29 @@ namespace AutoEDM.AddIn.UI
                 return;
             }
             UpdateStepUi();
+        }
+
+        /// <summary>
+        /// O tipo de canal sai da FACE, no clique dela — plana = de face; cilíndrica = eixo ou
+        /// furo pela normal. Antes ele só era deduzido depois da aresta, e uma aresta ilegível
+        /// deixava o tipo errado na lista até o operador trocar à mão.
+        /// </summary>
+        private void ApplyKindFromFace(object face)
+        {
+            GrooveKind? kind = null;
+            try { kind = ORingTargetReader.KindOfFace(face); }
+            catch (Exception e) { Log.Warn("Alojamento de O'ring: tipo pela face não lido — " + e.GetBaseException().Message); }
+            if (!kind.HasValue) return;   // fica para o palpite com a aresta (Recompute)
+
+            _kindSuggestedFor = face;
+            _loading = true;
+            _cboKind.SelectedIndex = kind.Value == GrooveKind.RadialExternal ? 0 : kind.Value == GrooveKind.AxialFace ? 2 : 1;
+            _loading = false;
+            UpdateOffsetUi();
+            Ok(_lblFace, kind.Value == GrooveKind.AxialFace ? "face plana → canal de face"
+                       : kind.Value == GrooveKind.RadialExternal ? "face cilíndrica → canal em EIXO"
+                       : "face cilíndrica → canal em FURO");
+            Log.Info($"Alojamento de O'ring: tipo de canal pela face — {_cboKind.SelectedItem}.");
         }
 
         /// <summary>Botões de etapa com cara de etapa: o da etapa ativa fica destacado.</summary>
@@ -647,17 +767,55 @@ namespace AutoEDM.AddIn.UI
                 : "face plana");
             UpdateEdgeLabel();
 
-            // O TIPO de canal é da face, não da aresta: vem do primeiro alvo legível.
-            _loading = true;
-            _cboKind.SelectedIndex = first.Target.SuggestedKind == GrooveKind.RadialExternal ? 0
-                                   : first.Target.SuggestedKind == GrooveKind.AxialFace ? 2 : 1;
-            _loading = false;
+            // O TIPO de canal é da face, não da aresta: vem do primeiro alvo legível — mas só
+            // quando a FACE muda. Antes ele era reescrito a cada recálculo, e trocar o tipo na
+            // lista voltava sozinho para o palpite da geometria.
+            if (!ReferenceEquals(_kindSuggestedFor, _comFace))
+            {
+                _kindSuggestedFor = _comFace;
+                _loading = true;
+                _cboKind.SelectedIndex = first.Target.SuggestedKind == GrooveKind.RadialExternal ? 0
+                                       : first.Target.SuggestedKind == GrooveKind.AxialFace ? 2 : 1;
+                _loading = false;
+            }
+
+            // Ø conjugado automático: só existe com a peça em contexto de montagem.
+            foreach (var plan in plans.Where(pl => pl.Target != null && pl.Target.Ok && pl.Problem == null))
+                ReadMating(plan);
 
             // O afastamento entra ANTES dos anéis: num canal de face é ele que decide em que
             // diâmetro o cordão corre, e é desse diâmetro que sai a seção de cada aresta.
             UpdateOffsetUi();
 
             RefillRings();
+        }
+
+        /// <summary>Ø conjugado já procurado, por aresta e posição do canal — a varredura da
+        /// montagem não se repete a cada campo mexido na janela.</summary>
+        private readonly Dictionary<string, Tuple<double?, string>> _matingCache = new Dictionary<string, Tuple<double?, string>>();
+
+        /// <summary>
+        /// Procura o conjugado da aresta (só com a peça em contexto de montagem; só leitura).
+        /// Falha em silêncio para a janela: sem conjugado, o cálculo supõe o mesmo Ø nominal, e o
+        /// relatório diz que supôs.
+        /// </summary>
+        private void ReadMating(GroovePlan plan)
+        {
+            var t = plan.Target;
+            if (Kind() == GrooveKind.AxialFace) { plan.AutoMatingMm = null; plan.AutoMatingSource = null; return; }
+            double axial = t.EdgeAxialMm + t.MaterialDirection * (double)_numOffset.Value;
+            string key = $"{t.AxisIndex}|{t.CenterMm[0]:0.000}|{t.CenterMm[1]:0.000}|{t.CenterMm[2]:0.000}|{t.SealingDiameterMm:0.000}|{axial:0.00}|{Kind()}";
+            Tuple<double?, string> hit;
+            if (!_matingCache.TryGetValue(key, out hit))
+            {
+                double d = 0; string src = null; bool ok = false;
+                try { ok = ORingMatingReader.TryRead((object)_app, (object)Doc(), t, Kind(), axial, out d, out src); }
+                catch (Exception e) { Log.Warn("Alojamento de O'ring: conjugado não lido — " + e.GetBaseException().Message); }
+                hit = Tuple.Create(ok ? (double?)d : null, src);
+                _matingCache[key] = hit;
+            }
+            plan.AutoMatingMm = hit.Item1;
+            plan.AutoMatingSource = hit.Item2;
         }
 
         /// <summary>
@@ -686,13 +844,25 @@ namespace AutoEDM.AddIn.UI
 
             foreach (var plan in _plans) Solve(plan);
 
+            // A escolha à mão SOBREVIVE a mexer nos outros campos: antes, trocar o afastamento
+            // ou a pressão devolvia a lista para o recomendado sem ninguém perceber.
+            string keep = _cboRing.Enabled && _cboRing.SelectedIndex > 0 && _cboRing.SelectedIndex < _candidates.Count
+                ? _candidates[_cboRing.SelectedIndex].Ring.Designation : null;
+
             bool single = _plans.Count == 1 && _plans[0].Target != null && _plans[0].Target.Ok;
             _loading = true;
             _cboRing.Items.Clear();
+            int selected = 0;
             if (single)
             {
-                _candidates = Rank(_plans[0]);
-                foreach (var c in _candidates.Take(20)) _cboRing.Items.Add(Describe(c));
+                // Cada linha mostra o canal que AQUELE anel daria de fato (pelo anel, se trocado).
+                var plan0 = _plans[0];
+                _candidates = Rank(plan0).Take(20)
+                    .Select((c, i) => new ORingCandidate { Ring = c.Ring, Score = c.Score, Spec = Finalize(plan0, c, i > 0) })
+                    .ToList();
+                foreach (var c in _candidates) _cboRing.Items.Add(Describe(c));
+                if (keep != null)
+                    selected = Math.Max(0, _candidates.ToList().FindIndex(c => c.Ring.Designation == keep));
             }
             else
             {
@@ -700,7 +870,7 @@ namespace AutoEDM.AddIn.UI
                 _cboRing.Items.Add($"automático — o melhor anel para cada uma das {_plans.Count} arestas");
             }
             _cboRing.Enabled = single;
-            if (_cboRing.Items.Count > 0) _cboRing.SelectedIndex = 0;
+            if (_cboRing.Items.Count > 0) _cboRing.SelectedIndex = selected;
             _loading = false;
 
             if (single && _candidates.Count == 0) { ReportNoRing(_plans[0]); return; }
@@ -732,7 +902,54 @@ namespace AutoEDM.AddIn.UI
             plan.SealingDiameterMm = SealingDiameterOf(plan);
             double band = _chkMetric.Checked && !Section().HasValue ? MetricSectionBand : 0.0;
             return ORingGrooveCalculator.Rank(_catalog, Kind(), plan.SealingDiameterMm,
-                Motion(), Rubber(), SectionFor(plan), Pressure(), band);
+                Motion(), Rubber(), SectionFor(plan), Pressure(), band, Context(plan, GrooveSizing.Table));
+        }
+
+        /// <summary>
+        /// O que está do outro lado do anel, para ESTE plano: a folga digitada vale para todas
+        /// as arestas; sem ela, o Ø achado em contexto; sem os dois, o mesmo Ø nominal.
+        /// </summary>
+        private ORingGlandContext Context(GroovePlan plan, GrooveSizing sizing)
+        {
+            var ctx = new ORingGlandContext
+            {
+                Sizing = sizing,
+                PressureBar = (double)_numBar.Value,
+                Fit = _cboFit.SelectedIndex >= 0 && _cboFit.SelectedIndex < FitItems.Length - 1 ? FitItems[_cboFit.SelectedIndex] : "",
+                GrooveToleranceMm = (double)_numTol.Value
+            };
+            double typed = (double)_numMating.Value;
+            if (Kind() == GrooveKind.AxialFace)
+                ctx.FaceGapMm = typed;
+            else if (typed > 0 && plan != null)
+            {
+                ctx.MatingDiameterMm = Kind() == GrooveKind.RadialExternal
+                    ? plan.SealingDiameterMm + typed : plan.SealingDiameterMm - typed;
+                ctx.MatingSource = $"folga de {typed:0.00} mm digitada";
+            }
+            else if (plan?.AutoMatingMm != null)
+            {
+                ctx.MatingDiameterMm = plan.AutoMatingMm;
+                ctx.MatingSource = plan.AutoMatingSource;
+            }
+            return ctx;
+        }
+
+        /// <summary>
+        /// O canal DEFINITIVO de um anel da lista: recalculado no modo certo (tabela, ou pelo
+        /// anel quando ele foi trocado à mão) e conferido contra a face — se cabe, com o
+        /// afastamento pedido. É sempre um cálculo novo: a conferência ACRESCENTA apontamentos,
+        /// e repetir sobre o mesmo spec os duplicaria.
+        /// </summary>
+        private ORingGrooveSpec Finalize(GroovePlan plan, ORingCandidate c, bool pickedByHand)
+        {
+            GrooveSizing sizing = _cboSizing.SelectedIndex == 1 ? GrooveSizing.Table
+                                : _cboSizing.SelectedIndex == 2 ? GrooveSizing.FromRing
+                                : pickedByHand ? GrooveSizing.FromRing : c.Spec.Sizing;
+            var spec = ORingGrooveCalculator.Compute(c.Ring, Kind(), plan.SealingDiameterMm, Motion(), Rubber(),
+                Pressure(), Context(plan, sizing));
+            ORingGrooveCalculator.CheckPlacement(spec, plan.Target, (double)_numOffset.Value);
+            return spec;
         }
 
         /// <summary>Dá a um plano o melhor anel disponível para ELE.</summary>
@@ -747,7 +964,7 @@ namespace AutoEDM.AddIn.UI
                 return;
             }
             plan.Problem = null;
-            plan.Spec = ranked[0].Spec;
+            plan.Spec = Finalize(plan, ranked[0], false);
         }
 
         private void UpdateEdgeLabel()
@@ -773,7 +990,8 @@ namespace AutoEDM.AddIn.UI
         private void ReportNoRing(GroovePlan plan)
         {
             double d2 = SectionFor(plan);
-            double ideal = ORingGrooveCalculator.IdealInnerDiameter(Kind(), plan.SealingDiameterMm, d2, Motion(), Rubber(), Pressure());
+            double ideal = ORingGrooveCalculator.IdealInnerDiameter(Kind(), plan.SealingDiameterMm, d2, Motion(), Rubber(), Pressure(),
+                Context(plan, GrooveSizing.Table).MatingDiameterMm);
             _btnCreate.Enabled = false;
             Report(
                 plan.Target.Description + "\r\n\r\n" +
@@ -795,7 +1013,7 @@ namespace AutoEDM.AddIn.UI
             if (single)
             {
                 int i = _cboRing.SelectedIndex;
-                if (i >= 0 && i < _candidates.Count) _plans[0].Spec = _candidates[i].Spec;   // troca à mão
+                if (i >= 0 && i < _candidates.Count) _plans[0].Spec = Finalize(_plans[0], _candidates[i], i > 0);   // troca à mão
             }
 
             var ready = _plans.Where(pl => pl.Ready).ToList();
@@ -911,6 +1129,7 @@ namespace AutoEDM.AddIn.UI
             StopPicking();
             var done = new List<string>();
             var failed = new List<string>();
+            var finishIssues = new List<string>();
             try
             {
                 Log.Info($"===== ALOJAMENTO DE O'RING ({ready.Count} aresta(s)) =====");
@@ -924,9 +1143,12 @@ namespace AutoEDM.AddIn.UI
                         Log.Info($"--- aresta {plan.EdgeLabel} ---");
                         Log.Info(plan.Spec.Describe());
                         string featureName;
-                        bool ok = ORingGrooveModeler.Cut((object)_app, plan.Target, plan.Spec, (double)_numOffset.Value, out featureName);
+                        List<string> finishProblems;
+                        bool ok = ORingGrooveModeler.Cut((object)_app, plan.Target, plan.Spec, (double)_numOffset.Value,
+                            _chkFinish.Checked, out featureName, out finishProblems);
                         (ok ? done : failed).Add($"{plan.EdgeLabel} → {plan.Spec.Ring.Designation}" +
                                                  (ok && featureName != null ? $"   (feature \"{featureName}\")" : ""));
+                        if (ok) finishIssues.AddRange(finishProblems.Select(p => $"{plan.EdgeLabel}: {p}"));
                     }
                     catch (Exception ex)
                     {
@@ -955,11 +1177,16 @@ namespace AutoEDM.AddIn.UI
                 sb.AppendLine();
                 sb.AppendLine("O log traz o passo exato que falhou (%LOCALAPPDATA%\\AutoEDM\\logs).");
             }
-            if (done.Count > 0)
+            if (done.Count > 0 && !_chkFinish.Checked)
             {
                 sb.AppendLine();
-                sb.AppendLine("O raio de fundo e a quebra de canto NÃO são cortados pelo AutoEDM — estão no " +
-                              "relatório para você aplicar (arredondar/chanfrar) como preferir.");
+                sb.AppendLine("Raio do fundo e quebra de canto NÃO cortados (opção desmarcada) — estão no relatório.");
+            }
+            if (finishIssues.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Acabamento que faltou (aplique à mão; o canal está certo):");
+                foreach (var f in finishIssues) sb.AppendLine("  ! " + f);
             }
             MessageBox.Show(sb.ToString(), "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK,
                 failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
@@ -977,6 +1204,7 @@ namespace AutoEDM.AddIn.UI
             _comFace = null;
             _comEdges.Clear();
             _plans = new List<GroovePlan>();
+            _matingCache.Clear();   // o corte acabou de mudar a peça (e talvez a montagem)
             ClearHighlight(ref _hlFace);
             ClearHighlight(ref _hlEdge);
             Warn(_lblFace, "— nenhuma face selecionada —");

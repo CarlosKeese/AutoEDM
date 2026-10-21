@@ -62,7 +62,20 @@ namespace AutoEDM.Sealing
         /// devolve o nome que a feature recebeu na árvore (null se não deu para renomear).</summary>
         public static bool Cut(dynamic app, ORingTarget target, ORingGrooveSpec spec, double grooveOffsetMm, out string featureName)
         {
+            List<string> ignored;
+            return Cut((object)app, target, spec, grooveOffsetMm, true, out featureName, out ignored);
+        }
+
+        /// <summary>
+        /// O corte completo. Com <paramref name="finish"/>, o raio do fundo e a quebra de canto
+        /// são cortados logo depois do canal (<see cref="ORingGrooveBlends"/>); o que não der
+        /// certo nesse acabamento volta em <paramref name="finishProblems"/> — o canal fica.
+        /// </summary>
+        public static bool Cut(dynamic app, ORingTarget target, ORingGrooveSpec spec, double grooveOffsetMm,
+            bool finish, out string featureName, out List<string> finishProblems)
+        {
             featureName = null;
+            finishProblems = new List<string>();
             if (target == null || !target.Ok) { Log.Warn("Canal de O'ring: seleção inválida."); return false; }
             if (spec == null) { Log.Warn("Canal de O'ring: sem alojamento calculado."); return false; }
 
@@ -206,7 +219,23 @@ namespace AutoEDM.Sealing
                 if (ok)
                 {
                     featureName = NameFeature((object)doc, (object)model, cut, spec);
+                    ORingGrooveBlends.Result fin = null;
+                    if (finish)
+                    {
+                        try
+                        {
+                            fin = ORingGrooveBlends.Apply((object)model, cut, target, spec, grooveOffsetMm);
+                            finishProblems.AddRange(fin.Problems);
+                        }
+                        catch (Exception e)
+                        {
+                            finishProblems.Add("acabamento: " + e.GetBaseException().Message);
+                            Log.Warn("  [acabamento] falhou (o canal fica) — " + e.GetBaseException().Message);
+                        }
+                    }
                     PaintFeature((object)doc, cut);
+                    if (fin?.RoundFeature != null) PaintFeature((object)doc, fin.RoundFeature);
+                    if (fin?.ChamferFeature != null) PaintFeature((object)doc, fin.ChamferFeature);
                     HideFeatureSketch(cut);
                 }
                 return ok;
