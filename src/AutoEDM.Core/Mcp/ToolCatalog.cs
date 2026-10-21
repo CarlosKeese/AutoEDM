@@ -546,7 +546,7 @@ namespace AutoEDM.Mcp
                     "\"ligarExibicaoRosca\":{\"type\":\"boolean\",\"description\":\"Liga a opção GLOBAL do Solid Edge 'exibir roscas' se estiver desligada. Muda a SE inteira — só com o pedido do usuário.\"}}," +
                     "\"additionalProperties\":false}",
                 Description =
-                    "Botão 'Sonda de rosca (M6)'. Cria uma PEÇA NOVA descartável (não salva) com um bloco e quatro furos M6, " +
+                    "Botão 'Sonda de rosca'. Cria uma PEÇA NOVA descartável (não salva) com um bloco e quatro furos M6, " +
                     "um por receita da API de rosca, e mede o Ø real de cada um. Não precisa de documento aberto."
             },
             new ToolSpec
@@ -555,7 +555,7 @@ namespace AutoEDM.Mcp
                 Writes = false,
                 InputSchemaJson = NoArgs,
                 Description =
-                    "Botão 'Iniciar leitura de ação manual'. Tira a foto das features e superfícies do documento ativo ANTES " +
+                    "Botão 'Iniciar gravação'. Tira a foto das features e superfícies do documento ativo ANTES " +
                     "de o usuário fazer uma ação à mão no Solid Edge. Depois da ação, chame 'se_gravador_gravar'. Não altera nada."
             },
             new ToolSpec
@@ -564,7 +564,7 @@ namespace AutoEDM.Mcp
                 Writes = false,
                 InputSchemaJson = NoArgs,
                 Description =
-                    "Botão 'Gravar log da leitura'. Compara com a foto do 'se_gravador_iniciar' e devolve o tipo e as " +
+                    "Botão 'Encerrar gravação'. Compara com a foto do 'se_gravador_iniciar' e devolve o tipo e as " +
                     "propriedades das features que o usuário criou à mão — é assim que uma ação manual vira receita COM. " +
                     "Não altera nada."
             }

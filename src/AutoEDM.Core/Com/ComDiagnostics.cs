@@ -374,7 +374,7 @@ namespace AutoEDM.Com
             dynamic d = doc;
             try { snap["__ModelingMode"] = new List<string> { ((int)d.ModelingMode).ToString() }; } catch { }
             foreach (var kv in CollectionsMap(doc)) snap[kv.Key] = ItemNames((dynamic)kv.Value);
-            Log.Info($"[REC] Leitura INICIADA — snapshot de {Math.Max(0, snap.Count - 1)} coleção(ões). Faça o processo COMPLETO e clique 'Gravar log da leitura'.");
+            Log.Info($"[REC] Leitura INICIADA — snapshot de {Math.Max(0, snap.Count - 1)} coleção(ões). Faça o processo COMPLETO e clique 'Encerrar gravação'.");
             LogDocIdentity(doc, "(início)");
             LogInventory("[REC] (início) não-vazias:", snap);
             return snap;
@@ -383,7 +383,7 @@ namespace AutoEDM.Com
         /// <summary>Diffa por NOME contra o snapshot e DUMPA (SPY) as features NOVAS; nomeia as removidas.</summary>
         public static void DumpNewSince(object doc, Dictionary<string, List<string>> baseline)
         {
-            if (baseline == null) { Log.Warn("[REC] Sem snapshot inicial — clique 'Iniciar leitura de ação manual' antes de fazer a ação."); return; }
+            if (baseline == null) { Log.Warn("[REC] Sem snapshot inicial — clique 'Iniciar gravação' antes de fazer a ação."); return; }
             dynamic d = doc;
             Log.Info("[REC] ===== GRAVAR LOG DA LEITURA (diff por nome) =====");
             LogDocIdentity(doc, "(fim)");

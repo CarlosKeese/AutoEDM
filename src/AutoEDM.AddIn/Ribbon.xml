@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
+<?xml version="1.0" encoding="utf-8" ?>
 
 <!--
   Ribbon do AutoEDM. Recurso EMBUTIDO; carregado por ElectrodeRibbon via
@@ -70,6 +70,10 @@
               screentip="Desenho 2D automático da PEÇA torneada ativa, cotado pelas cores das faces"
               supertip="Com a PEÇA torneada aberta, clique. O AutoEDM lê cada face (plano, cilindro, cone, arredondamento), resolve a cor pela tabela da ferramentaria (Verde = ajuste H7/g6, Laranja = vedação ±0,1, Azul = água ±0,2...) e mostra o plano de cotas para você conferir. Confirmando, cria um desenho NOVO no template PanFlight: vista lateral com o eixo na horizontal e a cabeça à esquerda (qualquer que seja o eixo no modelo), vista de topo, isométrica com balão de propriedades, cotas no eixo a partir da referência B, diâmetros, raios, chanfros e ângulos com a tolerância da cor, e o GD&amp;T das faces de precisão (referências A/B, cilindricidade, perpendicularidade, batimento e paralelismo de 0,01). Furos aparecem com arestas ocultas. Toda cota é conferida contra o 3D — a que não bate é apagada e listada. O desenho fica aberto SEM salvar; a peça não é alterada."
               imageId="9" showLabel="true" />
+      <button id="32" size="large" label="Desenho de processo"
+              screentip="Cópia da peça sobre a original numa montagem nova, em 02 - PROCESSO"
+              supertip="Com a PEÇA aberta, ou com a peça selecionada na MONTAGEM do molde, clique. O AutoEDM acha a pasta &quot;02 - PROCESSO&quot; do molde (subindo a partir da pasta da peça), cria nela uma subpasta com o nome da peça e grava ali a CÓPIA da peça (&lt;peça&gt;_W01.par) e uma MONTAGEM nova (&lt;peça&gt;_WP.asm) com a original e a cópia na mesma posição, uma sobre a outra. A cópia sai do arquivo SALVO da peça. Mostra o que vai criar antes; nada é sobrescrito — se já existir, oferece abrir a montagem. A montagem fica aberta."
+              imageId="9" showLabel="true" />
     </group>
     <group name="Relatórios">
       <button id="2" size="large" label="Coordenadas"
@@ -132,25 +136,27 @@
               imageId="3" showLabel="true" />
     </group>
     <group name="Diagnóstico">
-      <button id="6" size="large" label="Inspecionar seleção"
+      <!-- Botões PEQUENOS (size="normal"), três por coluna: o grupo é de uso raro e ocupava
+           cinco colunas largas da ribbon. Os dois do gravador ficam juntos, na ordem de uso. -->
+      <button id="6" size="normal" label="Inspecionar seleção"
               screentip="SPY: dumpa o objeto COM selecionado"
               supertip="Selecione uma feature no SE (ex.: um furo ou uma superfície que você criou na mão) e clique: o log mostra o TIPO, propriedades/valores, métodos e coleções expandidas do objeto COM — para descobrir a API real (furo síncrono, offset/stitch/unir) sem adivinhar. Cada clique também soma a type library do que foi selecionado ao mapa acumulado da API (SE_API_dump_&lt;versão&gt;.txt) — selecionar Faces/Edges/Ocorrências cobre partes do SDK que a sonda estática não alcançava."
               imageId="3" showLabel="true" />
-      <button id="8" size="large" label="Iniciar leitura de ação manual"
+      <button id="8" size="normal" label="Iniciar gravação"
               screentip="Gravador: snapshot ANTES da sua ação manual"
-              supertip="Clique ANTES de fazer a ação à mão no SE. Tira uma foto das features/superfícies existentes. Depois de criar 'Limite'/costura/estender/mover, clique em 'Gravar log da leitura' para o AutoEDM dumpar exatamente o que você criou."
+              supertip="Clique ANTES de fazer a ação à mão no SE. Tira uma foto das features/superfícies existentes. Depois de criar 'Limite'/costura/estender/mover, clique em 'Encerrar gravação' para o AutoEDM dumpar exatamente o que você criou."
               imageId="3" showLabel="true" />
-      <button id="15" size="large" label="Sonda inter-part"
+      <button id="9" size="normal" label="Encerrar gravação"
+              screentip="Gravador: diff + dump das features novas"
+              supertip="Clique DEPOIS de fazer a ação manual. Compara com o snapshot inicial e grava no log (linhas [REC]/[SPY]) o tipo e as propriedades das features que você criou — para eu reproduzir por COM."
+              imageId="3" showLabel="true" />
+      <button id="15" size="normal" label="Sonda inter-part"
               screentip="Sonda: rotas de cópia entre peças (SÓ LEITURA)"
               supertip="Selecione a ocorrência da CAVIDADE na montagem e clique. Testa, numa rodada só, as rotas de cópia das faces de queima entre peças que ainda não foram experimentadas (cópia por ARQUIVO com as cores, faces do corpo da ocorrência, referência de topologia, corpo por tag) e grava o mapa dos comandos nativos do Solid Edge. Trabalha em peças DESCARTÁVEIS: não altera a cavidade e não salva a montagem. O resultado inteiro vai para o log. Para o teste decisivo, entre em edição em contexto à mão, deixe aberta e rode de novo."
               imageId="6" showLabel="true" />
-      <button id="13" size="large" label="Sonda de rosca (M6)"
+      <button id="13" size="normal" label="Sonda de rosca"
               screentip="Diagnóstico: por que o furo M6 sai sem rosca"
               supertip="Cria uma PEÇA NOVA descartável (não salva) com um bloco e cinco furos M6 lado a lado, cada um por uma receita diferente da API de rosca do Solid Edge (tabela legada x base de furos nova; rosca física pedida na criação x depois; síncrono x ordenado). O log traz o HoleData completo, o Status da feature e o código de erro da rosca física. Olhe a peça, veja qual furo saiu com a hélice CORTADA e mande o log — é assim que a receita certa entra no 'Criar Base'."
-              imageId="3" showLabel="true" />
-      <button id="9" size="large" label="Gravar log da leitura"
-              screentip="Gravador: diff + dump das features novas"
-              supertip="Clique DEPOIS de fazer a ação manual. Compara com o snapshot inicial e grava no log (linhas [REC]/[SPY]) o tipo e as propriedades das features que você criou — para eu reproduzir por COM."
               imageId="3" showLabel="true" />
     </group>
   </tab>

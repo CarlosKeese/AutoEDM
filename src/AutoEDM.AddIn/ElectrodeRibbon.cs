@@ -56,6 +56,7 @@ namespace AutoEDM.AddIn
         private const int CmdLimparImportacao = 29; // IMPORTAÇÃO: peças geometricamente iguais -> uma cópia só, e relações óbvias
         private const int CmdDesenho2D = 30;        // DESENHO: .dft novo da peça torneada, cotado pelas cores das faces
         private const int CmdOrdenarPathFinder = 31; // MOLDE: ocorrências do 1º nível em sequência pelo código (15335.100, .101…)
+        private const int CmdDesenhoProcesso = 32;   // DESENHO: cópia da peça sobre a original numa montagem nova em 02 - PROCESSO
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -106,6 +107,7 @@ namespace AutoEDM.AddIn
                 case CmdLimparImportacao: LimparImportacao(); break;
                 case CmdDesenho2D: Desenho2D(); break;
                 case CmdOrdenarPathFinder: OrdenarPathFinder(); break;
+                case CmdDesenhoProcesso: DesenhoProcesso(); break;
             }
         }
 
@@ -649,6 +651,54 @@ namespace AutoEDM.AddIn
         }
 
         /// <summary>
+        /// Botão "Desenho de processo" (Carlos, 2026-10-21): a peça ativa — ou a selecionada na
+        /// montagem do molde — é copiada para &lt;molde&gt;\02 - PROCESSO\&lt;peça&gt;\&lt;peça&gt;_W01.par
+        /// e montada junto com a original, as duas na origem, em &lt;peça&gt;_WP.asm, que fica
+        /// aberta. Mostra o plano antes; não sobrescreve nada.
+        /// </summary>
+        private void DesenhoProcesso()
+        {
+            const string title = "AutoEDM — Desenho de processo";
+            Run(CmdDesenhoProcesso, (connector, doc, p) =>
+            {
+                dynamic app = ElectrodeAddIn.Current?.App;
+                bool unsaved;
+                string error;
+                string source = AutoEDM.Mold.ProcessDrawingBuilder.ResolveSource((object)doc, out unsaved, out error);
+                if (source == null) { MessageBox.Show(error, title, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+
+                AutoEDM.Mold.ProcessDrawingPlan plan = AutoEDM.Mold.ProcessDrawingBuilder.Plan(source);
+                if (plan.Error != null) { MessageBox.Show(plan.Error, title, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+                if (plan.Existing.Count > 0)
+                {
+                    bool asmThere = System.IO.File.Exists(plan.AssemblyPath);
+                    var r = MessageBox.Show(
+                        "O desenho de processo desta peça já existe — nada foi sobrescrito:" + Environment.NewLine + Environment.NewLine +
+                        "  • " + string.Join(Environment.NewLine + "  • ", plan.Existing) +
+                        (asmThere ? Environment.NewLine + Environment.NewLine + "Abrir a montagem existente?" : ""),
+                        title, asmThere ? MessageBoxButtons.YesNo : MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    if (asmThere && r == DialogResult.Yes) AutoEDM.Mold.ProcessDrawingBuilder.Open((object)app, plan.AssemblyPath);
+                    return;
+                }
+
+                string ask =
+                    $"Peça: {plan.SourcePath}" + Environment.NewLine + Environment.NewLine +
+                    $"Cria em {plan.Folder}:" + Environment.NewLine +
+                    $"  • {System.IO.Path.GetFileName(plan.CopyPath)} — cópia da peça" + Environment.NewLine +
+                    $"  • {System.IO.Path.GetFileName(plan.AssemblyPath)} — a original e a cópia na mesma posição" + Environment.NewLine + Environment.NewLine +
+                    "A montagem fica aberta." +
+                    (unsaved ? Environment.NewLine + Environment.NewLine +
+                               "ATENÇÃO: a peça tem alterações NÃO SALVAS. A cópia sai do arquivo salvo, sem elas — salve antes se quiser levá-las." : "");
+                if (MessageBox.Show(ask, title, MessageBoxButtons.OKCancel, unsaved ? MessageBoxIcon.Warning : MessageBoxIcon.Question) != DialogResult.OK)
+                    return;
+
+                if (!AutoEDM.Mold.ProcessDrawingBuilder.Build((object)app, plan, out error))
+                    MessageBox.Show("O desenho de processo não foi concluído: " + error + Environment.NewLine + Environment.NewLine +
+                                    "Log: " + ElectrodeAddIn.Current?.LogPath, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            });
+        }
+
+        /// <summary>
         /// Botão "Ordenar PathFinder" (ambiente de MONTAGEM, Carlos, 2026-10-19): as ocorrências do 1º
         /// nível em sequência pelo código do arquivo — 15335.100.par antes de 15335.101.par, e os
         /// números comparados pelo valor (15335.99 antes de 15335.100). Mostra a ordem nova antes,
@@ -1063,7 +1113,7 @@ namespace AutoEDM.AddIn
                 _recBaseline = ComDiagnostics.SnapshotInventory((object)doc);
                 MessageBox.Show(
                     "Gravação INICIADA.\n\nAgora faça a ação manual no Solid Edge (ex.: criar a superfície 'Limite', costurar, estender/mover a face até o bloco).\n\n" +
-                    "Quando terminar, clique em \"Gravar log da leitura\".",
+                    "Quando terminar, clique em \"Encerrar gravação\".",
                     "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex) { Fail("iniciar a leitura de ação manual", ex); }
@@ -1083,7 +1133,7 @@ namespace AutoEDM.AddIn
                 Log.Info("===== GRAVAR LOG DA LEITURA =====");
                 if (_recBaseline == null)
                 {
-                    MessageBox.Show("Clique primeiro em \"Iniciar leitura de ação manual\", faça a ação, e só então grave.", "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show("Clique primeiro em \"Iniciar gravação\", faça a ação, e só então clique em \"Encerrar gravação\".", "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 dynamic doc = app.ActiveDocument;
@@ -1672,6 +1722,8 @@ namespace AutoEDM.AddIn
                 { CmdLimparImportacao,    new CommandSpec("LIMPAR IMPORTAÇÃO (peças repetidas)",  DocKind.Assembly, ModelingEnv.Any) },
                 // Só muda a ORDEM da árvore — nada de geometria, então qualquer ambiente serve.
                 { CmdOrdenarPathFinder,   new CommandSpec("ORDENAR PATHFINDER",   DocKind.Assembly, ModelingEnv.Any) },
+                // Peça aberta OU ocorrência selecionada na montagem: o tipo é conferido no próprio comando.
+                { CmdDesenhoProcesso,     new CommandSpec("DESENHO DE PROCESSO",  DocKind.Any, ModelingEnv.Any) },
 
                 // --- peça: cada botão tem UM ambiente, o do recurso que ele cria ---
                 // Bloco + faixa + furos: extrusão e furação da família síncrona (BlankModeler),

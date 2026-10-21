@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 25; // incrementar ao mudar a ribbon (v25 = supertip do "Criar eletrodo (manual)" com a cópia da queima)
+            AddInEx.GuiVersion = 26; // incrementar ao mudar a ribbon (v26 = Diagnóstico compacto + "Desenho de processo")
 
             Current = this;
             App = application;
