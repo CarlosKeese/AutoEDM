@@ -1258,6 +1258,22 @@ namespace AutoEDM.AddIn
             catch (Exception ex) { Log.Warn("MCP: falha ao derrubar a ponte no encerramento — " + ex.GetBaseException().Message); }
         }
 
+        /// <summary>
+        /// <c>McpAutoStart</c> no config.json: sobe a ponte no OnConnection, sem diálogo — um
+        /// MessageBox na carga da SE seria uma janela a cada abertura. Sempre em somente-leitura.
+        /// </summary>
+        internal static void AutoStartMcp()
+        {
+            try
+            {
+                if (!Config.McpAutoStart) return;
+                string error;
+                if (Mcp.Start(out error)) Log.Info($"MCP: ponte ligada automaticamente (McpAutoStart), somente-leitura, pipe {BridgeProtocol.PipeName}.");
+                else Log.Warn("MCP: McpAutoStart não subiu a ponte — " + error);
+            }
+            catch (Exception ex) { Log.Warn("MCP: McpAutoStart falhou — " + ex.GetBaseException().Message); }
+        }
+
         private void McpLigar()
         {
             try

@@ -184,6 +184,12 @@ nenhum agente alcança o CAD. E ela nasce sempre em **somente-leitura** — as f
 o modelo são recusadas com explicação até o usuário clicar em *Liberar escrita*, que pede
 confirmação e não sobrevive a um desligamento. Nenhuma ferramenta MCP consegue ligar essa chave.
 
+**Ligação automática (opcional).** Com `"McpAutoStart": true` no `config.json`, a ponte sobe sozinha
+quando a Solid Edge carrega o add-in — sempre em somente-leitura; a escrita continua só pelo botão.
+O servidor MCP é instalado por `tools\deploy-dev.ps1 -IncludeMcp` em `%LOCALAPPDATA%\AutoEDM\mcp` e
+registrado no Claude Code no escopo do usuário, então aparece em qualquer pasta. O cliente reabre o
+pipe a cada chamada: se a SE fechar e voltar, a próxima ferramenta reconecta sem reiniciar o Claude Code.
+
 | Comando | O que faz |
 |---|---|
 | **Ligar ponte** | Sobe o pipe. Só uma instância da SE pode hospedar; a segunda diz isso em vez de brigar pelo nome em silêncio. |
@@ -303,6 +309,7 @@ Na primeira execução o add-in grava `%LOCALAPPDATA%\AutoEDM\config.json` com o
 | `ColorTolerance` | Tolerância RGB (0–255) ao casar a cor da face com uma entrada da paleta de Ra. |
 | `DetailGapMm` | Distância máxima entre faces para elas contarem como o **mesmo** detalhe na segmentação. |
 | `HolderHeightMm` / `HolderBaseClearanceMm` | Altura do bloco da base e a folga sob ele. |
+| `McpAutoStart` | `true` = a ponte MCP sobe sozinha ao abrir a SE, em somente-leitura. Padrão `false`. |
 | `RevisionPropertyNames` | Nomes da propriedade de arquivo que marca uma peça **nova** na Lista de modificações. O nome é casado **inteiro** (acento e maiúscula não importam) — nunca por pedaço, senão a propriedade padrão "Número da Revisão", que é contador de salvamentos, entra no lugar e o relatório inteiro sai errado. |
 | `RaOffsetBands` | Tabela `Ra máximo → offset (mm)`. `null` ou lista vazia = tabela de fábrica. |
 | `RaColorEntries` | Paleta `RGB → Ra alvo`. `null` ou lista vazia = paleta de fábrica. |

@@ -23,12 +23,13 @@
     Pasta instalada. Padrão: %LOCALAPPDATA%\AutoEDM\addin (o CodeBase registrado).
 
 .PARAMETER IncludeMcp
-    Compila também o servidor MCP (src\AutoEDM.Mcp, Release x64 — o caminho que o .mcp.json
-    aponta). Necessário sempre que o CATÁLOGO de ferramentas mudar: o Claude Code lê a lista
-    do servidor, não do add-in, e os dois carregam CÓPIAS diferentes do AutoEDM.Core.dll.
+    Compila também o servidor MCP (src\AutoEDM.Mcp, Release x64), instala em
+    %LOCALAPPDATA%\AutoEDM\mcp e o registra no Claude Code no escopo do usuário. Necessário
+    sempre que o CATÁLOGO de ferramentas mudar: o Claude Code lê a lista do servidor, não do
+    add-in, e os dois carregam CÓPIAS diferentes do AutoEDM.Core.dll.
 
-    Exige o Claude Code FECHADO: enquanto a sessão vive, o processo AutoEDM.Mcp está de pé e
-    trava o próprio exe e o Core.dll ao lado dele.
+    A instalação exige o Claude Code FECHADO: enquanto a sessão vive, o processo AutoEDM.Mcp
+    está de pé e trava o exe instalado e o Core.dll ao lado dele.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1
@@ -83,20 +84,43 @@ Write-Host "Abra o Solid Edge e confira a primeira linha do log (%LOCALAPPDATA%\
 Write-Host "o 'Build carregado' tem de bater com as datas acima." -ForegroundColor Yellow
 
 if ($IncludeMcp) {
-    # O servidor MCP é um processo SEPARADO, com a sua própria cópia do Core. Enquanto o Claude
-    # Code está aberto ele está rodando, e o build falha na cópia com MSB3027 — o que parece erro
-    # de compilação e não é.
-    $mcp = @(Get-Process -Name 'AutoEDM.Mcp' -ErrorAction SilentlyContinue)
-    if ($mcp.Count -gt 0) {
-        throw "Feche o Claude Code antes de usar -IncludeMcp (AutoEDM.Mcp PID $($mcp.Id -join ', ') está de pé e trava o exe)."
-    }
-
+    # O servidor MCP é um processo SEPARADO, com a sua própria cópia do Core. Ele roda da pasta
+    # instalada (%LOCALAPPDATA%\AutoEDM\mcp), não do bin: compilar não trava mais, só a CÓPIA
+    # exige o Claude Code fechado — com ele aberto o exe instalado está de pé.
     $mcpProj = Join-Path $repo 'src\AutoEDM.Mcp\AutoEDM.Mcp.csproj'
     Write-Host "`nCompilando o servidor MCP (Release x64)..." -ForegroundColor Cyan
     dotnet build $mcpProj -c Release -p:Platform=x64 --nologo -v m
     if ($LASTEXITCODE -ne 0) { throw "A compilação do servidor MCP falhou." }
 
-    $mcpExe = Join-Path $repo 'src\AutoEDM.Mcp\bin\x64\Release\net8.0-windows\AutoEDM.Mcp.exe'
-    Write-Host "Servidor MCP pronto: $mcpExe" -ForegroundColor Green
-    Write-Host "(é o caminho que o .mcp.json usa — o Claude Code sobe este exe ao abrir)" -ForegroundColor Yellow
+    $mcp = @(Get-Process -Name 'AutoEDM.Mcp' -ErrorAction SilentlyContinue)
+    if ($mcp.Count -gt 0) {
+        throw "Feche o Claude Code antes de instalar o servidor MCP (AutoEDM.Mcp PID $($mcp.Id -join ', ') está de pé e trava o exe)."
+    }
+
+    $mcpOut = Join-Path $repo 'src\AutoEDM.Mcp\bin\x64\Release\net8.0-windows'
+    $mcpTarget = Join-Path $env:LOCALAPPDATA 'AutoEDM\mcp'
+    New-Item -ItemType Directory -Force $mcpTarget | Out-Null
+    Copy-Item (Join-Path $mcpOut '*') $mcpTarget -Recurse -Force
+    $mcpExe = Join-Path $mcpTarget 'AutoEDM.Mcp.exe'
+    Write-Host "Servidor MCP instalado: $mcpExe" -ForegroundColor Green
+
+    # Registro no escopo do USUÁRIO: o servidor aparece em qualquer pasta que o Claude Code
+    # abrir (U:\Code inclusive), não só dentro do repositório. Refazer a cada deploy é inofensivo.
+    # Sem 'claude' no PATH, usa o binário que vem com a extensão do VS Code (a versão mais nova).
+    $claudeCli = (Get-Command claude -ErrorAction SilentlyContinue).Source
+    if (-not $claudeCli) {
+        $claudeCli = Get-ChildItem "$env:USERPROFILE\.vscode\extensions" -Directory -Filter 'anthropic.claude-code-*' -ErrorAction SilentlyContinue |
+            Sort-Object { [version]($_.Name -replace '^anthropic\.claude-code-([\d.]+).*$', '$1') } -Descending |
+            ForEach-Object { Join-Path $_.FullName 'resources\native-binary\claude.exe' } |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if ($claudeCli) {
+        & $claudeCli mcp remove autoedm --scope user 2>$null | Out-Null
+        & $claudeCli mcp add --scope user autoedm -- $mcpExe
+        if ($LASTEXITCODE -eq 0) { Write-Host "Registrado no Claude Code (escopo usuário) como 'autoedm'." -ForegroundColor Green }
+        else { Write-Warning "Falha ao registrar. Rode à mão: claude mcp add --scope user autoedm -- `"$mcpExe`"" }
+    }
+    else {
+        Write-Warning "CLI 'claude' não encontrada (nem no PATH nem na extensão do VS Code). Registre à mão: claude mcp add --scope user autoedm -- `"$mcpExe`""
+    }
 }

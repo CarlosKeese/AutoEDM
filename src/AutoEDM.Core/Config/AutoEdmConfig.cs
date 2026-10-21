@@ -46,6 +46,13 @@ namespace AutoEDM.Config
         public double HolderBaseClearanceMm { get; set; } = 1.0;
 
         /// <summary>
+        /// Sobe a ponte MCP sozinha quando a Solid Edge carrega o add-in (Carlos, 2026-10-21).
+        /// Desligado por padrão: quem decide se um agente alcança o CAD é o usuário. Mesmo
+        /// ligado, a ponte nasce em SOMENTE-LEITURA — a escrita continua só pelo botão.
+        /// </summary>
+        public bool McpAutoStart { get; set; }
+
+        /// <summary>
         /// Nome EXATO da propriedade do arquivo onde está a revisão de uma PEÇA NOVA (Carlos,
         /// 2026-09-18: projeto novo nasce com revisão 0/vazia; peça nova recebe o número, peça
         /// alterada só ganha o grupo na árvore). Null/vazio = não lê propriedade nenhuma.

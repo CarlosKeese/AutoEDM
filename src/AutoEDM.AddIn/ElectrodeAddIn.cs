@@ -60,6 +60,8 @@ namespace AutoEDM.AddIn
             Log.Info("Build carregado: " + BuildStamp());
             // O gancho de redirecionamento roda antes do log existir; o que ele fez sai agora.
             foreach (var linha in AssemblyRedirect.Report) Log.Info(linha);
+
+            ElectrodeRibbon.AutoStartMcp();
         }
 
         /// <summary>Carimbo dos binários EM MEMÓRIA (AddIn + Core) com a data de build — para
