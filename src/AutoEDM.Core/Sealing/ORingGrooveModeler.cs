@@ -908,7 +908,7 @@ namespace AutoEDM.Sealing
             { "Lines2d", "Arcs2d", "Circles2d", "Ellipses2d", "EllipticalArcs2d", "BSplineCurves2d", "Points2d" };
 
         /// <summary>Todos os elementos 2D do esboço, por coleção.</summary>
-        private static List<KeyValuePair<string, object>> SketchElements(object profile)
+        internal static List<KeyValuePair<string, object>> SketchElements(object profile)
         {
             var all = new List<KeyValuePair<string, object>>();
             foreach (string name in SketchCollections)
@@ -927,7 +927,7 @@ namespace AutoEDM.Sealing
         }
 
         /// <summary>O que está em <paramref name="after"/> e não estava em <paramref name="before"/> (identidade COM).</summary>
-        private static List<KeyValuePair<string, object>> NewElements(List<KeyValuePair<string, object>> before,
+        internal static List<KeyValuePair<string, object>> NewElements(List<KeyValuePair<string, object>> before,
             List<KeyValuePair<string, object>> after)
         {
             var added = new List<KeyValuePair<string, object>>();

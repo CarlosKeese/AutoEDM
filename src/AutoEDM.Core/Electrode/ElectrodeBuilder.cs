@@ -75,7 +75,7 @@ namespace AutoEDM.Electrode
     /// COM + decisões. A geometria fica nos métodos declarados abaixo, implementados
     /// após validação num molde real.
     /// </summary>
-    public sealed class ElectrodeBuilder
+    public sealed partial class ElectrodeBuilder
     {
         private readonly SolidEdgeConnector _connector;
         private readonly IOffsetPolicy _offsetPolicy;
