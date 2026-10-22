@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 26; // incrementar ao mudar a ribbon (v26 = Diagnóstico compacto + "Desenho de processo")
+            AddInEx.GuiVersion = 28; // incrementar ao mudar a ribbon (v28 = "Desenho de processo" CDU/CDT)
 
             Current = this;
             App = application;

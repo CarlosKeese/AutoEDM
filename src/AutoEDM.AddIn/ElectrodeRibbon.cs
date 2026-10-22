@@ -57,6 +57,7 @@ namespace AutoEDM.AddIn
         private const int CmdDesenho2D = 30;        // DESENHO: .dft novo da peça torneada, cotado pelas cores das faces
         private const int CmdOrdenarPathFinder = 31; // MOLDE: ocorrências do 1º nível em sequência pelo código (15335.100, .101…)
         private const int CmdDesenhoProcesso = 32;   // DESENHO: cópia da peça sobre a original numa montagem nova em 02 - PROCESSO
+        private const int CmdEletrodoInterpolacao = 33; // Eletrodo redondo: perfil da superfície revolvido em Z, Ø informado
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -78,6 +79,7 @@ namespace AutoEDM.AddIn
             {
                 case CmdCriarEletrodos: CriarEletrodos(); break;
                 case CmdCriarEletrodoManual: CriarEletrodoManual(); break;
+                case CmdEletrodoInterpolacao: EletrodoInterpolacao(); break;
                 case CmdNovaPeca: NovaPeca(); break;
                 case CmdRefrigeracao: Refrigeracao(); break;
                 case CmdCoordenadas: AbrirCoordenadas(); break;
@@ -478,6 +480,39 @@ namespace AutoEDM.AddIn
         }
 
         /// <summary>
+        /// Eletrodo de INTERPOLAÇÃO (Carlos, 2026-10-22): eletrodo redondo que gira no próprio eixo e
+        /// percorre o perímetro da peça para erodir um rebaixo. Mesma janela de seleção do eletrodo
+        /// manual, com o campo do Ø final. O perfil sai da seção da superfície pelo plano vertical da
+        /// normal da face e é revolvido em torno de Z, com a origem no eixo e na menor altura
+        /// (<see cref="ElectrodeBuilder.CreateInterpolationElectrode"/>). ESCREVE na montagem (não salva).
+        /// </summary>
+        private void EletrodoInterpolacao()
+        {
+            OpenFacePick(CmdEletrodoInterpolacao, "ELETRODO DE INTERPOLAÇÃO", appObj =>
+            {
+                var panel = new InterpolationOptionsPanel();
+                return new FacePickSpec
+                {
+                    Title = "AutoEDM — Eletrodo de interpolação",
+                    Instructions = "Clique direto no modelo nas FACES da região negativa (rebaixo) — uma por clique; clicar " +
+                                   "de novo tira. O perfil é cortado no plano vertical da normal da face e revolvido em " +
+                                   "torno de Z; a origem fica no eixo, na menor altura das faces.",
+                    CreateCaption = "Criar eletrodo",
+                    LogTag = "Eletrodo de interpolação",
+                    NextHint = "Pronto para o próximo: clique nas faces dele.",
+                    MultiOwnerNote = "a seção corta todas; o plano sai da face mais próxima da vertical.",
+                    Options = panel,
+                    Create = (doc, faces) =>
+                    {
+                        ManualElectrodeResult r = NewBuilder(SolidEdgeConnector.Attach(appObj))
+                            .CreateInterpolationElectrode(doc, LoadParams(), faces, panel.DiameterMm);
+                        return new FacePickResult { Created = r.Created, Message = r.Message };
+                    },
+                };
+            });
+        }
+
+        /// <summary>
         /// Botão "Nova peça" do grupo Molde (Carlos, 2026-09-24): mesma janela de seleção do eletrodo
         /// manual, com o painel da peça do molde — parte (série .100/.200/.300 do código), eixo da
         /// altura e origem no ponto mais baixo/alto. Cria a peça vazia com o próximo número livre e a
@@ -651,10 +686,11 @@ namespace AutoEDM.AddIn
         }
 
         /// <summary>
-        /// Botão "Desenho de processo" (Carlos, 2026-10-21): a peça ativa — ou a selecionada na
-        /// montagem do molde — é copiada para &lt;molde&gt;\02 - PROCESSO\&lt;peça&gt;\&lt;peça&gt;_W01.par
-        /// e montada junto com a original, as duas na origem, em &lt;peça&gt;_WP.asm, que fica
-        /// aberta. Mostra o plano antes; não sobrescreve nada.
+        /// Botão "Desenho de processo" (Carlos, 2026-10-21; máquinas e vínculo em 2026-10-22): a peça
+        /// ativa — ou a selecionada na montagem do molde — ganha, para cada máquina escolhida na janela
+        /// (CDU e/ou CDT), uma peça &lt;peça&gt;_CDU / _CDT em &lt;molde&gt;\02 - PROCESSO\&lt;peça&gt;\ com
+        /// Cópia de peça VINCULADA à original, e todas vão para &lt;peça&gt;_WP.asm na origem, que fica
+        /// aberta. Montagem que já existe recebe só o que falta; nada é sobrescrito.
         /// </summary>
         private void DesenhoProcesso()
         {
@@ -667,30 +703,13 @@ namespace AutoEDM.AddIn
                 string source = AutoEDM.Mold.ProcessDrawingBuilder.ResolveSource((object)doc, out unsaved, out error);
                 if (source == null) { MessageBox.Show(error, title, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
 
-                AutoEDM.Mold.ProcessDrawingPlan plan = AutoEDM.Mold.ProcessDrawingBuilder.Plan(source);
-                if (plan.Error != null) { MessageBox.Show(plan.Error, title, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
-                if (plan.Existing.Count > 0)
+                AutoEDM.Mold.ProcessDrawingPlan plan;
+                using (var form = new ProcessMachineForm(source, unsaved, m => AutoEDM.Mold.ProcessDrawingBuilder.Plan(source, m)))
                 {
-                    bool asmThere = System.IO.File.Exists(plan.AssemblyPath);
-                    var r = MessageBox.Show(
-                        "O desenho de processo desta peça já existe — nada foi sobrescrito:" + Environment.NewLine + Environment.NewLine +
-                        "  • " + string.Join(Environment.NewLine + "  • ", plan.Existing) +
-                        (asmThere ? Environment.NewLine + Environment.NewLine + "Abrir a montagem existente?" : ""),
-                        title, asmThere ? MessageBoxButtons.YesNo : MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    if (asmThere && r == DialogResult.Yes) AutoEDM.Mold.ProcessDrawingBuilder.Open((object)app, plan.AssemblyPath);
-                    return;
+                    if (form.ShowDialog() != DialogResult.OK) return;
+                    plan = form.Plan;
                 }
-
-                string ask =
-                    $"Peça: {plan.SourcePath}" + Environment.NewLine + Environment.NewLine +
-                    $"Cria em {plan.Folder}:" + Environment.NewLine +
-                    $"  • {System.IO.Path.GetFileName(plan.CopyPath)} — cópia da peça" + Environment.NewLine +
-                    $"  • {System.IO.Path.GetFileName(plan.AssemblyPath)} — a original e a cópia na mesma posição" + Environment.NewLine + Environment.NewLine +
-                    "A montagem fica aberta." +
-                    (unsaved ? Environment.NewLine + Environment.NewLine +
-                               "ATENÇÃO: a peça tem alterações NÃO SALVAS. A cópia sai do arquivo salvo, sem elas — salve antes se quiser levá-las." : "");
-                if (MessageBox.Show(ask, title, MessageBoxButtons.OKCancel, unsaved ? MessageBoxIcon.Warning : MessageBoxIcon.Question) != DialogResult.OK)
-                    return;
+                if (plan.NothingToDo) { AutoEDM.Mold.ProcessDrawingBuilder.Open((object)app, plan.AssemblyPath); return; }
 
                 if (!AutoEDM.Mold.ProcessDrawingBuilder.Build((object)app, plan, out error))
                     MessageBox.Show("O desenho de processo não foi concluído: " + error + Environment.NewLine + Environment.NewLine +
@@ -1710,7 +1729,8 @@ namespace AutoEDM.AddIn
                 { CmdAnalisarZ,           new CommandSpec("ANALISAR ELETRODOS (Z)",               DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCriarEletrodos,      new CommandSpec("CRIAR ELETRODOS",                      DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCriarEletrodoManual, new CommandSpec("CRIAR ELETRODO (MANUAL, da seleção)",  DocKind.Assembly, ModelingEnv.Any) },
-                { CmdNovaPeca,            new CommandSpec("NOVA PEÇA (MOLDE)",                    DocKind.Assembly, ModelingEnv.Any) },
+                { CmdEletrodoInterpolacao, new CommandSpec("ELETRODO DE INTERPOLAÇÃO",            DocKind.Assembly, ModelingEnv.Any) },
+                { CmdNovaPeca,            new CommandSpec("NOVA PEÇA (MOLDE)",                   DocKind.Assembly, ModelingEnv.Any) },
                 { CmdDuplicarEletrodo,    new CommandSpec("DUPLICAR ELETRODO",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCoordenadas,         new CommandSpec("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdListaCorte,          new CommandSpec("LISTA DE CORTE (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },

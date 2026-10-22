@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sonda da Cópia de peça (Desenho de processo): console que se ANEXA à Solid Edge aberta e trabalha só em
+    peças DESCARTÁVEIS criadas por ela, fechadas sem salvar. Fora do AutoEDM.sln de propósito.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM.Tools.PartCopyProbe</RootNamespace>
+    <AssemblyName>PartCopyProbe</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <!-- x64 obrigatório: um build 32 bits simplesmente não conecta na SE. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AutoEDM.Core\AutoEDM.Core.csproj" />
+  </ItemGroup>
+
+</Project>
