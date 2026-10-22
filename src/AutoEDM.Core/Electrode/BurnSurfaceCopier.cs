@@ -86,18 +86,25 @@ namespace AutoEDM.Electrode
                 res.Warnings.Add($"{src.Label}: o arquivo da peça não existe no disco ({src.FilePath ?? "sem nome"}) — salve a peça e copie à mão.");
                 return;
             }
-            // O visual de cada face escolhida, lido ANTES — na origem a cor é certa.
-            Dictionary<int, FaceLook> featureStyles = src.SourceDocument != null
-                ? FaceLookReader.ReadFeatureStyles(src.SourceDocument) : new Dictionary<int, FaceLook>();
-            var wanted = new Dictionary<int, FaceLook>();
+            // ID e área ANTES de varrer as features. Medido 2026-10-22 (tools/InterpolationProbe, 14427.202):
+            // logo depois do ReadFeatureStyles a face não plana #8714 devolveu ID = 0 na 1ª leitura (a 2ª
+            // já dava 8714). Lido nessa hora, o ID virava "#0", não casava com a cópia e a face sumia
+            // com o aviso enganoso "a peça salva difere da aberta".
+            var ids = new List<KeyValuePair<object, int>>();
             var sourceArea = new Dictionary<int, double>();
             foreach (object f in src.Faces)
             {
-                int id;
-                try { id = (int)((dynamic)f).ID; } catch { continue; }
-                wanted[id] = FaceLookReader.Resolve(f, featureStyles);
+                int id = ReadId(f);
+                if (id <= 0) { Log.Warn($"Cópia da queima ({src.Label}): face sem ID legível — fica de fora."); continue; }
+                ids.Add(new KeyValuePair<object, int>(f, id));
                 try { sourceArea[id] = (double)((dynamic)f).Area * 1e6; } catch { }
             }
+
+            // O visual de cada face escolhida, lido na ORIGEM — lá a cor é certa.
+            Dictionary<int, FaceLook> featureStyles = src.SourceDocument != null
+                ? FaceLookReader.ReadFeatureStyles(src.SourceDocument) : new Dictionary<int, FaceLook>();
+            var wanted = new Dictionary<int, FaceLook>();
+            foreach (var kv in ids) wanted[kv.Value] = FaceLookReader.Resolve(kv.Key, featureStyles);
             if (wanted.Count == 0) { res.Warnings.Add($"{src.Label}: faces sem ID legível."); return; }
 
             object cs = Invoke((object)part.CoordinateSystems, "AddByMatrix", src.Placement.ToMatrix());
@@ -114,12 +121,16 @@ namespace AutoEDM.Electrode
             for (int i = 1; i <= (int)cf.Count; i++)
             {
                 object f = cf.Item(i);
-                try { copyById[(int)((dynamic)f).ID] = f; } catch { }
+                int cid = ReadId(f);
+                if (cid > 0) copyById[cid] = f;
             }
             var picked = new List<object>();
             var pickedIds = new List<int>();
             foreach (int id in wanted.Keys)
                 if (copyById.TryGetValue(id, out object f)) { picked.Add(f); pickedIds.Add(id); }
+            if (picked.Count < wanted.Count)
+                Log.Info($"Cópia da queima ({src.Label}): pedidos #{string.Join(", #", wanted.Keys)}; cópia com {(int)cf.Count} face(s), " +
+                         $"{copyById.Count} ID(s) lido(s); faltam #{string.Join(", #", wanted.Keys.Where(k => !copyById.ContainsKey(k)))}.");
             if (picked.Count < wanted.Count)
                 res.Warnings.Add($"{src.Label}: {wanted.Count - picked.Count} face(s) sem par na cópia (a peça salva difere da aberta?).");
             if (picked.Count == 0) { Cleanup(part, cc, cs); return; }
@@ -195,6 +206,16 @@ namespace AutoEDM.Electrode
         {
             if (cc != null) { try { ((dynamic)cc).Delete(); } catch (Exception ex) { Log.Warn("Cópia da queima: não apaguei a cópia do corpo — " + ex.GetBaseException().Message); } }
             if (cs != null) { try { ((dynamic)cs).Delete(); } catch (Exception ex) { Log.Info("Cópia da queima: sistema de coordenadas ficou — " + ex.GetBaseException().Message); } }
+        }
+
+        /// <summary>Face.ID, relido uma vez se vier 0 (leitura transitória medida no SE 223). 0 = ilegível.</summary>
+        private static int ReadId(object face)
+        {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                try { int id = (int)((dynamic)face).ID; if (id > 0) return id; } catch { }
+            }
+            return 0;
         }
 
         private static object Invoke(object target, string method, params object[] args) =>
