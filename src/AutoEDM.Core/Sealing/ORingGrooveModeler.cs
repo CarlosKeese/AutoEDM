@@ -93,6 +93,7 @@ namespace AutoEDM.Sealing
 
             bool cutOk = false;
             int facesAfterCut = -1;          // conferido no finally: o canal sobreviveu à limpeza?
+            object cutMade = null;           // a feature existe na árvore (mesmo reprovada)?
             dynamic modelRef = null;
             object refAxisMade = null;       // o eixo de revolução vira objeto próprio no documento
             var scope = new SketchScope(doc0, "Canal de O'ring");
@@ -209,8 +210,15 @@ namespace AutoEDM.Sealing
 
                 int facesAfter = FaceCount(model);
                 facesAfterCut = facesAfter;
-                bool ok = cut != null && !FeatureFailed(cut) && facesAfter > facesBefore;
+                cutMade = cut;
+                // Contagem ILEGÍVEL (Body.Faces dá E_FAIL em algumas peças em contexto — visto na
+                // 15405.201, 2026-10-23) não é prova de corte falho: "-1 > -1" reprovava canais
+                // com Status=igFeatureOK e extensão conferida, e a limpeza apagava o esboço deles.
+                bool facesReadable = facesBefore >= 0 && facesAfter >= 0;
+                bool ok = cut != null && !FeatureFailed(cut) && (!facesReadable || facesAfter > facesBefore);
                 Log.Info($"  {facesAfter} face(s) no corpo depois (antes {facesBefore}); Status={StatusOf(cut)}.");
+                if (ok && !facesReadable)
+                    Log.Warn("  contagem de faces ilegível — o canal foi aceito pelo Status da feature; confira na peça.");
                 if (ok) Log.Info("Canal de O'ring CRIADO ✓");
                 else Log.Warn("Canal de O'ring: o corte não vingou — nenhuma forma de corte do modo ORDENADO foi " +
                               "aceita. O AutoEDM NÃO tenta os métodos do outro modo de propósito: isso criaria um " +
@@ -262,6 +270,18 @@ namespace AutoEDM.Sealing
                         Log.Warn("  o canal FOI criado; só a limpeza do esboço falhou — " +
                                  e.GetBaseException().Message + " (o esboço pode ter ficado visível sobre o canal).");
                     }
+                }
+                else if (cutMade != null && sketch != null)
+                {
+                    // Reprovado, mas a feature EXISTE: o esboço é filho dela. Apagá-lo deixava na
+                    // árvore uma feature "o perfil não existe mais" e degradava a peça (E_FAIL em
+                    // tudo depois). Fica para o usuário apagar a feature — o esboço vai junto.
+                    try
+                    {
+                        scope.Release((object)sketch.ProfileSet);
+                        Log.Warn("  a feature do canal ficou na árvore (reprovada) — esboço MANTIDO; apague a feature se não servir.");
+                    }
+                    catch (Exception e) { Log.Warn("  não deu para manter o esboço da feature reprovada — " + e.GetBaseException().Message); }
                 }
 
                 try { scope.Dispose(); }   // sondagens (e, se o corte falhou, o esboço definitivo)
