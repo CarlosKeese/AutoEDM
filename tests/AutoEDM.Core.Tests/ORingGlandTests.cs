@@ -106,6 +106,33 @@ namespace AutoEDM.Core.Tests
             Assert.Contains(loose.Issues, i => i.Level == GrooveIssueLevel.Warning && i.Message.Contains("jogo diametral"));
         }
 
+        /// <summary>Seção métrica fora da tabela (2,40): o limite da folga vem interpolado — antes não avisava.</summary>
+        [Fact]
+        public void FolgaGrande_secaoForaDaTabela_avisaPeloLimiteInterpolado()
+        {
+            var spec = ORingGrooveCalculator.Compute(Ring(18.3, 2.40), GrooveKind.RadialExternal, 22.0,
+                SealMotion.Static, Elastomer.Nbr, context: Ctx(mating: 22.5));
+            Assert.Contains(spec.Issues, i => i.Level == GrooveIssueLevel.Warning &&
+                                              i.Message.Contains("jogo diametral") && i.Message.Contains("estimado pela seção"));
+        }
+
+        /// <summary>Vedação dinâmica: folga acima do limite é ERRO (o anel morde), não só aviso.</summary>
+        [Fact]
+        public void FolgaGrande_dinamica_eErro()
+        {
+            var spec = ORingGrooveCalculator.Compute(Ring(18.72, 2.62), GrooveKind.RadialExternal, 22.0,
+                SealMotion.Reciprocating, Elastomer.Nbr, context: Ctx(mating: 22.5));
+            Assert.Contains(spec.Issues, i => i.Level == GrooveIssueLevel.Error && i.Message.Contains("DINÂMICA"));
+        }
+
+        [Fact]
+        public void LimiteDeFolga_interpolaEntreSecoes()
+        {
+            Assert.Equal(0.13, ORingHousingTable.ClearanceLimit(2.40), 3);
+            Assert.Equal(0.145, ORingHousingTable.ClearanceLimit((2.62 + 3.53) / 2), 3);
+            Assert.Equal(0.20, ORingHousingTable.ClearanceLimit(8.0), 3);
+        }
+
         [Fact]
         public void FuroConjugadoMaior_rankEscolheAnelParaOFundoReal()
         {

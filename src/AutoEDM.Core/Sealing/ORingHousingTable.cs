@@ -78,6 +78,24 @@ namespace AutoEDM.Sealing
             Static.Select(h => h.CrossSection).ToList();
 
         /// <summary>
+        /// Jogo diametral máximo para uma seção QUALQUER: interpolado entre as linhas da tabela
+        /// (a coluna é a mesma no estático e no dinâmico) e preso às pontas. Serve às seções
+        /// métricas fora das cinco tabeladas, que antes ficavam sem aviso de folga.
+        /// </summary>
+        public static double ClearanceLimit(double crossSectionMm)
+        {
+            if (crossSectionMm <= Static[0].CrossSection) return Static[0].ClearanceMax;
+            for (int i = 1; i < Static.Length; i++)
+            {
+                var a = Static[i - 1]; var b = Static[i];
+                if (crossSectionMm <= b.CrossSection)
+                    return a.ClearanceMax + (b.ClearanceMax - a.ClearanceMax) *
+                           (crossSectionMm - a.CrossSection) / (b.CrossSection - a.CrossSection);
+            }
+            return Static[Static.Length - 1].ClearanceMax;
+        }
+
+        /// <summary>
         /// A linha da tabela para esta seção e este movimento, ou <c>null</c> quando não há —
         /// seção fora das cinco tabeladas, ou vedação ROTATIVA (que o catálogo não tabela).
         /// Devolver null é de propósito: quem chama decide cair no cálculo e DIZER que caiu.

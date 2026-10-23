@@ -344,14 +344,31 @@ namespace AutoEDM.Sealing
                         $"a folga até o {mating} conjugado (Ø {spec.MatingDiameter:0.00}) já é maior que a altura do " +
                         "alojamento: não sobra canal para cortar e o anel não seria esmagado. Reduza a folga ou use um cordão mais grosso.");
 
-                if (housing != null && spec.NominalClearance > housing.ClearanceMax + 0.0005)
+                // Limite da folga: o da tabela, ou interpolado pela seção quando o anel não é
+                // tabelado (métricos) — antes esses ficavam sem aviso nenhum.
+                double clearanceMax = housing?.ClearanceMax ?? ORingHousingTable.ClearanceLimit(spec.Ring.CrossSection);
+                string limitFrom = housing != null ? "da tabela" : "estimado pela seção";
+                if (spec.NominalClearance > clearanceMax + 0.0005)
                 {
-                    bool high = spec.PressureBar > ORingGrooveRules.BackupRingPressureBar;
-                    Add(GrooveIssueLevel.Warning,
-                        $"jogo diametral {spec.NominalClearance:0.00} mm acima do {housing.ClearanceMax:0.00} da tabela: " +
-                        (high
-                            ? $"a {spec.PressureBar:0} bar o anel EXTRUDA pela folga — use ANEL DE APOIO (back-up) ou reduza a folga."
-                            : $"a {spec.PressureBar:0} bar o risco de extrusão é baixo, mas a folga é maior que a recomendada."));
+                    string over = $"jogo diametral {spec.NominalClearance:0.00} mm acima do {clearanceMax:0.00} {limitFrom}";
+                    // Com o eixo encostado num lado, o outro fica com o jogo INTEIRO — o canal só
+                    // compensa a metade (folga centrada).
+                    string offCenter = $" Com o eixo encostado, o lado oposto fica {spec.NominalClearance / 2:0.00} mm mais " +
+                                       "alto que o calculado e o esmagamento cai ali.";
+                    if (motion != SealMotion.Static)
+                        Add(GrooveIssueLevel.Error,
+                            $"{over}: vedação DINÂMICA com folga grande — o anel é arrastado para a folga e " +
+                            $"morde/rasga (mesmo a {spec.PressureBar:0} bar). Reduza a folga para no máximo {clearanceMax:0.00} mm." + offCenter);
+                    else
+                    {
+                        bool high = spec.PressureBar > ORingGrooveRules.BackupRingPressureBar;
+                        Add(GrooveIssueLevel.Warning,
+                            $"{over}: " +
+                            (high
+                                ? $"a {spec.PressureBar:0} bar o anel EXTRUDA pela folga — use ANEL DE APOIO (back-up) ou reduza a folga."
+                                : $"a {spec.PressureBar:0} bar o risco de extrusão é baixo, mas a folga é maior que a recomendada.") +
+                            offCenter);
+                    }
                 }
             }
 
