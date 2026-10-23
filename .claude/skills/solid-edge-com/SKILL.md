@@ -58,6 +58,13 @@ Each line is a failure that has actually happened. Follow the pointer for the lo
   angles are degrees (`118`, not `2.06`) — **in the same object**. Check the *property*.
 - **Collections are 1-based.** And `igQueryAll` is **1**, not 0.
 
+**Variables**
+- **Read a variable's `Value`, never parse its `Formula`** — the Formula of a constant comes back
+  EMPTY; and `Variables.Add` without `UnitsType` makes a DISTANCE (`"1.6"` → `0.0016`). Scalars want
+  `igUnitScalar = 58`. A typed cross-file formula (`file.par!Var`) or a text formula kills the whole
+  `Variables` object (`RPC_E_CONNECTION_TERMINATED`).
+  → `references/variables.md`
+
 **Process and threading**
 - **x64 only**; a 32-bit build will not connect. **STA thread required** (`[STAThread]`).
 - **Install an OLE message filter**, retrying on **both** `SERVERCALL_RETRYLATER` *and*
@@ -179,6 +186,7 @@ Read only the file you need; each is self-contained.
 | A name lookup failed, or anything involving `BSTR` keys, UI labels or SE data files | `references/localization.md` |
 | Building and querying the API inventory; early binding; the shipped interops; .NET 10 | `references/inventory-and-binding.md` |
 | A specific HRESULT, binder error, or "it succeeded but nothing happened" | `references/errors.md` |
+| Variables and dimensions: driving a sketch/extrusion/cut from the variable table, linking new dimensions, a plate fully parametric in ordered mode, editing and saving parts through an assembly or subassembly; learning a company standard from its template assembly (links, poses, faces) and placing its library parts | `references/variables.md` |
 | Setting up discovery, the typelib dumper, the SPY, the action recorder | `references/discovery.md` |
 | A confirmed call signature, enum value, geometry-type enums, face color, face traversal, bbox, occurrence transform, profile plane frame, in-place editing, surface collections, cutouts, ordered-tree groups, feature↔body face IDs, document properties, ribbon GuiVersion cache | `references/api-signatures.md` |
 | Building geometry: sketch+extrude, cylinders, holes, threaded holes, annular grooves and revolved cuts, sync vs ordered | `references/modeling-recipes.md` |

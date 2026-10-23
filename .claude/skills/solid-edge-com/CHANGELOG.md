@@ -1,5 +1,44 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-10-23 (4) — learning a company standard from its template assembly
+
+`references/variables.md`: the three read-only passes (links by Revision Manager, poses by `GetMatrix`,
+planar faces + cylinders per part, mapped through each occurrence pose); what measuring templates instead
+of finished molds corrected; ring profile `End(1 | 8192)` reconfirmed; absolute-position circles for
+off-centre patterns; third circle at a centre line's middle.
+
+## 2026-10-23 (3) — boss/side-groove/mid-hole recipes; library parts at template poses
+
+`references/variables.md`: protrusion side picked by ADDED volume (wrong side adds 0); symmetric cut
+`AddFiniteMulti(…, 3 = igSymmetric, …)`; side-plane sketch drawn through `Convert3DCoordinate`; circle at a
+line's middle with `AddKeypoint(c, 0, line, 2)`; snapshot variables for features that don't follow
+formulas; library parts placed with poses read from a template assembly; plate thickness from planar
+faces, not from the body box. All measured live on the gaveta/Babyplast mold bases.
+
+## 2026-10-23 (2) — Revision Manager link reading; coaxial counterbore check
+
+`references/api-signatures.md`: read an assembly's links without SE through `RevisionManager.Application`
+(`LinkedDocuments` is a parameterized PROPERTY — as a method every file "fails"); used to map which mold
+base 253 molds reference. `references/errors.md`: a coaxial counterbore makes a right cut fail a naive
+removed-volume check, and deleting it disconnects the document.
+
+## 2026-10-23 — Variables drive geometry; nested assembly editing (SE 2023 v223)
+
+New `references/variables.md`, measured with the throwaway probe `tools/MoldBaseProbe`: a whole plate
+(outline, thickness, 4× and 2× hole patterns, pocket) driven by variables in ordered mode, checked by
+exact volume after editing. Traps: empty `Formula` for constants, `Add` without units = distance,
+cross-file and text formulas kill the collection, localized dimension names (use `SystemName`),
+`Profiles.Add(face)` → InvalidCast, `AddFiniteExtrudedProtrusion` returns the Model, `RefPlane.Name`
+write → E_FAIL, `OccurrenceDocument.Save()` → modal box that hangs. Nested editing and `Documents.Open`
+of a loaded component returning the same, editable object. New golden rule under "Variables".
+`references/errors.md`: five rows (incl. `Tuple.Create` with a `dynamic` argument). Which documents the user opened, and `Dirty` after `Documents.Open`.
+
+## 2026-10-23 — in-context `Body.Faces` E_FAIL → false failure → broken feature
+
+`references/errors.md`: on a part in in-place edit, `Body.Faces` can throw `E_FAIL` while features
+still go in fine. A face-count success check rejects the good cut, and deleting its ordered profile
+on "failure" breaks the feature and cascades `E_FAIL` across the part. Use `Status` as the
+fallback and never delete a parent sketch of an existing feature.
 ## 2026-10-19 — stitch wants bodies; IDispatch arrays for mixed types
 
 `references/edm-electrode.md`: `StitchSurfaces.Add` takes the surfaces' Body objects.

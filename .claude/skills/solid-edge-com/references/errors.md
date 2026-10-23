@@ -12,6 +12,13 @@ was observed in the field, not deduced from documentation.
 | `E_NOINTERFACE` from a boolean/attach with a construction surface as tool | `Model.BooleanFeatures.Add` is body-vs-body; `Model.Attach` wants the surface's `Body` | `Attach(1, new Body[] { surf.Faces[1].Item(1).Body }, true, 2)` — see `api-signatures.md` |
 | `DISP_E_TYPEMISMATCH` on a `[out]`/`[in,out] SAFEARRAY(IDispatch)` (e.g. `Edge.GetFaces`, `ExtrudedCutout.GetProfiles`) | `object[]`/`null` placeholder = `SAFEARRAY(VARIANT)` | Placeholder typed to the element (`new SolidEdgeGeometry.Face[0]`, `new SolidEdgePart.Profile[0]`), by-ref via `ParameterModifier`. **Bit again 2026-09-21** because the code copied an older in-repo call that still used `object[0]` — grep this table before reusing a neighbour's marshal |
 | Call throws `RPC_E_CALL_REJECTED` | SE busy | Register the OLE message filter |
+| A finite cut that is RIGHT is rejected by your removed-volume check, then deleting it gives `RPC_E_DISCONNECTED` | The new hole is COAXIAL with one already cut (a head counterbore over a through hole): only the ring comes out, so expected `n·π·D²/4·h` is too big. Deleting the "failed" cut then disconnects the document proxy (as in `modeling-recipes.md`) | Subtract the coaxial overlap (`n·π·min(D,d)²/4·overlap band`) from the expectation — and from any union-volume check of the part (measured 2026-10-23, AutoEDM porta-molde) |
+| Revision Manager: `Method 'System.__ComObject.Count' not found` on every file | `IDocAuto.LinkedDocuments` called as a METHOD (or with link type 1) | It is a parameterized PROPERTY: `InvokeMember("LinkedDocuments", GetProperty, …, @(0))` — see `api-signatures.md` |
+| `RuntimeBinder: A melhor correspondência de método sobrecarregado 'List<Tuple<object,bool>>.Add(...)' tem alguns argumentos inválidos` | `Tuple.Create(doc, flag)` with `doc` **dynamic** builds the tuple at run time with the runtime type (`Tuple<__ComObject,bool>`), which is not a `Tuple<object,bool>`. In AutoEDM it made a just-opened document miss the cleanup list and stay open in a window (2026-10-23) | Cast first: `Tuple.Create((object)doc, flag)`; the general rule — type a `dynamic` result before it meets generics or LINQ |
+| `RPC_E_CONNECTION_TERMINATED` (0x80010006) from `Variables.Add`, then from every later call on that `Variables` | The formula was a typed cross-file link (`C:\…\Master.par!Var`, quoted or not) or a text literal (`"\"A\""`). SE survives; that collection object is dead (measured 2026-10-23) | Do not type link formulas. Write each document's variables yourself; keep text in file properties. `references/variables.md` |
+| A COM call never returns; SE shows "Não é possível salvar o arquivo. Talvez você não tenha acesso de gravação…" | `Save()` on an `Occurrence.OccurrenceDocument` — it is `ReadOnly`, and the error is a MODAL box that blocks the call (forever on a locked session) | Set `Application.DisplayAlerts = false` around automation. Save the edited part through `AssemblyDocument.Save()` or through `Documents.Open(path)` (returns the same object, editable) |
+| `CLIPBRD_E_CANT_OPEN` (0x800401D0) from `Variables.CopyToClipboard` | Out-of-process caller while the Windows session was locked — the caller could not open the clipboard either (2026-10-23) | Untested in-process; do not depend on the clipboard "paste link" route |
+| `InvalidCastException` from `Profiles.Add(face)` in an ordered part | The face came from `Body.Faces[igQueryPlane]`; this context wants a plane | `RefPlanes.AddParallelByDistance(RefPlanes.Item(1), d, side, …)` and link its distance to a variable |
 | `out`/`ref` params come back as **plausible zeros** (e.g. `Face.GetRange`, `Occurrence.GetTransform`) | **`Type.InvokeMember` without a `ParameterModifier`.** Measured 2026-10-17 on both an `[in,out] SAFEARRAY` and `[out] double*`: the call *succeeds* and writes nothing back. `dynamic` + `ref`/`out` does NOT have this problem | Switch to `dynamic` with `ref`/`out` (no modifier needed), or keep `InvokeMember` and mark every by-ref position in a `ParameterModifier`. For `[in,out]`, the array must also arrive **allocated** — `ref null` gives `E_INVALIDARG` |
 | Method call fails with wrong arg count | Guessed arity | Read `cParams` from the dump; SE methods often have many optional trailing params |
 | Retrying a feature `Add` with different args leaves a trail of red/failed features in PathFinder | SE does not roll back a failed feature: the `Add` returns an object whose `.Status` is `igFeatureFailed`, and it STAYS in the tree | Between attempts, `Delete()` any returned feature whose `.Status` is failed. A retry loop that only checks the return value for null quietly accumulates junk the user then has to clean up by hand |
@@ -119,3 +126,24 @@ write call was made on the original.
 Rule: never copy, open or close documents while the user has a part in in-place edit.
 Experiment only on throwaway documents you created yourself. When you need to test a fix on the
 user's real geometry, ask first, and do it on the document itself, with their consent.
+
+## In-context part: `Body.Faces` → `E_FAIL`, and "fixing" the false failure breaks the feature (SE 2023, 2026-10-23)
+
+On a part in in-place edit inside its assembly (ordered mode), `Model.Body.Faces(igQueryAll)` threw
+`E_FAIL` already BEFORE any write, on every call. The edges and faces the user picked could still be
+read, and `ExtrudedCutouts.AddFiniteMulti` worked: `Status = igFeatureOK`, and the axial extent
+measured on the feature's own faces matched. Code that judged success by "face count went up" saw
+`-1 > -1` = false and treated a good cut as failed. Its failure cleanup then deleted the ordered
+profile, which is the PARENT of the cut. The feature was left in the tree with "profile no longer
+exists", and from then on the part answered `E_FAIL` almost everywhere (`Edge.GetFaces`,
+`RefPlanes.AddNormalToCurve`, `GetRange`, `Geometry`), plus `RPC_E_DISCONNECTED` on temporary
+planes. Those later errors are a cascade, not the cause. Read the log back to the first `-1` face
+count.
+
+Rules:
+- Treat an unreadable `Body.Faces` as "unknown", not as "zero". Fall back to the feature's `Status`
+  (and, where available, a measurement on the feature's faces).
+- Never delete the sketch/profile of a feature that exists in the tree, even if your own check
+  rejected it. Leave the feature for the user to delete (the ordered sketch goes with it).
+- The cause of the `E_FAIL` is still unknown (multi-body? a body state specific to in-context
+  editing?). Investigate only with the user's consent.

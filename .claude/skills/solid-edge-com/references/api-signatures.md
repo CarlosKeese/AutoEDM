@@ -552,3 +552,25 @@ localized and the COM name may differ from what the properties dialog shows.
 **Ribbon layout is cached per add-in: bump `AddInEx.GuiVersion` when the XML changes.** A new
 `<button>` added without bumping it appears in the *wrong group* (SE reuses the cached layout
 and appends the unknown id) — it is not an XML error, and re-registering alone does not fix it.
+
+## Reading assembly links WITHOUT Solid Edge — Revision Manager (measured 2026-10-23, SE 2023)
+
+To find which sub-assemblies/parts hundreds of assemblies reference (here: which mold base each of 253
+molds uses), do not open them in SE. `RevisionManager.Application` (registered with SE; runs as its own
+`DesMgr.exe`) reads the link table of a file:
+
+```powershell
+$rm  = New-Object -ComObject RevisionManager.Application
+$doc = $rm.Open($path)                                   # IRMgrApp.Open -> IDocAuto
+$ls  = [System.__ComObject].InvokeMember("LinkedDocuments",
+         [System.Reflection.BindingFlags]::GetProperty, $null, $doc, @(0))   # seLinkTypeAll = 0
+# $ls.Count / $ls.Item(i).FullName  (also via InvokeMember)
+```
+
+- **`LinkedDocuments` is a PARAMETERIZED PROPERTY**, not a method. Calling it with `InvokeMethod` (and/or
+  type `1` = seLinkTypeNormal) returns an object where `Count` is "not found" — every file then looks like a
+  failure. `GetProperty` with `@(0)` works for every path, including the network ones with `[brackets]`
+  (the brackets were a red herring).
+- 522 assemblies of a 253-folder mold tree scanned in a few minutes; 3 failures were real missing files
+  (`STG_E_FILENOTFOUND`). Paths come back as UNC (`\\server\share\...`) even when opened by drive letter.
+- One `DesMgr.exe` per `New-Object`; kill the ones you started when done.
