@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sonda do Porta-molde: console que se ANEXA à Solid Edge aberta e trabalha só em peças e montagens
+    DESCARTÁVEIS criadas por ela, na pasta temporária. Fora do AutoEDM.sln de propósito.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM.Tools.MoldBaseProbe</RootNamespace>
+    <AssemblyName>MoldBaseProbe</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <!-- x64 obrigatório: um build 32 bits simplesmente não conecta na SE. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="Microsoft.VisualBasic" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AutoEDM.Core\AutoEDM.Core.csproj" />
+    <ProjectReference Include="..\..\src\AutoEDM.AddIn\AutoEDM.AddIn.csproj" />
+  </ItemGroup>
+
+</Project>

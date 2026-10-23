@@ -98,7 +98,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release; depois da fusão com o grupo Molde o botão é o **id 28** e a ribbon `GuiVersion` 19); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 566 passando, 0 falhas (2026-10-20) |
+| Testes de unidade | ✅ 645 passando, 0 falhas (2026-10-23) |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -107,6 +107,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Orquestrador "gerar todos os eletrodos" | 📋 planejado |
 | Nova peça (molde) | 🚧 construída (2026-09-24), coberta por teste, **aguardando validação no SE** |
 | Refrigeração (molde) | 🚧 construída (2026-09-24), plano coberto por teste, **aguardando o 1º run no SE** |
+| **Porta-molde** (grupo Molde, botão id 34) | 🚧 **construído e provado no SE pelo Core (2026-10-23)** com a sonda `tools/MoldBaseProbe --build`: criar e trocar 25.35 → 35.40 → 20.20 → 25.35 num molde falso, cada placa com caixa e volume exatos, posição com desvio 0; catálogo Polimold CATPM2P transcrito e travado por teste (R1–R3 nas 53 séries). 2ª/3ª rodadas: colunas/buchas/pinos de retorno, janela desenhada e os tipos MUD (= tipo gaveta), Babyplast (76) e Zamak pelos padrões de `Padrões\Moldes`, com as peças de biblioteca; ciclo Polimold → gaveta → Babyplast → Zamak → Polimold provado no SE. **Falta instalar (add-in + servidor MCP) e clicar o botão**; dados a confirmar com o Carlos no MANUAL 4.5d |
 | Grupo **Molde** (Canais, Pontos de injeção, Extratores, Gavetas) | 📋 planejado — [`docs/PLANO_MOLDE.md`](docs/PLANO_MOLDE.md); O'ring já movido para o grupo |
 | **Limpar importação** (grupo Importação, botão id 29) | ✅ **núcleo validado no SE (2026-10-18)** por sonda externa e teste ponta a ponta em geometria real: 2 arquivos → 1 com **posição preservada em 0,0000 mm**, e as duas buchas guia Ø30/Ø32 da base de molde **corretamente NÃO unificadas**. 60 testes novos (527 no total). Dois caminhos de prova: encaixe vértice a vértice e **perfil de revolução** (peça torneada, 0 vértices). 🚧 o BOTÃO em si (as duas janelas de conferência) e a etapa de RELAÇÕES ainda não foram clicados por um humano |
 | **Desenho 2D** (grupo Desenho; peça torneada cotada pelas cores + GD&T) | ✅ **validado no SE (2026-10-20)** no 15335.202; layout do GD&T refeito no mesmo dia (sem quadros repetidos, sem chamadas cruzadas, referência pendurada no quadro) — conferido pela sonda `tools/DrawingProbe`, **falta reinstalar o add-in** |
@@ -510,6 +511,73 @@ apagá-los, nunca salva). Confere presença de membro por introspecção **antes
 e registra o erro exato do que falha — que é o dado que ela existe para trazer.
 
 ## Histórico
+
+- **2026-10-23 (Porta-molde, 4ª rodada — respostas do Carlos)** — 100 e 200 da gaveta alteráveis sem aviso
+  (100 = 46 por padrão); Babyplast passa ao padrão `BABY PLAST` (76 × 76 perto da partição, 75 nos 21 de trás,
+  travas de 12 — "o mais usado"); tipo **Zamak** pelo `ZAMAK\MINI` (cavaletes com janela, FIXO 39, MÓVEL 40,
+  paralelos, extratoras 130 × 80 × 16, guias Ø12 e parafusos das extratoras 1 mm fora de centro, pinos de retorno
+  Ø8 sem cabeça). Placa ganhou o **degrau** (anel aninhado: `End(1 | 8192)`, receita já na skill) e grupos de
+  furos com centros dados um a um. 663 testes; ciclo com Babyplast 76 e Zamak provado no SE.
+  - **A confirmar:** M6 em 28,2 nas costas do Babyplast; roscas do cavalete móvel nos paralelos do Zamak (o
+    padrão não tem); furação fora de centro das extratoras do Zamak; MINI MOLDES como tipo.
+
+- **2026-10-23 (Porta-molde, 3ª rodada — "MUD é o tipo gaveta da pasta Padrões\Moldes")** — Gaveta e
+  Babyplast refeitos pelos padrões da casa, medidos no SE só leitura (`TIPO GAVETA\000.asm`,
+  `BABY PLAST - 75 X 75\PADRAO.asm`; vínculos pelo Revision Manager; poses pela sonda `--matrices`).
+  - **Corrigido:** a unidade fixa da gaveta é **46** (não 56/64/66 — a caixa dos moldes incluía machos);
+    a móvel são **duas placas** (200 de 32 com ressalto 186 × 110 × 5 + 201 com alojamento passante, 87 no
+    total) e o curso sai da 201; os "pinos de retorno Ø10" eram os **extratores do quadro**; o Babyplast tem
+    metades **40/44**, apoio de **6** e **travas de canto** (os "pinos-guia Ø5 em 63" eram os M6 do apoio).
+  - **Novo na placa:** ressalto, travas de canto, rasgo lateral das guias (esboço por `Convert3DCoordinate`,
+    corte `AddFiniteMulti` com `igSymmetric` = 3), furos no meio dos lados (ponto-chave 2), número da casa no
+    nome do arquivo. **Peças de biblioteca** do padrão por referência, na pose lida (quadro 7160, guias,
+    puxadores, batente, M8; engate do Babyplast). Quadro/porta-molde já referenciado fica fora da caixa.
+  - 659 testes; ciclo no SE com volumes exatos e furos do meio medidos em (±72; 0).
+  - **A confirmar:** 100 de 46 × canal de 45,5; 200 > 32; Babyplast 76 × 76; MINI MOLDES e ZAMAK como tipos.
+
+- **2026-10-23 (Porta-molde, 2ª rodada — pedido do Carlos)** — Colunas, buchas e pinos de retorno; tipo de
+  porta-molde **Polimold / MUD / Babyplast**; janela com o desenho do porta-molde. Detalhe no MANUAL 4.5d.
+  - **Padrões aprendidos nos arquivos da casa, só leitura:** os vínculos de 156 moldes de `02 - MOLDES`
+    lidos pelo Revision Manager (`LinkedDocuments` é propriedade com parâmetro — chamado como método,
+    todo arquivo "falha"); as peças de `01 - PORTA MOLDES` (15354 = 3035, unidades MUD do quadro 7160,
+    Babyplast 10665/13665/10968) medidas no SE pela sonda `--learn`/`--dims` e fechadas sem salvar.
+  - **Componentes** = uma peça ordenada por código (`CG 24 046 046`, `BG 24 036`, `PR 14 x <L>`, `PG 05 x <P1+P2>`),
+    revolução por fatias de cilindro (`MoldBaseComponentModeler`), conferida por caixa e volume; as placas
+    ganham os rebaixos das cabeças. O rebaixo coaxial ao furo passante reprovava pela conta de volume e
+    apagar o recorte "errado" desconectava o documento — a conta agora desconta a sobreposição coaxial.
+  - **Janela:** `MoldBaseView` desenha corte e planta conforme as caixas, com dica ao passar o mouse.
+  - MCP: `familia`, `guias`, `pinosRetorno`. Variáveis `PM_Familia`, `PM_Guias`, `PM_PinosRetorno`.
+    `MoldBaseFamilyTests` (+10). 655 testes.
+  - **A confirmar:** MUD (posição da unidade no quadro, móvel sempre 87), canto da anti-inversão, pinos de
+    retorno no Babyplast.
+
+- **2026-10-23 (Porta-molde — pedido do Carlos)** — Botão novo **"Porta-molde"** (grupo Molde, id 34,
+  `GuiVersion` 29, ícone 11) e ferramentas MCP `se_porta_molde_plano` / `se_porta_molde`. Monta o
+  porta-molde Polimold de 2 placas pelas peças dispostas na montagem e troca de porta-molde nas mesmas
+  peças, sem reimportar. Detalhe no MANUAL 4.5d.
+  - **Catálogo:** CATPM2P (jun/2013) baixado do site da Polimold e lido nas imagens (a fonte do PDF está
+    corrompida); três transcrições independentes bateram. `PolimoldCatalog` + 8 testes, incluindo as
+    regras deduzidas R1–R3 e a decodificação dos códigos dos porta-moldes reais da casa
+    (`3035415125B` = 30.35 Tipo 4 sub 15 aço 1 curso 2 montagem 5B).
+  - **Variáveis do Solid Edge aprendidas ao vivo** (sonda `tools/MoldBaseProbe`, só documentos
+    descartáveis): placa ordenada inteira guiada por variáveis — contorno centrado, espessura, furos 4×
+    e 2× na linha de centro, bolsão — conferida pelo volume exato depois de editar. Armadilhas: Formula
+    de constante volta vazia; `Add` sem unidade vira distância; fórmula de vínculo entre arquivos digitada
+    e variável de texto matam o objeto `Variables` (`RPC_E_CONNECTION_TERMINATED`); `OccurrenceDocument.Save`
+    abre diálogo modal e trava; `AddFiniteExtrudedProtrusion` devolve o Model; `RefPlane.Name` não aceita
+    escrita. Tudo na skill (`references/variables.md`).
+  - **Bug latente corrigido:** `RaVariableStore.TryRead` nunca lia o Ra (parseava a Formula, que volta
+    vazia para constante, e a variável nascia como distância). Agora grava escalar e lê pelo `Value`,
+    convertendo as variáveis antigas. +6 testes.
+  - **Revisão adversarial** (workflow, 3 dimensões + verificação): 22 achados confirmados e corrigidos —
+    pasta por montagem (`Porta Molde - <montagem>`), documento aberto pelo usuário respeitado, troca em duas
+    fases com cópia `_antes`, criação falha apaga o que gravou, `Verify` por volume e status, espaçadores
+    furados (ocorrência girada 180°), seleção que não casa ignorada, eletrodos fora, escolhas das peças
+    lembradas, grade sem ordenação, MCP (`particaoMm` 'auto', `serie` solta P1/P2, "NaN" recusado). Tudo
+    reprovado ao vivo pela sonda, inclusive a recusa com placa aberta e suja. 645 testes.
+  - **Próxima ação:** instalar (`tools\deploy-dev.ps1 -Configuration Release -IncludeMcp`, com SE e
+    Claude Code fechados) e clicar o botão num molde real; confirmar com o Carlos os números da casa e os
+    pontos não tabelados (MANUAL 4.5d).
 
 - **2026-10-20 (Desenho 2D, 2ª rodada — pedido do Carlos)** — O GD&T virou **só tolerância de
   posição**: cilindros de precisão `⌖ Ø0,01 | A`, cones `⌖ 0,01 | A`, planos `⌖ 0,01 | B`.

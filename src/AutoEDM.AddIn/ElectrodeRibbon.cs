@@ -58,6 +58,7 @@ namespace AutoEDM.AddIn
         private const int CmdOrdenarPathFinder = 31; // MOLDE: ocorrências do 1º nível em sequência pelo código (15335.100, .101…)
         private const int CmdDesenhoProcesso = 32;   // DESENHO: cópia da peça sobre a original numa montagem nova em 02 - PROCESSO
         private const int CmdEletrodoInterpolacao = 33; // Eletrodo redondo: perfil da superfície revolvido em Z, Ø informado
+        private const int CmdPortaMolde = 34;        // MOLDE: porta-molde Polimold pelas peças da montagem, guiado por variáveis
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -110,6 +111,7 @@ namespace AutoEDM.AddIn
                 case CmdDesenho2D: Desenho2D(); break;
                 case CmdOrdenarPathFinder: OrdenarPathFinder(); break;
                 case CmdDesenhoProcesso: DesenhoProcesso(); break;
+                case CmdPortaMolde: PortaMolde(); break;
             }
         }
 
@@ -714,6 +716,51 @@ namespace AutoEDM.AddIn
                 if (!AutoEDM.Mold.ProcessDrawingBuilder.Build((object)app, plan, out error))
                     MessageBox.Show("O desenho de processo não foi concluído: " + error + Environment.NewLine + Environment.NewLine +
                                     "Log: " + ElectrodeAddIn.Current?.LogPath, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            });
+        }
+
+        /// <summary>
+        /// Botão "Porta-molde" do grupo Molde (Carlos, 2026-10-23): lê as peças dispostas na montagem ativa,
+        /// escolhe a série Polimold, as espessuras de P1/P2 e o curso, confere área, espessuras, curso, espaço de
+        /// refrigeração e flexão da placa suporte, e mostra o plano antes. Cria a submontagem
+        /// Porta Molde\Porta Molde.asm com uma peça ordenada por placa, guiada por variáveis — ou, se ela já
+        /// existe, troca os valores nas mesmas peças e reempilha (<see cref="AutoEDM.Mold.MoldBase.MoldBaseBuilder"/>).
+        /// Não salva a montagem ativa.
+        /// </summary>
+        private void PortaMolde()
+        {
+            const string title = "AutoEDM — Porta-molde";
+            Run(CmdPortaMolde, (connector, doc, p) =>
+            {
+                dynamic app = ElectrodeAddIn.Current?.App;
+                string asmPath = null;
+                try { asmPath = (string)doc.FullName; } catch { }
+                MoldProjectSettings settings = MoldProjectSettings.Load(asmPath);
+                AutoEDM.Mold.MoldBase.MoldBaseScan scan = AutoEDM.Mold.MoldBase.MoldBaseBuilder.Scan((object)doc, settings.HeightAxis);
+                if (scan.Problem != null && scan.Existing == null)
+                {
+                    MessageBox.Show(scan.Problem, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                AutoEDM.Mold.MoldBase.MoldBaseOptions initial = AutoEDM.Mold.MoldBase.MoldBaseBuilder.InitialOptions(scan, settings.MoldBaseChoices);
+                AutoEDM.Mold.MoldBase.MoldBasePlan plan;
+                AutoEDM.Mold.MoldBase.MoldBaseOptions chosen;
+                using (var form = new MoldBaseForm(scan, settings.HeightAxis, initial, o => AutoEDM.Mold.MoldBase.MoldBaseBuilder.Plan(scan, o)))
+                {
+                    if (form.ShowDialog() != DialogResult.OK) return;
+                    plan = form.Plan;
+                    chosen = form.Options;
+                }
+                AutoEDM.Mold.MoldBase.MoldBaseBuilder.RememberItems(scan, chosen);
+                settings.MoldBaseChoices = chosen;
+                settings.Save(asmPath);
+
+                AutoEDM.Mold.MoldBase.MoldBaseResult r = AutoEDM.Mold.MoldBase.MoldBaseBuilder.Apply((object)app, (object)doc, scan, plan);
+                string text = r.Message;
+                if (r.Warnings.Count > 0) text += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, r.Warnings);
+                if (!r.Ok) text += Environment.NewLine + Environment.NewLine + "Log: " + ElectrodeAddIn.Current?.LogPath;
+                MessageBox.Show(text, title, MessageBoxButtons.OK, r.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             });
         }
 
@@ -1731,6 +1778,7 @@ namespace AutoEDM.AddIn
                 { CmdCriarEletrodoManual, new CommandSpec("CRIAR ELETRODO (MANUAL, da seleção)",  DocKind.Assembly, ModelingEnv.Any) },
                 { CmdEletrodoInterpolacao, new CommandSpec("ELETRODO DE INTERPOLAÇÃO",            DocKind.Assembly, ModelingEnv.Any) },
                 { CmdNovaPeca,            new CommandSpec("NOVA PEÇA (MOLDE)",                   DocKind.Assembly, ModelingEnv.Any) },
+                { CmdPortaMolde,          new CommandSpec("PORTA-MOLDE",                         DocKind.Assembly, ModelingEnv.Any) },
                 { CmdDuplicarEletrodo,    new CommandSpec("DUPLICAR ELETRODO",                    DocKind.Assembly, ModelingEnv.Any) },
                 { CmdCoordenadas,         new CommandSpec("COORDENADAS (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },
                 { CmdListaCorte,          new CommandSpec("LISTA DE CORTE (eletrodos selecionados)", DocKind.Assembly, ModelingEnv.Any) },

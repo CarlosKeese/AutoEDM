@@ -18,6 +18,8 @@ namespace AutoEDM.Mold
         public HeightAxis HeightAxis { get; set; } = HeightAxis.Z;
         public bool OriginAtTop { get; set; }
         public MoldSection LastSection { get; set; } = MoldSection.Fixed;
+        /// <summary>Últimas escolhas do botão "Porta-molde" neste projeto (null = padrões da casa).</summary>
+        public MoldBase.MoldBaseOptions MoldBaseChoices { get; set; }
 
         public static string DefaultPath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AutoEDM", "mold-projects.json");

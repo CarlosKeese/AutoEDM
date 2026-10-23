@@ -1,4 +1,4 @@
-﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5 e 7..10) para os botões do ribbon.
+﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5 e 7..11) para os botões do ribbon.
 # Sem rc.exe: monta o binário .res à mão (formato documentado) + bitmaps via System.Drawing.
 Add-Type -AssemblyName System.Drawing
 
@@ -60,6 +60,12 @@ function New-IconDib([int]$id) {
             $g.DrawLine($a, 12,1, 12,13)
             $tip = [System.Drawing.Point[]]@([System.Drawing.Point]::new(9,10), [System.Drawing.Point]::new(15,10), [System.Drawing.Point]::new(12,15))
             $g.FillPolygon((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0,150,60))), $tip) }
+        11 { # Porta-molde: pilha de placas (cinza) com os calços e a extratora azul entre eles
+            $b = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(120,120,120))
+            $g.FillRectangle($b, 1,1, 14,2); $g.FillRectangle($b, 2,4, 12,3); $g.FillRectangle($b, 2,8, 12,2)
+            $g.FillRectangle($b, 2,11, 3,3); $g.FillRectangle($b, 11,11, 3,3); $g.FillRectangle($b, 1,14, 14,2)
+            $e = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0,110,200))
+            $g.FillRectangle($e, 6,12, 4,2) }
     }
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
@@ -90,7 +96,7 @@ function Write-ResHeader([UInt32]$dataSize, [UInt16]$typeOrd, [UInt16]$nameOrd, 
 # Cabeçalho nulo obrigatório no início do .res
 Write-ResHeader 0 0 0 0
 
-foreach ($id in @(1, 2, 3, 4, 5, 7, 8, 9, 10)) {   # o 6 (sonda) segue sem imagem, só rótulo
+foreach ($id in @(1, 2, 3, 4, 5, 7, 8, 9, 10, 11)) {   # o 6 (sonda) segue sem imagem, só rótulo
     [byte[]]$dib = New-IconDib $id
     Write-Output ("  id {0}: DIB {1} bytes" -f $id, $dib.Length)
     Write-ResHeader ([UInt32]$dib.Length) 2 ([UInt16]$id) 0x1030  # type 2 = RT_BITMAP

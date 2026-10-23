@@ -95,6 +95,24 @@ produção" — é preciso reconferir).
 **Perguntas ao Carlos.** Convenção de nome das peças do molde; onde fica o template;
 se a peça nasce com material/propriedades (código do produto, nº do molde) preenchidos.
 
+## Fase 1b — Porta-molde (construída em 2026-10-23, provada pelo Core no SE, falta o botão)
+
+Pedido do Carlos (2026-10-23): ele usa porta-moldes **Polimold** e importar o modelo a cada mudança
+custava tempo. O botão **Porta-molde** (id 34) monta o porta-molde de 2 placas pelas peças dispostas na
+montagem — área útil com margem de refrigeração, espessuras de P1/P2, curso pela altura do produto — e,
+rodando de novo, troca de porta-molde **nas mesmas peças**, porque cada placa é uma peça ordenada guiada
+por variáveis. Regras e números no MANUAL, seção 4.5d.
+
+**2ª rodada (2026-10-23):** tipos **MUD** e **Babyplast**; colunas, buchas e pinos de retorno como peças
+por código; janela com o desenho do porta-molde. **3ª rodada (mesmo dia):** MUD = tipo gaveta e Babyplast
+refeitos pelos padrões de `W:\01 - Biblioteca\Padrões\Moldes`, com as peças de biblioteca do padrão. **4ª rodada:**
+Babyplast 76 × 76 (o mais usado) e o tipo **Zamak** (`ZAMAK\MINI`).
+
+**Ficou para depois:** parafusos e guias da extratora como peças;
+encostos; rasgo do Tipo 2; anel de centragem e bucha de injeção; 3 placas; bolsões dos postiços em P1/P2;
+furos laterais dos parafusos das guias/puxadores da gaveta; padrão MINI MOLDES.
+A conferência de refrigeração deste botão é a **base** para a Fase 2 avisar canal perto de furo.
+
 ## Fase 2 — Refrigeração (construída em 2026-09-24, aguardando validação no SE)
 
 **Como ficou** (detalhe no MANUAL, seção 4.5c). Respostas do Carlos: esboço 3D **na peça**; Ø

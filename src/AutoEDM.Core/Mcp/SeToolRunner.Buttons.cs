@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -47,6 +47,8 @@ namespace AutoEDM.Mcp
                 case "se_criar_eletrodos": return CreateElectrodes(app, doc, argsJson);
                 case "se_criar_eletrodo_manual": return CreateElectrodeManual(app, doc);
                 case "se_nova_peca": return NewMoldPart(app, doc, argsJson);
+                case "se_porta_molde_plano": return MoldBaseTool(app, doc, argsJson, create: false);
+                case "se_porta_molde": return MoldBaseTool(app, doc, argsJson, create: true);
                 case "se_refrigeracao_plano": return Cooling(app, doc, argsJson, create: false);
                 case "se_refrigeracao": return Cooling(app, doc, argsJson, create: true);
                 case "se_duplicar_eletrodo": return DuplicateElectrode(app, doc);
@@ -226,6 +228,102 @@ namespace AutoEDM.Mcp
             if (res.Created) prefs.Save(asmPath);
             return (res.Created ? "CRIADO. " : "NÃO criado. ") + res.Message +
                    (skipped > 0 ? $" ({skipped} item(ns) da seleção não eram faces e ficaram de fora.)" : "");
+        }
+
+        /// <summary>
+        /// Botão "Porta-molde": a janela vira argumentos. O que não vier sai das escolhas gravadas do projeto e,
+        /// com porta-molde existente, da configuração dele (como a janela começa). Nunca abre diálogo.
+        /// </summary>
+        private static string MoldBaseTool(dynamic app, dynamic doc, string argsJson, bool create)
+        {
+            string asmPath = null;
+            try { asmPath = (string)doc.FullName; } catch { }
+            MoldProjectSettings settings = MoldProjectSettings.Load(asmPath);
+            AutoEDM.Mold.MoldBase.MoldBaseScan scan = AutoEDM.Mold.MoldBase.MoldBaseBuilder.Scan((object)doc, settings.HeightAxis);
+            if (scan.Problem != null && scan.Existing == null) return (create ? "NÃO criado. " : "") + scan.Problem;
+
+            AutoEDM.Mold.MoldBase.MoldBaseOptions o = AutoEDM.Mold.MoldBase.MoldBaseBuilder.InitialOptions(scan, settings.MoldBaseChoices);
+            if (ReadBool(argsJson, "automatico", false)) { o.ForcedSeries = null; o.ForcedP1 = o.ForcedP2 = 0; o.ForcedStroke = 0; o.PartingMm = null; }
+            switch ((ReadString(argsJson, "familia") ?? "").Trim().ToLowerInvariant())
+            {
+                case "polimold": o.Family = AutoEDM.Mold.MoldBase.MoldBaseFamily.Polimold; break;
+                case "mud": o.Family = AutoEDM.Mold.MoldBase.MoldBaseFamily.Mud; break;
+                case "babyplast": o.Family = AutoEDM.Mold.MoldBase.MoldBaseFamily.Babyplast; break;
+                case "zamak": o.Family = AutoEDM.Mold.MoldBase.MoldBaseFamily.Zamak; break;
+            }
+            o.WithGuides = ReadBool(argsJson, "guias", o.WithGuides);
+            o.WithReturnPins = ReadBool(argsJson, "pinosRetorno", o.WithReturnPins);
+            string serie = ReadString(argsJson, "serie");
+            if (!string.IsNullOrWhiteSpace(serie))
+            {
+                // Série nova: P1/P2/curso forçados eram da anterior (podem nem existir na faixa da nova).
+                if (PolimoldCatalogFind(serie) != PolimoldCatalogFind(o.ForcedSeries)) { o.ForcedP1 = o.ForcedP2 = 0; o.ForcedStroke = 0; }
+                o.ForcedSeries = serie;
+            }
+            o.ForcedP1 = ReadDouble(argsJson, "p1Mm", o.ForcedP1, 0, 400);
+            o.ForcedP2 = ReadDouble(argsJson, "p2Mm", o.ForcedP2, 0, 400);
+            o.ForcedStroke = ReadInt(argsJson, "curso", o.ForcedStroke, 0, 3);
+            o.Type = ReadInt(argsJson, "tipo", o.Type, 2, 4) == 2 ? 2 : 4;
+            o.Steel = ReadInt(argsJson, "aco", o.Steel, 1, 3) == 3 ? 3 : 1;
+            o.Mounting = ReadInt(argsJson, "montagem", o.Mounting, 1, 6);
+            string col = ReadString(argsJson, "colunamento");
+            if (!string.IsNullOrWhiteSpace(col) && "ABCabc".IndexOf(col[0]) >= 0) o.Guiding = char.ToUpperInvariant(col[0]);
+            string centro = (ReadString(argsJson, "centro") ?? "").ToLowerInvariant();
+            if (centro == "origem") o.Centering = AutoEDM.Mold.MoldBase.MoldBaseCentering.AssemblyOrigin;
+            else if (centro == "pecas" || centro == "peças") o.Centering = AutoEDM.Mold.MoldBase.MoldBaseCentering.ContentCenter;
+            if (string.Equals(ReadString(argsJson, "particaoMm"), "auto", StringComparison.OrdinalIgnoreCase)) o.PartingMm = null;
+            double parting = ReadDouble(argsJson, "particaoMm", double.NaN, -1e5, 1e5);
+            if (!double.IsNaN(parting)) o.PartingMm = parting;
+            o.FixedSideNegative = ReadBool(argsJson, "ladoFixoNegativo", o.FixedSideNegative);
+            o.AllowRotation = ReadBool(argsJson, "girar", o.AllowRotation);
+            o.SideMarginMm = ReadDouble(argsJson, "margemMm", o.SideMarginMm, 0, 500);
+            o.FloorMm = ReadDouble(argsJson, "fundoMm", o.FloorMm, 0, 500);
+            o.StrokeClearanceMm = ReadDouble(argsJson, "folgaCursoMm", o.StrokeClearanceMm, 0, 500);
+            o.ProductHeightMm = ReadDouble(argsJson, "alturaExtrairMm", o.ProductHeightMm, 0, 2000);
+            o.CoolingDiameterMm = ReadDouble(argsJson, "canalMm", o.CoolingDiameterMm, 1, 50);
+
+            List<string> exclude = ReadStringArray(argsJson, "excluir"), products = ReadStringArray(argsJson, "produtos");
+            foreach (AutoEDM.Mold.MoldBase.MoldBaseItem it in scan.Items)
+            {
+                string file = System.IO.Path.GetFileName(it.FileName ?? "");
+                string stem = System.IO.Path.GetFileNameWithoutExtension(file);
+                Func<List<string>, bool> named = l => l.Any(n => string.Equals(n, it.Name, StringComparison.OrdinalIgnoreCase) ||
+                                                              string.Equals(n, file, StringComparison.OrdinalIgnoreCase) ||
+                                                              string.Equals(n, stem, StringComparison.OrdinalIgnoreCase));
+                if (named(exclude)) it.Include = false;
+                if (products.Count > 0) it.IsProduct = named(products);
+            }
+
+            AutoEDM.Mold.MoldBase.MoldBasePlan plan = AutoEDM.Mold.MoldBase.MoldBaseBuilder.Plan(scan, o);
+            string items = string.Join("; ", scan.Items.Select(i => i.Name + (i.Include ? "" : " (fora)") + (i.IsProduct ? " [produto]" : "")));
+            string report = "Peças: " + items + Environment.NewLine + AutoEDM.Mold.MoldBase.MoldBaseReport.Text(plan, scan);
+            if (!create) return "PLANO — nada foi alterado." + Environment.NewLine + report;
+            if (!plan.Ready) return "NÃO criado. " + plan.Problem;
+
+            AutoEDM.Mold.MoldBase.MoldBaseBuilder.RememberItems(scan, o);
+            settings.MoldBaseChoices = o;
+            settings.Save(asmPath);
+            AutoEDM.Mold.MoldBase.MoldBaseResult r = AutoEDM.Mold.MoldBase.MoldBaseBuilder.Apply(app, doc, scan, plan);
+            return (r.Ok ? (r.Created ? "CRIADO. " : "ATUALIZADO. ") : "FALHOU. ") + r.Message +
+                   (r.Warnings.Count > 0 ? Environment.NewLine + string.Join(Environment.NewLine, r.Warnings) : "") +
+                   Environment.NewLine + Environment.NewLine + report;
+        }
+
+        private static AutoEDM.Mold.MoldBase.PolimoldSeries PolimoldCatalogFind(string name) =>
+            string.IsNullOrWhiteSpace(name) ? null : AutoEDM.Mold.MoldBase.PolimoldCatalog.Find(name);
+
+        private static List<string> ReadStringArray(string argsJson, string name)
+        {
+            var list = new List<string>();
+            try
+            {
+                using (JsonDocument d = JsonDocument.Parse(string.IsNullOrWhiteSpace(argsJson) ? "{}" : argsJson))
+                    if (d.RootElement.ValueKind == JsonValueKind.Object && d.RootElement.TryGetProperty(name, out JsonElement a) && a.ValueKind == JsonValueKind.Array)
+                        foreach (JsonElement e in a.EnumerateArray())
+                            if (e.ValueKind == JsonValueKind.String) list.Add(e.GetString());
+            }
+            catch { }
+            return list;
         }
 
         /// <summary>Botões de refrigeração: o plano (só leitura) e a criação — mesmos argumentos.</summary>

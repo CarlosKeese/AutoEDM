@@ -58,6 +58,8 @@ namespace AutoEDM.Mcp
                 { "se_criar_eletrodos",       new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_criar_eletrodo_manual", new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_nova_peca",             new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_porta_molde_plano",     new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_porta_molde",           new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_refrigeracao_plano",    new Requirement(DocKind.Part, ModelingEnv.Any) },
                 { "se_refrigeracao",          new Requirement(DocKind.Part, ModelingEnv.Ordered) },
                 { "se_duplicar_eletrodo",     new Requirement(DocKind.Assembly, ModelingEnv.Any) },
@@ -828,8 +830,9 @@ namespace AutoEDM.Mcp
                     double v;
                     if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out v))
                         return v < min ? min : v > max ? max : v;
+                    // "NaN" em string passava pelo TryParse e pelo limite (toda comparação com NaN é falsa).
                     if (el.ValueKind == JsonValueKind.String &&
-                        double.TryParse(el.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out v))
+                        double.TryParse(el.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out v) && !double.IsNaN(v))
                         return v < min ? min : v > max ? max : v;
                 }
             }

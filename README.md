@@ -113,6 +113,13 @@ A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cad
 | **Aplicar GAP** | **ordenado** | Escolha o Ra numa lista (pré-selecionada pelo Ra gravado na peça): aplica o offset de faísca via `Model.FaceOffsets`, pinta a cor do Ra e nomeia a feature na árvore. |
 | **Alojamento de O'ring** | **ordenado** | Canal de anel O'ring pela **ISO 3601**. Capture uma face (cilíndrica = eixo/furo; plana = vedação de face) e uma aresta circular: ele mede o diâmetro, acha o anel mais próximo no catálogo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta. Mostra **esmagamento, estiramento e preenchimento antes de cortar**, e avisa quando algum sai da norma — quem decide é você. |
 
+### Molde — documento de montagem
+
+| Comando | Ambiente | O que faz |
+|---|---|---|
+| **Porta-molde** | qualquer | Porta-molde **Polimold de 2 placas, MUD (tipo gaveta), Babyplast ou Zamak** (padrões da casa em `Padrões\Moldes`), com colunas, buchas e pinos de retorno (Polimold; pinos no Zamak) ou as peças de biblioteca do padrão (quadro 7160, guias, puxadores, engate), dimensionado pelas peças dispostas na montagem: escolhe a série pela área útil (com margem para a refrigeração, testando a planta girada), as espessuras de P1/P2 pelo fundo mínimo e o curso pela altura do produto; confere área, espessuras, curso, corredor dos canais de refrigeração e flexão da placa suporte, e mostra o plano desenhado (corte e planta) com o código de pedido (ex.: `3035 4 15 1 2 5B`) antes de criar. Cria `Porta Molde - <montagem>\Porta Molde.asm` com uma peça **ordenada guiada por variáveis** por placa. Rodando de novo, **troca de porta-molde nas mesmas peças**, sem reimportar. Não salva a montagem. |
+| **Nova peça** | qualquer | Peça vazia do molde codificada na série .100/.200/.300 e posicionada pelas faces clicadas. |
+
 ### WEDM — documento de peça
 
 Corte a fio: preparar os perfis na peça e entregá-los ao programa da máquina (Pitágoras). Os dois botões são a mesma sequência em dois cliques — primeiro as curvas, depois os arquivos.

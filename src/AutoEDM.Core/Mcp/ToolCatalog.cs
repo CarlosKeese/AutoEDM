@@ -57,6 +57,33 @@ namespace AutoEDM.Mcp
                     "\"todasAsLinhas\":{\"type\":\"boolean\",\"description\":\"true = todas as linhas de todos os esboços 3D, ignorando a seleção.\"}}," +
                     "\"additionalProperties\":false}";
 
+        private const string MoldBaseArgs =
+            "{\"type\":\"object\",\"properties\":{" +
+                    "\"familia\":{\"type\":\"string\",\"enum\":[\"polimold\",\"mud\",\"babyplast\",\"zamak\"],\"description\":\"Tipo de porta-molde: polimold (2 placas, catálogo), mud (o molde tipo gaveta: unidade 246 x 170 do quadro de troca rápida 7160) babyplast (metades 76 x 76) ou zamak (matriz MINI 160 x 160), cada um no padrão da biblioteca da casa (Padrões/Moldes). Padrão: o do porta-molde existente / o último do projeto.\"}," +
+                    "\"guias\":{\"type\":\"boolean\",\"description\":\"Polimold: gerar colunas e buchas como peças. MUD/Babyplast: pôr as peças de BIBLIOTECA do padrão (quadro 7160, guias e puxadores / engate de extração). Padrão true.\"}," +
+                    "\"pinosRetorno\":{\"type\":\"boolean\",\"description\":\"Gerar os pinos de retorno como peças (Polimold e Zamak; os padrões da gaveta e do Babyplast não têm). Padrão true.\"}," +
+                    "\"automatico\":{\"type\":\"boolean\",\"description\":\"true = série, P1/P2, curso e partição escolhidos de novo pelas peças, mesmo com porta-molde já existente (o padrão mantém a configuração atual dele).\"}," +
+                    "\"serie\":{\"type\":\"string\",\"description\":\"Força a série Polimold (ex.: 30.35 ou 3035). Série diferente da atual solta P1/P2/curso forçados (voltam ao automático, salvo se vierem junto).\"}," +
+                    "\"p1Mm\":{\"type\":\"number\",\"description\":\"Força a espessura de P1 (lado fixo).\"}," +
+                    "\"p2Mm\":{\"type\":\"number\",\"description\":\"Força a espessura de P2 (lado móvel).\"}," +
+                    "\"curso\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":3,\"description\":\"Força o curso padronizado 1, 2 ou 3 da série.\"}," +
+                    "\"tipo\":{\"type\":\"integer\",\"enum\":[2,4],\"description\":\"2 = rasgo de fixação; 4 = aba (placas base com largura B). Padrão 4.\"}," +
+                    "\"aco\":{\"type\":\"integer\",\"enum\":[1,3],\"description\":\"1 = SAE 1045; 3 = P20 em P1/P2. Padrão 1.\"}," +
+                    "\"montagem\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":6,\"description\":\"Montagem Polimold 1–6 (guias da extratora e pinos de retorno). Padrão 5.\"}," +
+                    "\"colunamento\":{\"type\":\"string\",\"enum\":[\"A\",\"B\",\"C\"],\"description\":\"A = colunas nas cavidades; B = + placa base superior e suporte; C = todas. Padrão B.\"}," +
+                    "\"centro\":{\"type\":\"string\",\"enum\":[\"origem\",\"pecas\"],\"description\":\"Centro do porta-molde na origem da montagem ou no centro das peças.\"}," +
+                    "\"particaoMm\":{\"type\":[\"number\",\"string\"],\"description\":\"Linha de partição: coordenada da montagem no eixo de altura do projeto. Omitida = a gravada para o projeto, ou automática se nunca escolhida; auto (ou automatico=true) volta à automática (0 quando as peças a atravessam).\"}," +
+                    "\"ladoFixoNegativo\":{\"type\":\"boolean\",\"description\":\"true = lado fixo (P1, PBS) para o sentido negativo do eixo de altura.\"}," +
+                    "\"girar\":{\"type\":\"boolean\",\"description\":\"Permite girar 90° na planta quando cabe numa série menor. Padrão true.\"}," +
+                    "\"margemMm\":{\"type\":\"number\",\"description\":\"Margem por lado entre as peças e a área útil X×Y (espaço da refrigeração). Padrão 20.\"}," +
+                    "\"fundoMm\":{\"type\":\"number\",\"description\":\"Fundo mínimo de aço atrás das peças em P1/P2. Padrão 20.\"}," +
+                    "\"folgaCursoMm\":{\"type\":\"number\",\"description\":\"Folga somada à altura a extrair. Padrão 10.\"}," +
+                    "\"alturaExtrairMm\":{\"type\":\"number\",\"description\":\"Altura a extrair digitada; omitida = a dos produtos (ou das peças acima da partição).\"}," +
+                    "\"canalMm\":{\"type\":\"number\",\"description\":\"Ø do canal de refrigeração para a conferência. Padrão 8.\"}," +
+                    "\"excluir\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Ocorrências (nome ou arquivo) que NÃO entram na caixa.\"}," +
+                    "\"produtos\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Ocorrências que são o PRODUTO (substitui a detecção: peça sem código NNNNN.NNN = produto).\"}}," +
+                    "\"additionalProperties\":false}";
+
         private const string NoArgs = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}";
 
         public static readonly IReadOnlyList<ToolSpec> All = new List<ToolSpec>
@@ -331,6 +358,31 @@ namespace AutoEDM.Mcp
                     "móvel .200, extração .300), na pasta da montagem, e a insere com a ORIENTAÇÃO DA MONTAGEM, com a origem " +
                     "no centro das faces nos dois eixos de planta e no ponto mais baixo/alto no eixo de altura. As escolhas " +
                     "ficam gravadas para o projeto. Não salva a montagem."
+            },
+            new ToolSpec
+            {
+                Name = "se_porta_molde_plano",
+                Writes = false,
+                InputSchemaJson = MoldBaseArgs,
+                Description =
+                    "SÓ LEITURA. Plano do botão 'Porta-molde' na MONTAGEM ativa (tipos: Polimold, MUD, Babyplast — 'familia'): lê a caixa das peças do 1º nível (as selecionadas, " +
+                    "se houver seleção), escolhe no catálogo Polimold de 2 placas a menor série cuja área útil X×Y comporta as peças + " +
+                    "margem da refrigeração, as espessuras de P1/P2 (sub-série) pelo fundo mínimo e o curso pela altura do produto, e " +
+                    "devolve o código de pedido, a pilha de placas com os furos e as conferências (área, espessuras, curso, corredor " +
+                    "dos canais de refrigeração, flexão da placa suporte). Com porta-molde já existente, mostra o atual conferido com " +
+                    "as peças de agora (automatico=true recalcula). Nada é alterado."
+            },
+            new ToolSpec
+            {
+                Name = "se_porta_molde",
+                Writes = true,
+                InputSchemaJson = MoldBaseArgs,
+                Description =
+                    "Botão 'Porta-molde' (grupo Molde). MONTAGEM ativa e SALVA. Cria a submontagem 'Porta Molde - <montagem>/Porta Molde.asm' " +
+                    "ao lado da montagem, com uma peça ORDENADA por placa (Polimold: PBS, P1, P2, PS, espaçadores, CPE, PE, PBI; MUD/gaveta: 100, 200, 201, 301, 302; Babyplast: 100, 101, 200, 201, 300, 301; Zamak: cavaletes, fixo, móvel, paralelos, extratoras 1 e 2) guiada por " +
+                    "VARIÁVEIS da peça, mais colunas, buchas e pinos de retorno (Polimold) como peças com o código do catálogo ou as peças de biblioteca do padrão (MUD/Babyplast) por referência, e a posiciona na partição. Se o porta-molde já existe, TROCA de porta-molde nas mesmas peças " +
+                    "(valores das variáveis, furos refeitos só quando mudam de forma, pilha reposicionada) e regrava as peças e a " +
+                    "submontagem. Rode 'se_porta_molde_plano' antes e mostre o plano. Não salva a montagem ativa."
             },
             new ToolSpec
             {

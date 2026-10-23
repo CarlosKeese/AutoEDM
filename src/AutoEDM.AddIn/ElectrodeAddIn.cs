@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 28; // incrementar ao mudar a ribbon (v28 = "Desenho de processo" CDU/CDT)
+            AddInEx.GuiVersion = 29; // incrementar ao mudar a ribbon (v29 = "Porta-molde", id 34)
 
             Current = this;
             App = application;
