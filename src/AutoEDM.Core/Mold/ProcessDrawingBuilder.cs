@@ -5,8 +5,11 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using AutoEDM.Com;
 using AutoEDM.Assembly;
 using AutoEDM.Diagnostics;
+using AutoEDM.Electrode;
+using AutoEDM.Selection;
 
 namespace AutoEDM.Mold
 {
@@ -68,7 +71,8 @@ namespace AutoEDM.Mold
     /// (<c>Models.AddCopiedPart</c>) da original, em ORDENADO. A cópia fica VINCULADA: a original
     /// alterada e salva chega à peça de processo (provado por tools/PartCopyProbe em 2026-10-22: o
     /// ressalto acrescentado na original apareceu na cópia ao reabri-la). Até 2026-10-21 era um
-    /// File.Copy para &lt;peça&gt;_W01.par, sem vínculo nenhum.
+    /// File.Copy para &lt;peça&gt;_W01.par, sem vínculo nenhum. Forma e material ficam vinculados; as
+    /// CORES são copiadas na criação (a SE não tem cor vinculada na Cópia de peça — ver CopySourceColors).
     ///
     /// A montagem <c>&lt;peça&gt;_WP.asm</c> recebe a ORIGINAL e as peças de processo na mesma posição
     /// (origem, sem rotação). Se ela já existe, é aberta e recebe só o que falta — nada é
@@ -200,7 +204,7 @@ namespace AutoEDM.Mold
 
             dynamic app = application;
             dynamic asm;
-            try { asm = plan.AssemblyExists ? app.Documents.Open(plan.AssemblyPath) : app.Documents.Add("SolidEdge.AssemblyDocument"); }
+            try { asm = plan.AssemblyExists ? app.Documents.Open(plan.AssemblyPath) : HouseTemplates.Add((object)app, HouseDocumentKind.Assembly); }
             catch (Exception e) { error = "a montagem não pôde ser aberta/criada: " + e.GetBaseException().Message; return false; }
 
             // O que a montagem já tem, pelo arquivo — só entra o que falta.
@@ -242,8 +246,8 @@ namespace AutoEDM.Mold
 
         /// <summary>
         /// Peça NOVA, ordenada, com uma Cópia de peça da original (<c>Models.AddCopiedPart</c>, material
-        /// vinculado), salva em <paramref name="path"/>. O vínculo aponta para o ARQUIVO da original:
-        /// o que for salvo nela chega à peça de processo.
+        /// vinculado, cores copiadas), salva em <paramref name="path"/>. O vínculo aponta para o ARQUIVO
+        /// da original: o que for salvo nela chega à peça de processo.
         /// </summary>
         private static bool CreateLinkedCopy(object application, string sourcePath, string path, out string error)
         {
@@ -252,7 +256,7 @@ namespace AutoEDM.Mold
             dynamic part = null;
             try
             {
-                part = app.Documents.Add("SolidEdge.PartDocument");
+                part = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
                 // Documento NOSSO, recém-criado e vazio: trocar o ambiente aqui não estraga nada.
                 try { if ((int)part.ModelingMode != 2) part.ModelingMode = 2; }
                 catch (Exception e) { Log.Warn("[processo] a peça nova não foi para ordenado — " + e.GetBaseException().Message); }
@@ -267,6 +271,7 @@ namespace AutoEDM.Mold
                 }
                 try { copied.LinkMaterial = true; }
                 catch (Exception e) { Log.Warn("[processo] material não vinculado — " + e.GetBaseException().Message); }
+                CopySourceColors(part, sourcePath);
 
                 part.SaveAs(path);
                 part.Close();
@@ -284,6 +289,78 @@ namespace AutoEDM.Mold
                 if (part != null) { try { part.Close(false); } catch { } }
             }
         }
+
+        /// <summary>
+        /// As CORES da original na peça de processo (Carlos, 2026-10-27). A Cópia de peça não tem opção
+        /// de cor — nem na typelib nem pelo IDispatch; só a Cópia de CONSTRUÇÃO tem <c>CopyColors</c>
+        /// (medido por tools/PartCopyProbe --cores). Então uma Cópia de construção com CopyColors lê o
+        /// ARQUIVO da original e traz os estilos, as faces da Cópia de peça — que mantêm o Face.ID da
+        /// original, também depois de atualizar — recebem o estilo da face de mesmo ID, e a construção é
+        /// apagada. A cor é COPIADA na criação: repintar a original depois não chega aqui (medido: nem a
+        /// construção acompanha a cor). A original não é aberta. Cosmético: nunca derruba a criação.
+        /// </summary>
+        private static void CopySourceColors(dynamic part, string sourcePath)
+        {
+            object cs = null, cc = null;
+            try
+            {
+                cs = Invoke((object)part.CoordinateSystems, "AddByMatrix",
+                    new double[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 });
+                // 14 [in], como no BurnSurfaceCopier: corpo de projeto, sem construções, CopyColors.
+                cc = Invoke((object)part.Constructions.CopyConstructions, "Add",
+                    sourcePath, 1.0, 1.0, 1.0, Type.Missing, Type.Missing, cs,
+                    true, false, false, false, Type.Missing, Type.Missing, true);
+
+                var lookById = new Dictionary<int, FaceLook>();
+                dynamic ccFaces = ((dynamic)cc).Faces[1];
+                for (int i = 1; i <= (int)ccFaces.Count; i++)
+                {
+                    object f = ccFaces.Item(i);
+                    FaceLook look = FaceLookReader.Resolve(f, null);
+                    int id = ReadId(f);
+                    if (look?.StyleName != null && id > 0) lookById[id] = look;
+                }
+                if (lookById.Count == 0) { Log.Info("[processo] a original não tem faces pintadas — nada a repintar."); return; }
+
+                var byStyle = new Dictionary<string, List<object>>();
+                var colorOf = new Dictionary<string, System.Drawing.Color>();
+                dynamic faces = part.Models.Item(1).Body.Faces[1];
+                for (int i = 1; i <= (int)faces.Count; i++)
+                {
+                    object f = faces.Item(i);
+                    if (!lookById.TryGetValue(ReadId(f), out FaceLook look)) continue;
+                    if (!byStyle.TryGetValue(look.StyleName, out List<object> list)) byStyle[look.StyleName] = list = new List<object>();
+                    list.Add(f);
+                    colorOf[look.StyleName] = look.Color ?? System.Drawing.Color.Gray;
+                }
+
+                int painted = 0, matched = byStyle.Values.Sum(l => l.Count);
+                foreach (KeyValuePair<string, List<object>> kv in byStyle)
+                    if (FaceColorPainter.PaintWithNamedStyle(part, kv.Value, new[] { kv.Key }, kv.Key, colorOf[kv.Key]) != null)
+                        painted += kv.Value.Count;
+                Log.Info($"[processo] cores da original: {painted} face(s) pintada(s) de {lookById.Count} " +
+                         $"({matched} casada(s) pelo ID, {byStyle.Count} estilo(s)).");
+            }
+            catch (Exception e) { Log.Warn("[processo] cores da original não copiadas — " + e.GetBaseException().Message); }
+            finally
+            {
+                if (cc != null) { try { ((dynamic)cc).Delete(); } catch (Exception e) { Log.Warn("[processo] a cópia de construção ficou na peça — " + e.GetBaseException().Message); } }
+                if (cs != null) { try { ((dynamic)cs).Delete(); } catch (Exception e) { Log.Info("[processo] sistema de coordenadas ficou — " + e.GetBaseException().Message); } }
+            }
+        }
+
+        /// <summary>Face.ID, relido uma vez se vier 0 (leitura transitória medida no SE 223). 0 = ilegível.</summary>
+        private static int ReadId(object face)
+        {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                try { int id = (int)((dynamic)face).ID; if (id > 0) return id; } catch { }
+            }
+            return 0;
+        }
+
+        private static object Invoke(object target, string method, params object[] args) =>
+            target.GetType().InvokeMember(method, BindingFlags.InvokeMethod, null, target, args, null, CultureInfo.InvariantCulture, null);
 
         /// <summary>Abre um arquivo que já existe (a montagem de processo de uma rodada anterior).</summary>
         public static void Open(object application, string path)

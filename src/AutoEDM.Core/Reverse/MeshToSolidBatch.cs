@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using AutoEDM.Com;
 using AutoEDM.Assembly;
 using AutoEDM.Diagnostics;
 
@@ -148,7 +149,7 @@ namespace AutoEDM.Reverse
             dynamic asm = null;
             try
             {
-                asm = app.Documents.Add("SolidEdge.AssemblyDocument");
+                asm = HouseTemplates.Add((object)app, HouseDocumentKind.Assembly);
                 OccurrenceTransform identity = OccurrenceTransform.FromMatrix(
                     new double[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }, new[] { 0.0, 0.0, 0.0 });
                 foreach (BatchBodyResult b in parts)

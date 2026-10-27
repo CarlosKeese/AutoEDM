@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using AutoEDM.Com;
 using AutoEDM.Diagnostics;
 
 namespace AutoEDM.Reverse
@@ -76,7 +77,7 @@ namespace AutoEDM.Reverse
 
             var result = new PrismaticBuildResult();
             dynamic app = application;
-            dynamic doc = app.Documents.Add("SolidEdge.PartDocument");
+            dynamic doc = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
             doc.ModelingMode = 2; // ordenado — peça NOVA, criada aqui
             result.DocumentName = doc.Name;
             result.Document = doc;

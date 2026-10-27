@@ -537,7 +537,7 @@ namespace AutoEDM.Mcp
             dynamic doc;
             if (novaPeca)
             {
-                try { doc = app.Documents.Add("SolidEdge.PartDocument"); }
+                try { doc = HouseTemplates.Add((object)app, HouseDocumentKind.Part); }
                 catch (Exception ex) { return "Não foi possível criar a peça nova: " + ex.GetBaseException().Message; }
                 Log.Info("MCP: peça NOVA criada para modelar (não será salva).");
             }

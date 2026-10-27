@@ -106,6 +106,7 @@ arg is the `[out]` result object**:
 | Spark-gap offset (electrode SHRINKS → inward side / negative sense) | `Constructions.OffsetSurfaces.Add(Side, offsetDistance, FaceSet, Boundary, out OffsetSurface)` |
 | In-context associative link | `InterpartConstructions.Add(AsmSource, out X)` / `Add2(PartTarget, AsmSource, out X)` |
 | Bring a whole part, **keeping colors** | `CopyConstructions.Add(FileName, X/Y/ZScale, MirrorPlane, FamilyOfPartsMember, CoordinateSystem, IncludeDesignBody, …, CopyColors, out CopyConstruction)` — set `CopyColors=true` so face Ra colors survive |
+| Linked Part Copy as DESIGN body (ordered) | `Models.AddCopiedPart(FileName, …)` → `Models.Item(1).CopiedParts.Item(1)`; `LinkMaterial = true`. **No color option** (typelib nor IDispatch: `CopyColors`/`LinkColors`… → `DISP_E_UNKNOWNNAME`), although the UI dialog has "Copy colors". Geometry follows the source file; **colors never do** — not even `CopyConstruction` with `CopyColors` re-copies a changed color (measured 2026-10-27, `tools/PartCopyProbe --cores`). `Face.ID` of the copy = source `Face.ID`, stable across updates → paint by ID from a temporary `CopyConstructions.Add(…, CopyColors=true)`, then delete it (`ProcessDrawingBuilder.CopySourceColors`). `Models.AddByConstruction(cc)` turns a construction into the design body but **drops the colors** |
 
 > ⚠️ **These inter-part signatures exist in the typelib but do NOT work via COM** — see
 > "Inter-Part Copy is effectively blocked" above. They're documented here for reference;

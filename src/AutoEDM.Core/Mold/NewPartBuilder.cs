@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using AutoEDM.Com;
 using AutoEDM.Assembly;
 using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
@@ -137,7 +138,7 @@ namespace AutoEDM.Mold
             dynamic partDoc = null;
             try
             {
-                partDoc = app.Documents.Add("SolidEdge.PartDocument");
+                partDoc = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
                 partDoc.SaveAs(path);
                 partDoc.Close();
                 partDoc = null;

@@ -53,6 +53,12 @@ namespace AutoEDM.Config
         public bool McpAutoStart { get; set; }
 
         /// <summary>
+        /// Pasta dos templates da casa (PanFlight Part/Assembly/Draft) de onde nascem as peças,
+        /// montagens e desenhos novos (Carlos, 2026-10-27). Vazia = cópia local e padrão da SE.
+        /// </summary>
+        public string TemplateFolder { get; set; } = Com.HouseTemplates.LibraryFolder;
+
+        /// <summary>
         /// Nome EXATO da propriedade do arquivo onde está a revisão de uma PEÇA NOVA (Carlos,
         /// 2026-09-18: projeto novo nasce com revisão 0/vazia; peça nova recebe o número, peça
         /// alterada só ganha o grupo na árvore). Null/vazio = não lê propriedade nenhuma.

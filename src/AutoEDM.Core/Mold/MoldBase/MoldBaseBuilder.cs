@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using AutoEDM.Com;
 using AutoEDM.Assembly;
 using AutoEDM.Diagnostics;
 using AutoEDM.Model;
@@ -321,7 +322,7 @@ namespace AutoEDM.Mold.MoldBase
                 foreach (PlateSpec plate in plan.Plates)
                 {
                     string path = Path.Combine(folder, plate.FileName);
-                    dynamic doc = app.Documents.Add("SolidEdge.PartDocument");
+                    dynamic doc = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
                     try
                     {
                         Log.Info($"Porta-molde: criando {plate.FileName} ({F(plate.Width)} × {F(plate.Length)} × {F(plate.Thickness)}, {plate.Holes.Count} grupo(s) de furos).");
@@ -351,7 +352,7 @@ namespace AutoEDM.Mold.MoldBase
                     written.Add(path);
                 }
 
-                dynamic sub = app.Documents.Add("SolidEdge.AssemblyDocument");
+                dynamic sub = HouseTemplates.Add((object)app, HouseDocumentKind.Assembly);
                 try
                 {
                     foreach (PlateSpec plate in plan.Plates)
@@ -581,7 +582,7 @@ namespace AutoEDM.Mold.MoldBase
 
         private static bool CreatePlate(dynamic app, PlateSpec plate, string path, MoldBaseResult res)
         {
-            dynamic doc = app.Documents.Add("SolidEdge.PartDocument");
+            dynamic doc = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
             try
             {
                 Log.Info($"Porta-molde: criando {plate.FileName} ({F(plate.Width)} × {F(plate.Length)} × {F(plate.Thickness)}).");
@@ -605,7 +606,7 @@ namespace AutoEDM.Mold.MoldBase
 
         private static bool CreateComponent(dynamic app, ComponentSpec comp, string path, MoldBaseResult res)
         {
-            dynamic doc = app.Documents.Add("SolidEdge.PartDocument");
+            dynamic doc = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
             try
             {
                 Log.Info($"Porta-molde: criando {comp.Kind} {comp.FileName} (Ø{F(comp.MaxDiameter)} × {F(comp.MaxZ - comp.MinZ)}).");

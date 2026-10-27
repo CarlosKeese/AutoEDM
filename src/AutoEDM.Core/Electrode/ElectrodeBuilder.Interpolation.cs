@@ -212,7 +212,7 @@ namespace AutoEDM.Electrode
             dynamic doc = null;
             try
             {
-                doc = app.Documents.Add("SolidEdge.PartDocument");
+                doc = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
                 if (ra.HasValue) RaVariableStore.TryWrite(doc, ra.Value);
                 string err = CopyIntoSync((object)doc, sources, burnCopy);
                 if (err != null) return err;

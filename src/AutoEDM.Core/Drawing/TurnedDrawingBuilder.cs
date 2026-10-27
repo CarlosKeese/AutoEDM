@@ -5,15 +5,15 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using AutoEDM.Com;
 using AutoEDM.Diagnostics;
 
 namespace AutoEDM.Drawing
 {
     public sealed class TurnedDrawingOptions
     {
-        /// <summary>Template de desenho da casa. Inexistente = template padrão da Solid Edge.</summary>
-        public string TemplatePath { get; set; } =
-            @"C:\Program Files\Siemens\Solid Edge 2023\Template\PanFlight\PanFlight Draft.dft";
+        /// <summary>Template de desenho. Null/inexistente = o da casa (<see cref="HouseTemplates"/>).</summary>
+        public string TemplatePath { get; set; }
 
         /// <summary>Escalas aceitas, da maior para a menor (ISO 5455).</summary>
         public double[] Scales { get; set; } = { 10, 5, 2, 1, 0.5, 0.2, 0.1 };
@@ -100,7 +100,7 @@ namespace AutoEDM.Drawing
             // --- documento
             dynamic draft = File.Exists(options.TemplatePath)
                 ? seApp.Documents.Add("SolidEdge.DraftDocument", options.TemplatePath)
-                : seApp.Documents.Add("SolidEdge.DraftDocument");
+                : HouseTemplates.Add((object)seApp, HouseDocumentKind.Draft);
             result.Document = (object)draft;
             dynamic sheet = draft.ActiveSheet;
             double sheetW = (double)sheet.SheetSetup.SheetWidth, sheetH = (double)sheet.SheetSetup.SheetHeight;

@@ -953,7 +953,7 @@ namespace AutoEDM.Electrode
                          $"(origem); XY montagem ({asmX:0.0}, {asmY:0.0}), rotZ={occAz * 180.0 / Math.PI:0.0}° -> " +
                          $"{System.IO.Path.GetFileName(path)}");
 
-                partDoc = app.Documents.Add("SolidEdge.PartDocument");
+                partDoc = HouseTemplates.Add((object)app, HouseDocumentKind.Part);
                 if (detectedRa.HasValue) RaVariableStore.TryWrite(partDoc, detectedRa.Value);
 
                 // A queima entra AGORA, com a peça ainda aberta e sem vínculo de montagem — a rota
@@ -1260,27 +1260,17 @@ namespace AutoEDM.Electrode
 
         /// <summary>
         /// Resolve o template de peça (.par) para o AddByTemplate: usa
-        /// <see cref="ElectrodeParams.TemplatePath"/> se existir; senão pede ao SE o
-        /// template padrão de Part (<c>Application.GetDefaultTemplatePath</c>,
-        /// igPartDocument=1). Lança se não achar — AddByTemplate exige um path válido.
+        /// <see cref="ElectrodeParams.TemplatePath"/> se existir; senão o template da casa
+        /// (<see cref="HouseTemplates"/>) e, sem ele, o padrão de Part da SE. Lança se não
+        /// achar — AddByTemplate exige um path válido.
         /// </summary>
         private static string ResolvePartTemplate(dynamic app, ElectrodeParams p)
         {
             if (!string.IsNullOrWhiteSpace(p.TemplatePath) && System.IO.File.Exists(p.TemplatePath))
                 return p.TemplatePath;
 
-            try
-            {
-                string def = app.GetDefaultTemplatePath(1); // 1 = igPartDocument
-                if (!string.IsNullOrWhiteSpace(def) && System.IO.File.Exists(def))
-                    return def;
-                if (!string.IsNullOrWhiteSpace(def))
-                    Log.Warn($"Template padrão do SE não existe no disco: {def}");
-            }
-            catch (Exception ex)
-            {
-                Log.Warn($"GetDefaultTemplatePath falhou: {ex.Message}");
-            }
+            string template = HouseTemplates.ResolveOrSeDefault((object)app, HouseDocumentKind.Part);
+            if (template != null) return template;
 
             throw new InvalidOperationException(
                 "Não foi possível resolver um template de peça (.par) para o AddByTemplate. " +
