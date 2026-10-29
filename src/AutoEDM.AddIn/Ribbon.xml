@@ -74,9 +74,9 @@
               imageId="1" showLabel="true" />
     </group>
     <group name="Desenho">
-      <button id="30" size="large" label="Desenho 2D"
-              screentip="Desenho 2D automático da PEÇA torneada ativa, cotado pelas cores das faces"
-              supertip="Com a PEÇA torneada aberta, clique. O AutoEDM lê cada face (plano, cilindro, cone, arredondamento), resolve a cor pela tabela da ferramentaria (Verde = ajuste H7/g6, Laranja = vedação ±0,1, Azul = água ±0,2...) e mostra o plano de cotas para você conferir. Confirmando, cria um desenho NOVO no template PanFlight: vista lateral com o eixo na horizontal e a cabeça à esquerda (qualquer que seja o eixo no modelo), vista de topo, isométrica com balão de propriedades, cotas no eixo a partir da referência B, diâmetros, raios, chanfros e ângulos com a tolerância da cor, e o GD&amp;T das faces de precisão (referências A/B, cilindricidade, perpendicularidade, batimento e paralelismo de 0,01). Furos aparecem com arestas ocultas. Toda cota é conferida contra o 3D — a que não bate é apagada e listada. O desenho fica aberto SEM salvar; a peça não é alterada."
+      <button id="30" size="large" label="Des. 2D (Torno)"
+              screentip="Desenho 2D automático da PEÇA torneada ativa, como vista do torno, cotado pelas cores das faces"
+              supertip="Com a PEÇA torneada aberta, clique (se quiser, selecione antes a face plana que será o zero). O AutoEDM lê cada face (plano, cilindro, cone, arredondamento) e resolve a cor pela tabela da ferramentaria (Verde = ajuste H7/g6, Laranja = vedação ±0,1, Azul = água ±0,2...). A janela pede a face ZERO (realçada no modelo) e mostra o plano de cotas para você conferir. Confirmando, cria um desenho NOVO no template PanFlight: vista lateral com o eixo na horizontal e a face zero virada para a DIREITA, como no torno (qualquer que seja o eixo no modelo), vista de topo, isométrica com balão de propriedades, cotas de comprimento a partir da face zero, diâmetros, raios, chanfros e ângulos com a tolerância da cor, e o GD&amp;T das faces de precisão (referências A/B, cilindricidade, perpendicularidade, batimento e paralelismo de 0,01). Furos aparecem com arestas ocultas. Toda cota é conferida contra o 3D — a que não bate é apagada e listada. O desenho fica aberto SEM salvar; a peça não é alterada."
               imageId="9" showLabel="true" />
       <button id="32" size="large" label="Desenho de processo"
               screentip="Peças de processo CDU/CDT vinculadas à original, numa montagem em 02 - PROCESSO"

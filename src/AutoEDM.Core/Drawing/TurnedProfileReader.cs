@@ -214,6 +214,11 @@ namespace AutoEDM.Drawing
                 if (ends.Count == 0) { f.R0 = 0; f.R1 = 0; }
                 else if (ends.Count == 1) { f.R0 = 0; f.R1 = ends[0][1]; }
                 else { f.R0 = ends.Min(e => e[1]); f.R1 = ends.Max(e => e[1]); }
+                if (r.MidNormal != null)
+                {
+                    double along = Dot(r.MidNormal, p.AxisDir);
+                    f.AxialFacing = along > 1e-6 ? 1 : along < -1e-6 ? -1 : 0;
+                }
             }
             else
             {

@@ -29,6 +29,8 @@ namespace AutoEDM.Drawing
         public double HalfAngleDeg { get; set; }
         /// <summary>Normal apontando para FORA do eixo: face de eixo (true) ou de furo (false).</summary>
         public bool External { get; set; } = true;
+        /// <summary>Plano: para que lado do eixo a normal (que sai do material) aponta — +1, −1 ou 0 se ilegível.</summary>
+        public int AxialFacing { get; set; }
         public string StyleName { get; set; }
         public FinishClass Finish { get; set; }
 

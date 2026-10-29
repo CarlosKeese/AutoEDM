@@ -55,8 +55,8 @@ namespace AutoEDM.Mcp
                 case "se_lista_corte": return SawCutList(app, doc);
                 case "se_lista_modificacoes": return ChangeList(doc);
                 case "se_ficha": return SpecSheet(app, doc);
-                case "se_desenho_2d_plano": return TurnedDrawing(app, doc, create: false);
-                case "se_desenho_2d": return TurnedDrawing(app, doc, create: true);
+                case "se_desenho_2d_plano": return TurnedDrawing(app, doc, argsJson, create: false);
+                case "se_desenho_2d": return TurnedDrawing(app, doc, argsJson, create: true);
                 case "se_ordenar_pathfinder_plano": return SortPathFinder(doc, apply: false);
                 case "se_ordenar_pathfinder": return SortPathFinder(doc, apply: true);
                 case "se_criar_base": return CreateBase(app, doc, argsJson);
@@ -409,23 +409,32 @@ namespace AutoEDM.Mcp
             return text;
         }
 
-        private static string TurnedDrawing(dynamic app, dynamic doc, bool create)
+        private static string TurnedDrawing(dynamic app, dynamic doc, string argsJson, bool create)
         {
             TurnedProfile profile = TurnedProfileReader.Read((object)doc, new FinishCatalog());
             if (!profile.IsTurned)
                 return "Esta peça não é torneada — o 'Desenho 2D' por enquanto só cota peças de revolução.\n" +
                        string.Join("\n", profile.Rejected.Take(10).Select(r => "  • " + r));
 
+            // Face zero: a pedida em "face_zero" (Face.ID) ou a ponta oposta à cabeça.
+            List<int> asked = ReadIntList(argsJson, "face_zero");
+            RevolvedFace zero = asked.Count > 0 ? TurnedZeroFace.Find(profile, asked[0]) : TurnedZeroFace.Default(profile);
+            string candidates = "Faces que podem ser a face zero (\"face_zero\" = o número entre colchetes):\n" +
+                                string.Join("\n", TurnedZeroFace.Candidates(profile).Select(f => "  • " + TurnedZeroFace.Describe(profile, f)));
+            if (asked.Count > 0 && zero == null)
+                return $"A face {asked[0]} não é uma face plana desta peça.\n" + candidates;
+
             TurnedDimensionPlan plan = TurnedDimensionPlan.Build(profile);
-            string text = TurnedPlanFormatter.Describe(profile, plan);
-            if (!create) return text;
+            string text = TurnedPlanFormatter.Describe(profile, plan, zero);
+            if (!create) return text + "\n" + candidates;
 
             string path = null;
             try { path = (string)doc.FullName; } catch { }
             if (string.IsNullOrEmpty(path))
                 return "A peça ainda não foi salva — o desenho precisa do arquivo .par para o vínculo. Salve e chame de novo.";
 
-            TurnedDrawingResult res = TurnedDrawingBuilder.Create((object)app, (object)doc, profile, plan, new TurnedDrawingOptions());
+            TurnedDrawingResult res = TurnedDrawingBuilder.Create((object)app, (object)doc, profile, plan,
+                new TurnedDrawingOptions { ZeroFaceId = zero?.Id });
             return res.Summary + "\nO desenho ficou aberto SEM salvar.\n\n" + text;
         }
 

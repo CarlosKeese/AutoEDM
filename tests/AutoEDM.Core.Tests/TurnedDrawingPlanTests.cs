@@ -223,5 +223,57 @@ namespace AutoEDM.Core.Tests
             Assert.Contains("-0,01 / -0,02", text);
             Assert.Contains("2x R4,2", text);
         }
+
+        // ------------------------------------------------------------------ face zero (Des. 2D Torno)
+
+        [Fact]
+        public void ZeroFace_Candidates_AreThePlanes_FromTheTipToTheHead()
+        {
+            // A cabeça (Ø32,2) está no Z máximo: a lista começa pela ponta oposta.
+            Assert.Equal(new[] { 410, 1167, 942, 64, 105, 102 }, TurnedZeroFace.Candidates(Cdt()).Select(f => f.Id).ToArray());
+        }
+
+        [Fact]
+        public void ZeroFace_Default_IsTheTipFace_KeepingTheHeadOnTheLeft()
+        {
+            TurnedProfile p = Cdt();
+            RevolvedFace zero = TurnedZeroFace.Default(p);
+            Assert.Equal(410, zero.Id);
+            Assert.Equal(-1, TurnedZeroFace.Facing(p, zero));   // −eixo para a direita = cabeça à esquerda
+            Assert.StartsWith("Ponta oposta à cabeça", TurnedZeroFace.Describe(p, zero));
+        }
+
+        [Fact]
+        public void ZeroFace_OnTheHead_TurnsThePartAround()
+        {
+            TurnedProfile p = Cdt();
+            Assert.Equal(+1, TurnedZeroFace.Facing(p, TurnedZeroFace.Find(p, 102)));
+        }
+
+        [Fact]
+        public void ZeroFace_Shoulder_FollowsTheNormalReadFromTheModel()
+        {
+            TurnedProfile p = Cdt();
+            RevolvedFace shoulder = TurnedZeroFace.Find(p, 64);
+            Assert.Equal(+1, TurnedZeroFace.Facing(p, shoulder));   // sem normal: a ponta mais perto
+            shoulder.AxialFacing = -1;
+            Assert.Equal(-1, TurnedZeroFace.Facing(p, shoulder));
+            Assert.Contains("virado para a ponta", TurnedZeroFace.Describe(p, shoulder));
+        }
+
+        [Fact]
+        public void ZeroFace_FindRejectsFacesThatAreNotPlanes()
+        {
+            Assert.Null(TurnedZeroFace.Find(Cdt(), 97));
+        }
+
+        [Fact]
+        public void Formatter_MeasuresFromTheZeroFace()
+        {
+            TurnedProfile p = Cdt();
+            string text = TurnedPlanFormatter.Describe(p, TurnedDimensionPlan.Build(p), TurnedZeroFace.Find(p, 102));
+            Assert.Contains("a partir da face zero 102", text);
+            Assert.Contains("53,817", text);   // a outra ponta: 32,907 − (−20,91)
+        }
     }
 }

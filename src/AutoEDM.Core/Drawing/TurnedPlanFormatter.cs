@@ -9,15 +9,18 @@ namespace AutoEDM.Drawing
     {
         private static readonly CultureInfo Br = CultureInfo.GetCultureInfo("pt-BR");
 
-        public static string Describe(TurnedProfile profile, TurnedDimensionPlan plan)
+        /// <param name="zero">Face zero das cotas no eixo (<see cref="TurnedZeroFace"/>); null = a ponta de menor Z.</param>
+        public static string Describe(TurnedProfile profile, TurnedDimensionPlan plan, RevolvedFace zero = null)
         {
             var sb = new StringBuilder();
             sb.AppendLine($"Peça torneada: comprimento {N(profile.Length)} mm, Ø máx {N(2 * profile.RMax)} mm, {profile.Faces.Count} faces.");
 
-            double origin = plan.Stations.Count > 0 ? plan.Stations[0].Z : 0;
-            sb.AppendLine($"Cotas no eixo (a partir da ponta Z={N(origin)}): {plan.Stations.Count}");
-            foreach (AxialStation s in plan.Stations)
-                sb.AppendLine($"  {N(s.Z - origin),8}{Tol(s.Finish, s.External)}{Why(s.Plane == null ? "transição" : "plano", s.Finish)}");
+            double origin = zero?.Z0 ?? (plan.Stations.Count > 0 ? plan.Stations[0].Z : 0);
+            sb.AppendLine(zero != null
+                ? $"Cotas no eixo (a partir da face zero {zero.Id}): {plan.Stations.Count}"
+                : $"Cotas no eixo (a partir da ponta Z={N(origin)}): {plan.Stations.Count}");
+            foreach (AxialStation s in plan.Stations.OrderBy(st => System.Math.Abs(st.Z - origin)))
+                sb.AppendLine($"  {N(System.Math.Abs(s.Z - origin)),8}{Tol(s.Finish, s.External)}{Why(s.Plane == null ? "transição" : "plano", s.Finish)}");
 
             sb.AppendLine($"Diâmetros: {plan.Diameters.Count}");
             foreach (DiameterSpec d in plan.Diameters)

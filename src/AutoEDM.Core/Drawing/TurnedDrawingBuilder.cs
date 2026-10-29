@@ -24,6 +24,12 @@ namespace AutoEDM.Drawing
 
         /// <summary>Diferença aceita entre a cota criada e o valor que o 3D manda (mm).</summary>
         public double CheckToleranceMm { get; set; } = 0.01;
+
+        /// <summary>
+        /// Face.ID da face plana "zero" (<see cref="TurnedZeroFace"/>): as cotas de comprimento partem
+        /// dela e ela fica virada para a direita. Null = <see cref="TurnedZeroFace.Default"/>.
+        /// </summary>
+        public int? ZeroFaceId { get; set; }
     }
 
     public sealed class TurnedDrawingResult
@@ -115,9 +121,17 @@ namespace AutoEDM.Drawing
 
             GdtPlan gdt = GdtPlan.Build(profile);
 
-            // --- vista lateral: eixo na horizontal e a CABEÇA (o Ø maior) à esquerda, como no desenho
-            // à mão — vale para qualquer eixo e posição da peça no modelo.
-            var frame = ViewFrame.For(profile, HeadAtMaxZ(profile));
+            // --- vista lateral: eixo na horizontal e a face ZERO virada para a direita, como a peça
+            // vista do torno — vale para qualquer eixo e posição da peça no modelo. Sem face plana,
+            // a cabeça (o Ø maior) à esquerda, como no desenho à mão.
+            RevolvedFace zero = options.ZeroFaceId.HasValue ? TurnedZeroFace.Find(profile, options.ZeroFaceId.Value) : null;
+            if (options.ZeroFaceId.HasValue && zero == null)
+                result.Failed.Add($"face zero {options.ZeroFaceId}: não é face plana da peça — usada a ponta padrão");
+            zero = zero ?? TurnedZeroFace.Default(profile);
+            var frame = zero != null
+                ? ViewFrame.For(profile, headAtMaxZ: TurnedZeroFace.Facing(profile, zero) < 0)
+                : ViewFrame.For(profile, HeadAtMaxZ(profile));
+            Log.Info(zero != null ? $"Desenho: face zero {zero.Id} em Z={N(zero.Z0)}, virada para a direita." : "Desenho: peça sem face plana — origem pela regra antiga.");
             double sideX = 0.64 * sheetW, sideY = 0.556 * sheetH;   // onde o Carlos pôs a vista lateral
             dynamic views = sheet.DrawingViews;
             dynamic side = views.AddPartView(link, DraftViewFront, scale, sideX, sideY, 0);
@@ -149,9 +163,9 @@ namespace AutoEDM.Drawing
             {
                 // Isométrica deitada, como a do Carlos — no 15142.101-CDT dá (0,577; 0,577; −0,577) / (−0,707; 0; −0,707).
                 dynamic iso = views.AddPartView(link, DraftViewIso, scale, 0.187 * sheetW, 0.184 * sheetH, 0);
-                // Em termos do X local da lateral (que já aponta da cabeça para a ponta): olhar =
+                // Em termos do X local da lateral (que aponta para a face zero): olhar =
                 // vista + cima + X, X local = X − vista. Assim a isométrica acompanha a lateral em
-                // qualquer eixo e com a cabeça de qualquer lado no modelo.
+                // qualquer eixo e com a peça de qualquer lado no modelo.
                 double[] lx = frame.LocalX;
                 double[] iv = Normalize(new[] { frame.View[0] + frame.Up[0] + lx[0], frame.View[1] + frame.Up[1] + lx[1], frame.View[2] + frame.Up[2] + lx[2] });
                 double[] ix = Normalize(new[] { lx[0] - frame.View[0], lx[1] - frame.View[1], lx[2] - frame.View[2] });
@@ -165,7 +179,7 @@ namespace AutoEDM.Drawing
             // --- cotas
             var dims = new DimensionWriter((object)sheet, map, options, result) { EndView = endView, IsoView = isoView, AllFaces = profile.Faces, DatumA = gdt.DatumA };
             dims.CenterLine();
-            dims.Stations(plan, OriginZ(profile, plan, gdt, map));
+            dims.Stations(plan, zero != null ? zero.Z0 : OriginZ(profile, plan, gdt, map));
             dims.Diameters(plan);
             dims.Chamfers(plan);
             dims.Angles(plan);
@@ -266,6 +280,7 @@ namespace AutoEDM.Drawing
         {
             public double[] View, LocalX, Up;
 
+            /// <param name="headAtMaxZ">true = o Z máximo do eixo fica à ESQUERDA (o X local aponta para −eixo).</param>
             public static ViewFrame For(TurnedProfile p, bool headAtMaxZ = true)
             {
                 double[] a = p.AxisDir;
@@ -273,7 +288,7 @@ namespace AutoEDM.Drawing
                 double[][] cands = { new double[] { 1, 0, 0 }, new double[] { 0, 1, 0 }, new double[] { 0, 0, 1 } };
                 double[] e = cands.OrderBy(c => Math.Abs(Dot(c, a))).First();
                 double[] v = Normalize(Sub(e, Mul(a, Dot(e, a))));
-                double[] x = Mul(a, headAtMaxZ ? -1 : 1);   // cabeça à esquerda
+                double[] x = Mul(a, headAtMaxZ ? -1 : 1);   // X local = da esquerda para a direita da vista
                 return new ViewFrame { View = v, LocalX = x, Up = Cross(v, x) };
             }
         }

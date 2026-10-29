@@ -86,6 +86,12 @@ namespace AutoEDM.Mcp
 
         private const string NoArgs = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}";
 
+        private const string FaceZeroArg =
+            "{\"type\":\"object\",\"properties\":{" +
+            "\"face_zero\":{\"type\":\"integer\",\"description\":\"Face.ID da face plana de onde partem as cotas de comprimento " +
+            "(fica virada para a direita). Os números estão no fim de 'se_desenho_2d_plano'. Omitido = a ponta oposta à cabeça.\"}}," +
+            "\"additionalProperties\":false}";
+
         public static readonly IReadOnlyList<ToolSpec> All = new List<ToolSpec>
         {
             // ---------------------------------------------------------------- leitura
@@ -460,21 +466,23 @@ namespace AutoEDM.Mcp
             {
                 Name = "se_desenho_2d_plano",
                 Writes = false,
-                InputSchemaJson = NoArgs,
+                InputSchemaJson = FaceZeroArg,
                 Description =
-                    "SÓ LEITURA. Plano do 'Desenho 2D' para a PEÇA torneada ativa: lê cada face (plano, cilindro, cone, " +
+                    "SÓ LEITURA. Plano do 'Des. 2D (Torno)' para a PEÇA torneada ativa: lê cada face (plano, cilindro, cone, " +
                     "toro) no sistema do eixo, resolve a cor pela tabela da ferramentaria (estilo de face '11 - MED CALIB', " +
-                    "'20 - VEDAÇÃO'... ou o RGB) e lista as cotas que 'se_desenho_2d' criaria — posições no eixo, diâmetros, " +
-                    "raios, chanfros e ângulos — com a tolerância de cada uma — e o GD&T (referências A/B e quadros de 0,01). Recusa peça que não é de revolução. Nada é alterado."
+                    "'20 - VEDAÇÃO'... ou o RGB) e lista as cotas que 'se_desenho_2d' criaria — posições no eixo a partir da face zero, diâmetros, " +
+                    "raios, chanfros e ângulos — com a tolerância de cada uma — e o GD&T (referências A/B e quadros de 0,01). " +
+                    "No fim lista as faces planas que podem ser a face zero, com o número de cada uma. Recusa peça que não é de revolução. Nada é alterado."
             },
             new ToolSpec
             {
                 Name = "se_desenho_2d",
                 Writes = true,
-                InputSchemaJson = NoArgs,
+                InputSchemaJson = FaceZeroArg,
                 Description =
-                    "Botão 'Desenho 2D'. Cria um DESENHO NOVO (.dft, sem salvar) da PEÇA torneada ativa a partir do template " +
-                    "PanFlight: vista lateral com o eixo na horizontal, vista de topo, isométrica e as cotas do plano com a " +
+                    "Botão 'Des. 2D (Torno)'. Cria um DESENHO NOVO (.dft, sem salvar) da PEÇA torneada ativa a partir do template " +
+                    "PanFlight: vista lateral com o eixo na horizontal e a face zero virada para a DIREITA (como no torno), vista de topo, " +
+                    "isométrica e as cotas do plano — as de comprimento partindo da face zero — com a " +
                     "tolerância da cor e o GD&T das faces de precisão. Toda cota é conferida contra o 3D; a que não bate é apagada e relatada. Não altera a peça."
             },
             new ToolSpec

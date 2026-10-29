@@ -642,15 +642,16 @@ namespace AutoEDM.AddIn
         }
 
         /// <summary>
-        /// Botão "Desenho 2D" (ambiente de PEÇA, Carlos, 2026-10-19): desenho 2D automático da peça
-        /// torneada, cotado pelas cores das faces (tabela da ferramentaria). Mostra o plano de cotas
-        /// primeiro — é ele que o Carlos confere antes de gastar o tempo de montar as vistas — e só
-        /// então cria o .dft. O desenho fica aberto e SEM salvar: o nome e a pasta são dele, e nenhum
-        /// .dft que já exista ao lado da peça corre o risco de ser sobrescrito.
+        /// Botão "Des. 2D (Torno)" (ambiente de PEÇA, Carlos, 2026-10-19; face zero em 2026-10-29):
+        /// desenho 2D automático da peça torneada, cotado pelas cores das faces (tabela da ferramentaria).
+        /// A janela pede a face ZERO — as cotas de comprimento partem dela e ela fica virada para a
+        /// direita, como no torno — e mostra o plano de cotas, que o Carlos confere antes de gastar o
+        /// tempo de montar as vistas. O desenho fica aberto e SEM salvar: o nome e a pasta são dele, e
+        /// nenhum .dft que já exista ao lado da peça corre o risco de ser sobrescrito.
         /// </summary>
         private void Desenho2D()
         {
-            const string title = "AutoEDM — Desenho 2D";
+            const string title = "AutoEDM — Des. 2D (Torno)";
             Run(CmdDesenho2D, (connector, doc, p) =>
             {
                 string partPath = null;
@@ -667,7 +668,7 @@ namespace AutoEDM.AddIn
                 if (!profile.IsTurned)
                 {
                     MessageBox.Show(
-                        "Esta peça não é torneada — por enquanto o Desenho 2D só cota peças de revolução (um eixo só)." +
+                        "Esta peça não é torneada — por enquanto o Des. 2D (Torno) só cota peças de revolução (um eixo só)." +
                         Environment.NewLine + Environment.NewLine +
                         string.Join(Environment.NewLine, System.Linq.Enumerable.Take(profile.Rejected, 8)),
                         title, MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -675,12 +676,16 @@ namespace AutoEDM.AddIn
                 }
 
                 AutoEDM.Drawing.TurnedDimensionPlan plan = AutoEDM.Drawing.TurnedDimensionPlan.Build(profile);
-                string planText = AutoEDM.Drawing.TurnedPlanFormatter.Describe(profile, plan);
-                if (MessageBox.Show(planText + Environment.NewLine + "Criar o desenho com estas cotas?", title,
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                AutoEDM.Drawing.RevolvedFace zero;
+                using (var form = new TurnedZeroFaceForm((object)doc, profile, plan))
+                {
+                    if (form.ShowDialog() != DialogResult.OK) return;
+                    zero = form.Zero;
+                }
 
                 AutoEDM.Drawing.TurnedDrawingResult res = AutoEDM.Drawing.TurnedDrawingBuilder.Create(
-                    (object)ElectrodeAddIn.Current.App, (object)doc, profile, plan, new AutoEDM.Drawing.TurnedDrawingOptions());
+                    (object)ElectrodeAddIn.Current.App, (object)doc, profile, plan,
+                    new AutoEDM.Drawing.TurnedDrawingOptions { ZeroFaceId = zero?.Id });
 
                 MessageBox.Show(res.Summary + Environment.NewLine + "O desenho está aberto e AINDA NÃO FOI SALVO.", title,
                     MessageBoxButtons.OK, res.Failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
@@ -1810,7 +1815,7 @@ namespace AutoEDM.AddIn
                 { CmdRefrigeracao,        new CommandSpec("REFRIGERAÇÃO",         DocKind.Part, ModelingEnv.Ordered) },
                 // Desenho 2D: só LÊ a peça e cria um DOCUMENTO NOVO (.dft). Não cria recurso na peça,
                 // então qualquer ambiente serve.
-                { CmdDesenho2D,           new CommandSpec("DESENHO 2D (peça torneada)", DocKind.Part, ModelingEnv.Any) },
+                { CmdDesenho2D,           new CommandSpec("DES. 2D (TORNO)",DocKind.Part, ModelingEnv.Any) },
                 // WEDM: só LÊ as curvas e grava .igs. Síncrono porque é onde o Carlos prepara os perfis.
                 { CmdExportarPerfisWedm,  new CommandSpec("EXPORTAR PERFIS WEDM (IGES por Z)", DocKind.Part, ModelingEnv.Synchronous) },
                 // Cria curva derivada a partir das arestas das superfícies: mesmo ambiente do
