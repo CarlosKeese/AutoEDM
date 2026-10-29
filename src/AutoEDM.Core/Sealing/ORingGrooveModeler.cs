@@ -573,6 +573,15 @@ namespace AutoEDM.Sealing
                     }
                     catch (Exception e) { Log.Warn($"  [extrudado] AddParallelByDistance(face, {offset:0.###}, {side}): " + e.GetBaseException().Message); }
                     if (plane == null) continue;
+                    // O lado pela GEOMETRIA do plano, antes de abrir esboço: esboço de sondagem
+                    // apagado zera a pilha de desfazer da peça (sonda UndoProbe, 2026-10-29).
+                    ProfilePlaneFrame where = ProfilePlaneFrame.OfRefPlane(plane);
+                    if (where != null && !right(where))
+                    {
+                        Log.Info($"  [extrudado] plano do lado {side} caiu fora do início do canal — escondido, sem esboço.");
+                        HideUnused(plane);
+                        continue;
+                    }
                     scope.TrackTempPlane(plane);
                     sketch = TryOpenSketchWhere(doc, scope, plane, true, right);
                     if (sketch != null) { Log.Info($"  [extrudado] esboço num plano paralelo à face, a {offset:0.###} mm (lado {side})."); break; }
@@ -1251,6 +1260,13 @@ namespace AutoEDM.Sealing
                     if (IsDisconnected(e)) return null;
                 }
                 if (plane == null) continue;
+                ProfilePlaneFrame where = ProfilePlaneFrame.OfRefPlane(plane);
+                if (where != null && !where.ContainsLine(axisPointMm, axisDir))
+                {
+                    Log.Warn($"  [plano] o plano normal à aresta (orientação Item({i})) não contém o eixo — escondido, sem esboço.");
+                    HideUnused(plane);
+                    continue;
+                }
                 scope.TrackTempPlane(plane);   // some no fim se o corte não usar
 
                 AxisSketch s = TryOpenSketch(doc, scope, plane, true, axisPointMm, axisDir);
@@ -1297,7 +1313,8 @@ namespace AutoEDM.Sealing
                 dynamic basePlane;
                 try { basePlane = doc.RefPlanes.Item(i); } catch { continue; }
 
-                var frame = FrameOf(doc, scope, basePlane);
+                // Plano base: onde ele está pela geometria; o esboço descartável só se ela não responder.
+                var frame = ProfilePlaneFrame.OfRefPlane((object)basePlane) ?? FrameOf(doc, scope, basePlane);
                 if (frame == null || !frame.IsParallelToLine(axisDir)) continue;
 
                 double d = frame.SignedDistance(axisPointMm);
@@ -1322,6 +1339,13 @@ namespace AutoEDM.Sealing
                     }
                     catch (Exception e) { Log.Warn($"  [plano] AddParallelByDistance(Item({i}), {Math.Abs(d):0.###}, {side}): " + e.GetBaseException().Message); }
                     if (candidate == null) continue;
+                    ProfilePlaneFrame where = ProfilePlaneFrame.OfRefPlane((object)candidate);
+                    if (where != null && !where.ContainsLine(axisPointMm, axisDir))
+                    {
+                        Log.Info($"  [plano] paralelo a RefPlanes.Item({i}) no lado {side} não contém o eixo — escondido, sem esboço.");
+                        HideUnused((object)candidate);
+                        continue;
+                    }
                     scope.TrackTempPlane((object)candidate);   // some no fim se o corte não usar
 
                     var s = TryOpenSketch(doc, scope, candidate, true, axisPointMm, axisDir);
@@ -1381,6 +1405,17 @@ namespace AutoEDM.Sealing
             }
             catch (Exception e) { Log.Warn("  [plano] sondagem falhou: " + e.GetBaseException().Message); return null; }
             finally { if (probe != null) scope.DropProfileSet((object)probe); }
+        }
+
+        /// <summary>
+        /// Plano criado e descartado ANTES de ter esboço: só esconder. Em ordenado o
+        /// <c>Delete()</c> de um plano recém-criado pela API recusa (E_INVALIDARG), e ele some
+        /// sozinho quando o próximo recurso é calculado (sonda UndoProbe, 2026-10-29).
+        /// </summary>
+        private static void HideUnused(object plane)
+        {
+            try { ((dynamic)plane).Visible = false; }
+            catch (Exception e) { Log.Warn("  [plano] plano descartado ficou visível: " + e.GetBaseException().Message); }
         }
 
         private static string Count(dynamic collection)

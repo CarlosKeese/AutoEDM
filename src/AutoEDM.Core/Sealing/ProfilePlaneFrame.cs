@@ -58,6 +58,41 @@ namespace AutoEDM.Sealing
             return frame;
         }
 
+        /// <summary>
+        /// Onde um RefPlane está SEM abrir esboço nele: <c>RefPlane.GetRootPoint</c> e
+        /// <c>GetNormal</c> (1 parâmetro [out] double[3] cada). Só responde ONDE o plano está —
+        /// <see cref="U"/>/<see cref="V"/> ficam nulos; para desenhar, abra o esboço e use
+        /// <see cref="Discover"/>. Devolve null se o Solid Edge não responder — nunca lança.
+        ///
+        /// POR QUE (sonda tools/UndoProbe, 2026-10-29): sondar o plano com um esboço descartável
+        /// e apagá-lo (<c>ProfileSet.Delete()</c>) ZERA a pilha de desfazer da peça — na hora ou
+        /// na próxima criação de plano. O usuário perdia todo o Ctrl+Z a cada canal de O'ring.
+        /// </summary>
+        public static ProfilePlaneFrame OfRefPlane(object refPlane)
+        {
+            double[] root, normal;
+            if (!TryVector(refPlane, "GetRootPoint", out root) || !TryVector(refPlane, "GetNormal", out normal)) return null;
+            normal = Normalize(normal);
+            if (normal == null) return null;
+            return new ProfilePlaneFrame { Origin = new[] { Units.MToMm(root[0]), Units.MToMm(root[1]), Units.MToMm(root[2]) }, Normal = normal };
+        }
+
+        private static bool TryVector(object o, string method, out double[] v)
+        {
+            v = null;
+            try
+            {
+                object[] args = { new double[3] };
+                var mod = new ParameterModifier(1);
+                mod[0] = true; // [out] double[3]
+                o.GetType().InvokeMember(method, BindingFlags.InvokeMethod, null, o, args, new[] { mod }, null, null);
+                var a = (Array)args[0];
+                v = new[] { Convert.ToDouble(a.GetValue(0)), Convert.ToDouble(a.GetValue(1)), Convert.ToDouble(a.GetValue(2)) };
+                return true;
+            }
+            catch (Exception e) { Log.Warn($"  [plano] RefPlane.{method} falhou: " + e.GetBaseException().Message); return false; }
+        }
+
         /// <summary>Distância COM SINAL de um ponto 3D (mm) ao plano, ao longo da normal.</summary>
         public double SignedDistance(double[] pointMm) => Dot(Sub(pointMm, Origin), Normal);
 

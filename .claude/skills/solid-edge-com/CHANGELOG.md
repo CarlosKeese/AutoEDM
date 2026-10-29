@@ -1,5 +1,32 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-10-29 (3) — undo stack, preview by undo, probe sketches
+
+Measured live with AutoEDM `tools/UndoProbe`. `references/api-signatures.md` (new section at the end):
+what each operation does to `UndoTransactionCount()`; deleting an unconsumed sketch, and undo
+transactions (`ISECommandEx`/`ISECommandEx2`, IID and vtable for the hand declaration), EMPTY the undo
+stack; `PartDocument.Undo(n)` with n measured is the working cancel/preview (timings); face proxies die
+after a cut or undo; API reference planes in ordered are not undo steps, refuse `Delete()` and vanish at
+the next feature; `Models.Item(1).Body` → `E_FAIL` on a part made ordered before its first feature.
+`references/errors.md`: "Ctrl+Z does nothing after a command". `SKILL.md`: golden rules "The user's
+undo history".
+
+## 2026-10-29 (2) — the two copies unified
+
+The global copy and the AutoEDM copy had drifted (each had sections the other lacked; no conflicts).
+Merged as a union — the AutoEDM draft text on FCF placement supersedes the shorter global lines — and
+written to both. `SKILL.md` now says every edit goes into both copies, with the `diff` that checks it.
+
+## 2026-10-29 — laser plate blanks: flat DXF from a .par, plate drawings, physical properties
+
+`references/modeling-recipes.md`: rectangle + circle needs `End(1 | 8192)` (confirmed);
+`SaveAsFlatDXFEx` on a plain part gives a clean laser DXF but ONLY on the active document (else an
+empty DXF, no error). `references/draft-properties-events.md`: default placement of `AddLength` /
+`AddDistanceBetweenObjects` dims (inside the outline, opposite edge), `TrackDistance` from k1 in
+absolute sheet axes, dims removed with the model feature, PanFlight title-block mapping, PESO error
+unsolved. `references/api-signatures.md`: `ComputePhysicalPropertiesWithSpecifiedDensity`
+marshaling; `Occurrence.Move` E_FAIL → `PutTransform`.
+
 ## 2026-10-23 (4) — learning a company standard from its template assembly
 
 `references/variables.md`: the three read-only passes (links by Revision Manager, poses by `GetMatrix`,
@@ -39,6 +66,7 @@ of a loaded component returning the same, editable object. New golden rule under
 still go in fine. A face-count success check rejects the good cut, and deleting its ordered profile
 on "failure" breaks the feature and cascades `E_FAIL` across the part. Use `Status` as the
 fallback and never delete a parent sketch of an existing feature.
+
 ## 2026-10-19 — stitch wants bodies; IDispatch arrays for mixed types
 
 `references/edm-electrode.md`: `StitchSurfaces.Add` takes the surfaces' Body objects.

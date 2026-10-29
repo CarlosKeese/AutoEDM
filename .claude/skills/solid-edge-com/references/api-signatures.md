@@ -8,6 +8,7 @@ Verify every numeric value against the dump for your own version before trusting
 - What the live Model actually exposes (163 members)
 - SAFEARRAY marshaling
 - Reference planes, topology-query enums, robust bounding box, assembly mates
+- Undo, "preview", and what silently empties the user's undo stack (end of file)
 
 ## Confirmed facts (SE 2023, v223.00.13.05) — verify against the dump for other versions
 
@@ -554,6 +555,40 @@ localized and the COM name may differ from what the properties dialog shows.
 `<button>` added without bumping it appears in the *wrong group* (SE reuses the cached layout
 and appends the unknown id) — it is not an XML error, and re-registering alone does not fix it.
 
+## Rounds / Chamfers / in-context part (confirmed live 2026-10-21, AutoEDM O'ring, SE 223, ORDERED)
+- **`Model.Rounds.Add(NumberOfEdgeSets, EdgeSetArray, RadiusArray)` works with ONE SET PER EDGE**:
+  `Add(edges.Count, object[] edges, double[] radii /*same length, meters*/)` — accepted on the 1st try
+  with an untyped `object[]` of Edge proxies via `InvokeMember` (EdgeSetArray is VARIANT, not SAFEARRAY(IDispatch)).
+  Status OK, 2 bottom edges of an annular groove rounded R0.25.
+- **`Chamfers.AddEqualSetback` right after that Round → `E_FAIL` with every array form** (count N / 1,
+  object[] / typed `Edge[]`). Cause under test: the edge proxies were read BEFORE the Round, which
+  regenerates the body. Re-read edges from the feature's faces after every feature you add.
+- **Part edited in place (in context of an assembly): `Application.ActiveDocument` IS THE PART**
+  (`Type == 1`, `PartDocument.InPlaceActivated == True`). But scanning `Application.Documents` for an
+  assembly with `InPlaceActivated == True` found NONE — don't rely on the assembly's flag; use
+  `PartDocument.GetInContextAssemblyNameForInterpartLinks` (out BSTR) to name it (result not yet seen live).
+
+## Padronizar a vista salva (miniatura do arquivo) — confirmado 2026-10-22, SE 2023 (223.00.13.05) pt-BR, ao vivo
+
+Uso: regravar a miniatura de `.par`/`.asm` de biblioteca (projeto Catalogos, `SolidEdge/PadronizadorVistas.cs`).
+Sequência que funcionou em peça e montagem (≈1,3–2 s por arquivo, incluindo Open/Save/Close):
+
+```csharp
+dynamic doc = app.Documents.Open(path);           // 1 argumento basta (os outros 5 são [opt])
+dynamic view = app.ActiveWindow.View;
+doc.CoordinateSystems.Visible = false;            // é ISTO o "triedro" que aparece na miniatura
+for (i = 1..doc.RefPlanes.Count) doc.RefPlanes.Item(i).Visible = false;       // peça; montagem: AsmRefPlanes
+doc.PMI.Show = false; doc.PMI.ShowDimensions = false; doc.PMI.ShowAnnotations = false; // peça; na montagem PMI → 0x80004003
+view.RenderModeType = 11;                         // seRenderModeSmoothBoundary (o padrão lido era 10, SmoothVHL)
+view.ApplyNamedView("Iso");  view.Fit();  view.Update();
+doc.Save();  doc.Close(false);                    // o Save regrava a miniatura (conferido pelo IShellItemImageFactory)
+```
+
+- **`ApplyNamedView` aceita os nomes em INGLÊS mesmo no SE em português**: `"Iso"`, `"iso"`, `"Dimetric"`,
+  `"Trimetric"` funcionam; `"Isométrica"`, `"Isometric"`, `"Dimétrica"`, `"Trimétrica"` → `E_INVALIDARG 0x80070057`.
+  (Exceção à regra geral de BSTR localizados de `localization.md`.)
+- Montagem: `doc.RefPlanes` não existe (`0x80131500` RuntimeBinder); use `AsmRefPlanes`.
+
 ## Reading assembly links WITHOUT Solid Edge — Revision Manager (measured 2026-10-23, SE 2023)
 
 To find which sub-assemblies/parts hundreds of assemblies reference (here: which mold base each of 253
@@ -575,3 +610,130 @@ $ls  = [System.__ComObject].InvokeMember("LinkedDocuments",
 - 522 assemblies of a 253-folder mold tree scanned in a few minutes; 3 failures were real missing files
   (`STG_E_FILENOTFOUND`). Paths come back as UNC (`\\server\share\...`) even when opened by drive letter.
 - One `DesMgr.exe` per `New-Object`; kill the ones you started when done.
+
+---
+
+## Physical properties and occurrence moves (SE 2023 v223, 2026-10-29)
+
+- `Model.ComputePhysicalPropertiesWithSpecifiedDensity(density kg/m³, accuracy, ref Volume,
+  ref Area, ref Mass, ref CoG, ref CoV, ref GlobalMoments, ref PrincipalMoments, ref PrincipalAxes,
+  ref RadiiOfGyration, ref RelativeAccuracy, ref Status)` with `dynamic`: scalars must be typed
+  `double`/`int` (`object` → "Could not convert argument 10"), and the arrays must arrive
+  **allocated and typed** — `double[3]` ×2, `double[6]`, `double[3]`, `double[9]`, `double[3]`
+  (`object` → "Could not convert argument 7"). Mass in kg; `part.Save()` keeps it.
+- `Occurrence.Move(dx, dy, dz)` from PowerShell 5.1 late binding → **E_FAIL**; `PutTransform` with
+  the angles from `GetTransform` (radians) does both rotation and translation. Since rotation is
+  about the occurrence origin, rotate first, re-read `GetRangeBox`, then translate the origin by the
+  bbox-centre delta.
+
+## Scale body — `Model.ScaleBodyFeatures.Add` (confirmed live 2026-10-28, SE 2023 v223.00.13.05)
+
+Live `ITypeInfo` of the collection (TKIND_DISPATCH; the object does **not** answer QI for the dual
+`_IScaleBodyFeaturesAuto`, so early binding through the interop throws `TargetException`/`InvalidCast`):
+
+```
+Add(VT_I4 NumberOfBodies, [in] SAFEARRAY(VT_DISPATCH)* BodyArray,
+    VT_R8 dXValue, VT_R8 dYValue, VT_R8 dZValue, [in,optional] VT_DISPATCH RefKeyPoint)
+```
+
+- **The optional `RefKeyPoint` is `VT_DISPATCH`, not VARIANT.** Omitting it sends "param not found"
+  (`VT_ERROR`), which SE cannot coerce: `InvokeMember` → `DISP_E_TYPEMISMATCH (0x80020005)`; `dynamic`
+  → `E_INVALIDARG "Could not convert argument 0"` — the binder counts arguments **from the end**, so
+  "argument 0" was the omitted last one. Pass `new DispatchWrapper(null)` explicitly.
+- `BodyArray`: typed `SolidEdge.Geometry.Interop.Body[]` (interop loaded from the running `Edge.exe`
+  folder), passed **by reference** (`ParameterModifier[1] = true`).
+- Factors are plain multipliers (1.006 = +0.6%), about the part origin when the key point is null.
+- Measured on an ordered part whose body is a part copy: 1.01/1.02/1.03 → exact range ratios
+  1.01000/1.02000/1.03000, `Status` = `igFeatureOK`, `get_NonUniformScale` reads them back,
+  `Name` is writable and shows in the PathFinder (`EdgebarName`). `Delete()` removes it cleanly.
+
+```csharp
+object[] args = [1, bodies /* Body[] */, fx, fy, fz, new DispatchWrapper(null)];
+var byRef = new ParameterModifier(6); byRef[1] = true;
+object feature = coll.GetType().InvokeMember("Add", BindingFlags.InvokeMethod, null, coll, args,
+    [byRef], CultureInfo.InvariantCulture, null);
+```
+
+## Multi-body in an ordered part — separate design bodies (confirmed live 2026-10-28, SE 2023)
+
+Goal: add solids to a part that already has a body WITHOUT uniting them (gate/runner bodies).
+
+- **`Models.AddBody(igPartType=1, name)` then a BASE extrusion `Models.AddFiniteExtrudedProtrusion`**
+  → a new `Model` (Models.Count +1), the existing body untouched (volume identical). `AddBody` alone
+  shows nothing; **without it the base extrusion creates NOTHING** (no body, no union, no error).
+  Re-using an `AddBody` name while that body still exists fails `0x807B003F`; after its extrusion is
+  deleted the name is free again.
+- **`Model.Name` is shared by all bodies of the part** (every body reads "Design Model"; renaming
+  the new one renamed the part's own body). Never identify or rename bodies through it.
+- **`Model.ExtrudedProtrusions` is the WHOLE PART's list, not the body's** — every Model returns
+  the same items. `Item(1)` of the new body is the oldest extrusion of the part. To get the new
+  feature, diff the feature names before/after the `Add`; identify your bodies by the
+  **feature's `Name`** (unique, writable). Deleting the extrusion deletes its body.
+- Collect delete targets first: deleting an extrusion shrinks `Models` mid-loop (`DISP_E_BADINDEX`).
+- **`RefPlanes.AddParallelByDistance(...)` (3 args) makes a LOCAL plane**: `Name` reads null and
+  cannot be used to find it; it is deleted together with the `ProfileSet` that uses it. A plane made
+  on the wrong side and then `Delete()`d may silently stay — pick `NormalSide` right the first time
+  (`Sign(baseNormal[axis]) == Sign(offset)` → igRight) and keep the `GetRootPoint` check as a guard.
+- `RefPlane.GetNormal` / `GetRootPoint`: one `[in,out]` `double[3]` (allocated, by-ref modifier).
+- Draw the profile with `Profile.Convert3DCoordinate` from part coordinates; choose the extrusion
+  side from the profile frame (`Convert2DCoordinate` (0,0),(1,0),(0,1) → normal) — measured exact
+  (gate 67.4 mm³, runner 377.0 mm³, bounding boxes where designed).
+
+## Undo, "preview", and what silently EMPTIES the user's undo stack (measured live 2026-10-29, SE 2023 v223.00.13.05)
+
+Measured by AutoEDM `tools/UndoProbe` on throwaway parts. The API has **no** equivalent of the
+native commands' dynamic feature preview (`Mouse.DynamicsMode` only rubber-bands a line, circle or
+rectangle). A "preview" therefore means building the feature for real and taking it back. Watch the
+stack with `PartDocument.UndoTransactionCount()` (method, 0 args).
+
+| Operation (part document) | Undo stack |
+|---|---|
+| Feature `Add` in ORDERED (extruded protrusion) | +1 per feature |
+| Feature `Add` in SYNCHRONOUS | +3 per feature |
+| Rename a feature / paint a face style | +1 to +2 / +1 |
+| `ProfileSets.Add`, `Profiles.Add`, `RefPlanes.AddParallelByDistance` | 0 (not undo steps) |
+| `ProfileSet.Delete()` of a sketch a feature CONSUMED | no harm |
+| **`ProfileSet.Delete()` of a sketch NO feature consumed** (a probe sketch) | **→ 0**, at once or at the next `RefPlanes.Add…` |
+| **`ISECommandEx.BeginUndoTransaction` … `ISECommandEx2.EndUndoTransaction`** | **→ 0**, and stays 0 |
+
+**The probe-sketch trap.** Minimal repro in ORDERED: `ps = ProfileSets.Add(); ps.Profiles.Add(RefPlanes.Item(1)); ps.Delete();`
+then `RefPlanes.AddParallelByDistance(face, …)` → stack 6 → 6 → **0**. Each call alone is harmless.
+After that, neither `PartDocument.Undo` nor the UI's Ctrl+Z (`StartCommand(57643)` = `PartEditUndo`)
+can go back past it — the user loses the whole history. The AutoEDM O'ring did exactly this on every
+groove: it opened a sketch on a trial parallel plane to learn where the plane landed, deleted it when
+the plane was on the wrong side, then created the other side. **Locate planes from geometry instead:**
+`RefPlane.GetRootPoint` / `GetNormal` (one `[in,out]` `double[3]`, meters, allocated + by-ref
+modifier). On a new part, `RefPlanes.Item(1..3)` read normals (0,0,1), (1,0,0), (0,−1,0) at the
+origin; a plane parallel to the top face (Z 30) at 5 mm reads Z 35 on side 2 and Z 25 on side 1. The
+sign of `GetNormal` may differ from the sketch frame's U×V — compare distances in absolute value or
+test both sides. Only open the sketch on the plane that passed. (AutoEDM: `ProfilePlaneFrame.OfRefPlane`.)
+
+**Transactions — do not use.** `ISECommandEx2` (with `EndUndoTransaction`) is missing from
+Interop.SolidEdge 219; declared by hand it works: IID `{7c4aeeeb-93b0-48f4-b81d-07713327a293}`,
+`InterfaceIsIUnknown`, 9 placeholder slots for `ISECommand` (memid 0x6000xxxx order: Mouse, Window,
+Done get/put, OnEditOwnerChange get/put, OnEnvironmentChange get/put, Start), then
+`BeginUndoTransaction(BSTR)`, `BeginTransparentUndoTransaction(BSTR)`, `EndUndoTransaction()`.
+The `Command` comes from `Application.CreateCommand(seNoDeactivate = 2)` + `Start()`. Both begin
+variants, with or without `Done = true` after the end, left the stack at 0 and the features
+un-undoable.
+
+**What does work, for a Cancel/Preview button:**
+
+- `PartDocument.Undo(object NumTransactions)` with `n = UndoTransactionCount() after − before`:
+  back to the identical feature list and volume. 2 protrusions: 40–90 ms. O'ring groove (cut +
+  round + chamfer, ordered) = 7 steps, `Undo(7)` ≈ 50 ms, three cycles in a row.
+  `AssemblyDocument` has **no** `Undo` method (only `UndoSteps`).
+- Deleting the new features by name: 25–110 ms (≈ 450 ms on a 64-feature part), but it adds steps —
+  a later Ctrl+Z brings the "cancelled" preview back. Fallback only.
+- Cost of one O'ring preview: cut 0.5–0.7 s on a light part, 1.1–1.4 s with 64 features.
+- **Every face proxy read before a cut or an undo is dead afterwards** (`E_FAIL`). Re-read the
+  target each cycle (10–15 ms light, ≈ 740 ms with 64 features).
+
+**Ordered-mode reference planes made by the API:** they are not undo steps, `Delete()` on them throws
+`E_INVALIDARG` ("O valor não recai no intervalo esperado"), and they disappear by themselves when the
+next feature is computed (RefPlanes 9 → 5 after one protrusion). Discard an unused one with
+`Visible = false`.
+
+**New part made ORDERED before its first feature:** `Models.Item(1).Body` → `E_FAIL` after an API
+protrusion (volume and faces unreadable). On a throwaway part, build the body in synchronous and then
+switch to ordered.

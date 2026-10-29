@@ -389,6 +389,23 @@ namespace AutoEDM.Electrode
         /// </summary>
         private static object FindXzPlane(dynamic doc, SketchScope scope)
         {
+            // Pela geometria do plano primeiro: o esboço de sondagem, ao ser apagado, zera a pilha de
+            // desfazer da peça (sonda UndoProbe, 2026-10-29). Ele fica de reserva, se a geometria não responder.
+            bool readable = false;
+            for (int i = 1; i <= 3; i++)
+            {
+                object plane;
+                try { plane = doc.RefPlanes.Item(i); } catch { continue; }
+                ProfilePlaneFrame g = ProfilePlaneFrame.OfRefPlane(plane);
+                if (g == null) continue;
+                readable = true;
+                if (Math.Abs(g.Normal[1]) > 0.999 && Math.Abs(g.SignedDistance(new[] { 0.0, 0.0, 0.0 })) < 0.01)
+                {
+                    Log.Info($"{InterpTag}: plano XZ = RefPlanes.Item({i}).");
+                    return plane;
+                }
+            }
+            if (readable) return null;
             for (int i = 1; i <= 3; i++)
             {
                 object plane;

@@ -97,6 +97,9 @@ Each line is a failure that has actually happened. Follow the pointer for the lo
   **not** roll a failed feature back — `Delete()` it before retrying.
 - **Then MEASURE the geometry.** Status OK is not proof: read the face back
   (`Body.Faces[igQueryCylinder]` + `Geometry.Radius` / `GetRange`).
+- **Some exports act on the ACTIVE document, whatever object you call them on.**
+  `Models.SaveAsFlatDXFEx` on an open-but-not-active part writes a DXF with zero entities, no
+  error. `Activate()` first and read the output file back. → `references/modeling-recipes.md`
 - **A successful `Add` can hand back something you didn't ask for** — flat enum namespaces
   accept any legal-somewhere value, and SE merges the user's saved dialog defaults unless
   you pass `IgnoreSavedDefaultValues`. Note it is a **parameter**, not a property.
@@ -137,6 +140,16 @@ Each line is a failure that has actually happened. Follow the pointer for the lo
   way removed 17 700 mm³ instead of 1 060. Measure the loop's signed area in sketch
   coordinates and reverse if negative.
   → `references/modeling-recipes.md`
+
+**The user's undo history**
+- **A throwaway sketch wipes the user's Ctrl+Z.** `ProfileSet.Delete()` of a sketch no feature
+  consumed empties `UndoTransactionCount()` to 0, silently. Locate a plane with
+  `RefPlane.GetRootPoint`/`GetNormal`, never by probing it with a sketch. Undo transactions
+  (`ISECommandEx.BeginUndoTransaction`) wipe it too — don't use them.
+- **Cancel/preview = `PartDocument.Undo(n)`, n measured** as the change in `UndoTransactionCount()`
+  (1 per ordered feature, 3 per synchronous one). Re-read every face afterwards — the old proxies
+  are dead. Assemblies have no `Undo`.
+  → `references/api-signatures.md` (end of file)
 
 ## The discovery loop, in order
 
@@ -235,3 +248,16 @@ the date and how it was confirmed. Three habits keep these files trustworthy:
   mechanism that was chased for days and turned out wrong. The wrong path earns a
   paragraph precisely because the next reader would otherwise reason their way into it
   again.
+
+**This skill exists in TWO copies that must stay identical.** The SOURCE is
+`U:\Code\AutoEDM\.claude\skills\solid-edge-com` — it is versioned in the AutoEDM git repo, which is how
+the skill is distributed. `%USERPROFILE%\.claude\skills\solid-edge-com` is a local MIRROR so the skill
+works outside AutoEDM and when the network drive U: is offline (that is why it is a copy, not a link).
+Every edit — reference files, `SKILL.md`, `CHANGELOG.md`, scripts — goes into the source first and
+then into the mirror, in the same turn; commit in AutoEDM only when the user asks. Check before
+finishing (empty output = in sync):
+
+```
+diff -rq --strip-trailing-cr -x bin -x obj -x OLD -x '*.skill' -x '*.bak' \
+  /c/Users/carlos.keese/.claude/skills/solid-edge-com /u/Code/AutoEDM/.claude/skills/solid-edge-com
+```

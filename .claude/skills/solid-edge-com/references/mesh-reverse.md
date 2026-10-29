@@ -41,6 +41,23 @@ Body.GetFacetData(Tolerance: Double, [out] FacetCount: Int32, [out] Points: Arra
 - **Metres**, like the rest of the geometry API. Convert once at the boundary.
 - All `[out]`s need `ParameterModifier` by-ref marking, as everywhere else in late binding.
 
+**Confirmed live 2026-10-27 (SE 2026, B-rep part with 20 faces, Mold Calculator `LeitorSolidEdge`):**
+- With `dynamic` and `out object` for the outputs, `GetFacetData` fails with "Could not convert
+  argument 0". That is the LAST argument, because DISPPARAMS are reversed: the typed SAFEARRAY output
+  refuses a VARIANT. What works is `InvokeMember` with `ParameterModifier` by-ref and typed empty arrays:
+  `[tol, 0, new double[0], new double[0], new double[0], new int[0], new int[0]]`. This is the same
+  form as AutoEDM `MeshReader`.
+- The `FaceIDs` returned are **exactly `Face.ID`**. For all 20 faces, the `Face.GetRange` box
+  matched the box of the triangles carrying that id (error < 0.5 mm). So
+  `Body.Faces[1]` filtered by `Face.ID` → `ActiveSelectSet.Add(face)` marks the face of a result, and
+  `SelectSet.Item(k).ID` reads the user's picks back in the same id space.
+- The same rule holds for `MatTable`:
+  - `GetCurrentMaterialName(doc, [out] name)` works by InvokeMember with `""` by-ref. It returns `""`
+    when no material is assigned.
+  - `GetMaterialPropValueFromDoc(doc, 23 /*seDensity*/, [out])` gives DISP_E_BADCALLEE with a `double`
+    output. It works with `null` (a VARIANT) by-ref and returns 0 when there is no material. The unit
+    is not yet confirmed on a part that has a material assigned.
+
 **`Body.Faces` is INACCESSIBLE on a facet body.** The read simply fails. There are no `igMesh`
 faces to enumerate, so there is no pre-existing region to grab — this is the fact that forces
 segmentation to start from the raw soup. Do not design around `Faces` and discover this later.

@@ -353,3 +353,37 @@ values), `WeldmentGlobalConstants` (7), `WeldmentSectionTypeConstants` (4),
 
 Explore with `node scripts/apiq.mjs members StructuralFrame` and
 `node scripts/apiq.mjs enum WeldmentCommandConstants`.
+
+---
+
+# Plate drawings: default dimension placement (SE 2023 v223, 2026-10-29)
+
+Measured building purchase drawings of laser-cut plate blanks (top view + `AddByFold(igFoldDown=2)`
+thickness view + iso) from the PanFlight Draft template. All values checked against the model.
+
+- Top view of a part extruded along +Z: `AddPartView(link, igFrontView=4, …)` then
+  `SetViewOrientation(0,0,1, 1,0,0)` → X right, Y up; `Update()` then `SetOrigin`.
+- `Dimensions.AddLength(dvLine.Reference)` gives the edge length, correct value, no pick point —
+  but the dim is born **INSIDE the outline** (`TrackDistance = 0.006`).
+- `AddCircularDiameter(dvCircle.Reference)` → correct Ø.
+- Hole position: `AddDistanceBetweenObjects(edgeRef, ex,ey,0, false, circleRef, cx,cy,0, true)`
+  (sheet metres, `true` = circle keypoint = centre). The value comes back measured from the
+  **OPPOSITE** parallel edge: asked from the left edge, got `L − x`; from the bottom edge, got
+  `W − y`. Geometrically valid — verify against both `x` and `L − x`.
+- **`TrackDistance` is measured from key point k1, in ABSOLUTE sheet +X/+Y** (not "outward"):
+  dim line = k1 + track along the perpendicular. To put dims outside: length dim
+  `bottom − 0.008 − k1.y`, width dim `left − 0.008 − k1.x`, horizontal hole dim `top + 0.008 − k1.y`,
+  vertical hole dim `right + 0.008 − k1.x`. Re-read k4 to confirm. On a small plate (96×39) the
+  default inside placement made the hole dims collide with the length dim.
+- **Deleting a feature in the model removes its dims**: after the user removed the holes from the
+  parts, `DrawingView.Update()` left only the L/W/T dims — the Ø and position dims were already gone
+  (none dangling to delete).
+- PDF of a saved draft: `draft.Activate(); draft.SaveCopyAs(pdf)` after `SaveAs(dft)` — works.
+
+**PanFlight Draft title block** (`PanFlight Draft.dft`, A3 background by default, 420×297):
+TITULO = part `Título`; Nº Des. = part `ProjectInformation.Document Number`; REV = part
+`Revision`; NOME (file) = part file name; DESENHO = the **draft's** `SummaryInformation` item 3
+(Autor) — defaults to the Windows login, which wraps in the cell, so set it. **PESO keeps showing
+"Erro: Sem referência"** even after `UpdatePropertyTextCacheAndDisplay` and after computing and
+saving the part's mass — it shows in the empty template too; not solved. "SCALE: 1:2" is fixed
+background text (see the scale-text recipe above).

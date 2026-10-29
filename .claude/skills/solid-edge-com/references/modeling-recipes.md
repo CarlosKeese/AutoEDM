@@ -474,3 +474,52 @@ profile, axis, igRight(2), planeSide, angleRad)`. For a full turn `planeSide = 2
 revolve put the sketch at the MIDDLE of the arc and use `planeSide = 3` (symmetric) with the total
 angle — the rotation sense then cannot be wrong. After the feature: hide the `Profile` AND the
 `RefAxis` the call returned (48 chamfers left 48 axis strokes on screen until we did).
+
+**Section of a surface by a plane → revolved body (CONFIRMED LIVE 2026-10-22, SE 223, synchronous part
+with NO solid yet, AutoEDM "Eletrodo de interpolação", tools/InterpolationProbe).**
+- `Constructions.IntersectionCurves.Add(FaceSet1, FaceSet2)` accepts **one `Face` + one `RefPlane`** —
+  that is the only shape that worked. The whole `CopySurface` or its `Body` → `E_INVALIDARG`; any array
+  (`object[]`, typed `Face[]`, `object[]{RefPlane}`) → `DISP_E_TYPEMISMATCH`. Loop the faces, one call
+  each; the curve's `Edges[1]` + `Edge.GetEndPoints` give the section. A plane through the axis of a
+  bore cuts it on BOTH sides: group edges into connected chains and keep the one near your point.
+- `Profile.IncludeEdge(edge)` of those edges works (diff the 2D collections — the out-param is empty).
+- **Tie every joint with `Relations2d.AddKeypoint`**: with coincident but untied endpoints the
+  profile does not close (`End(1|8192) = -103`); tied → `End = 0`. Keypoint indices: line / B-spline
+  0/1, arc / elliptical arc 1/2 (`KeypointIndexConstants`, interop.SolidEdgeConstantLib_DISP).
+- The revolve: `Models.AddFiniteRevolvedProtrusion(1, Profile[], refAxis, igRight=2, 2π)` — the name
+  WITHOUT "Sync" — built the exact body (Ø24 × 10 to 0.001 mm) and the part stayed synchronous.
+  `Models.AddFiniteRevolvedProtrusionSync` gave `E_FAIL` in every variant (axis = profile segment or a
+  separate construction line, both sides). Same story as `Models.AddFiniteExtrudedProtrusion` in sync.
+  The axis can be the profile's own segment on the axis. It returns a `Model` (no `Status`): check
+  `Models.Count` and the body range. The revolve CONSUMES the ProfileSet — a later `Delete()` gives
+  `RPC_E_DISCONNECTED`, so drop it from your cleanup list instead of reporting a stuck sketch.
+- **Transient `Face.ID = 0`**: right after walking `Model.Features[i].Faces` of the source part
+  (`GetStyle` + `Faces`), the first `ID` read of a non-planar face returned 0; the next read gave the
+  real ID. Read IDs BEFORE such walks and never accept 0.
+
+---
+
+## Plate blank with a hole, and its laser DXF (SE 2023 v223, 2026-10-29)
+
+- Rectangle (4 `Lines2d`, corners tied with `Relations2d.AddKeypoint(l[i], 1, l[i+1], 0)`) + an inner
+  `Circles2d` in ONE profile: `End(1)` → **−113**; **`End(1 | 8192)` → 0** (confirmed for a plain
+  rectangle + circle). One `AddFiniteExtrudedProtrusion` then makes the plate with the hole; check
+  `Body.Volume` against L·W·T − ΣπD²/4·T (matched to 0.1 mm³). The returned object is the MODEL —
+  the feature is `model.ExtrudedProtrusions.Item(Count)`.
+- **DXF of the outline from a plain `.par` (no sheet metal needed):**
+  `Models.SaveAsFlatDXFEx(path, topFace, edgeAlongX, vertexAtOrigin, false)`. Pick the face whose
+  `GetRange` has min z = max z = thickness, the edge of that face lying on y = 0, and its vertex at
+  (0,0) (`Vertex.GetPointData(ref double[3])`). Output: mm, 1:1, `LINE`s on layer `OUTER_LOOP`,
+  holes as `CIRCLE` on `INTERIOR_LOOPS` — clean for laser CAM.
+- **`SaveAsFlatDXFEx` only works on the ACTIVE document.** On a part that is open but not active
+  it writes a valid DXF with **zero entities**, no exception. `partDoc.Activate()` first, and
+  verify the file has entities.
+
+**Revolve with an INCLINED axis needs the profile corners tied (CONFIRMED LIVE 2026-10-29, SE 223,
+ordered part, BOM_Manager Check Mold submarine tunnel).** A cone whose axis is parallel to a sketch
+axis revolves fine with four `Lines2d.AddBy2Points` sharing endpoint values (`End` = −103 and the body
+is still built). The SAME cone rotated 40° in the sketch: `Models.AddFiniteRevolvedProtrusion` returns,
+throws nothing, and creates NO body (`Models.Count` unchanged) — with `End(1)` and `End(61)` alike.
+Tying every joint with `profile.Relations2d.AddKeypoint(line[i], 1, line[i+1], 0)` → `End` = 0 and the
+exact volume (73.30 mm³). Extrusions tolerate the untied profile; revolves of inclined sections do not.
+Tie the corners always — it costs nothing — and keep checking `Models.Count` + volume after the call.

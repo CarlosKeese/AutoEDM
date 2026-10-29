@@ -121,6 +121,16 @@ namespace AutoEDM.Mold.Cooling
         private static List<BaseFrame> BaseFrames(dynamic doc)
         {
             var list = new List<BaseFrame>();
+            // Pela geometria do plano (GetRootPoint/GetNormal): o esboço descartável de antes, ao ser
+            // apagado, ZERAVA a pilha de desfazer da peça (sonda UndoProbe, 2026-10-29). Ele fica só
+            // de reserva, se a geometria não responder.
+            for (int i = 1; i <= 3; i++)
+            {
+                ProfilePlaneFrame fr = ProfilePlaneFrame.OfRefPlane(BasePlane(doc, i));
+                if (fr != null) list.Add(new BaseFrame { Index = i, Normal = fr.Normal, Origin = fr.Origin });
+            }
+            if (list.Count == 3) return list;
+            list.Clear();
             using (var scope = new SketchScope(doc, "Refrigeração (planos-base)"))
                 for (int i = 1; i <= 3; i++)
                 {
@@ -180,6 +190,16 @@ namespace AutoEDM.Mold.Cooling
                         object plane = c.Make();
                         if (plane == null) continue;
                         bool isBase = c.IsBase;
+                        // Plano fora da boca do canal descartado pela GEOMETRIA, sem abrir esboço nele:
+                        // esboço apagado zera a pilha de desfazer da peça (sonda UndoProbe, 2026-10-29).
+                        ProfilePlaneFrame where = ProfilePlaneFrame.OfRefPlane(plane);
+                        if (where != null && (Math.Abs(where.SignedDistance(h.EntryMm)) > 0.05 ||
+                                              Math.Abs(ProfilePlaneFrame.Dot(where.Normal, h.DirMm)) < 0.999))
+                        {
+                            Log.Info("  [plano] o plano não está na boca/perpendicular ao canal — descartado sem esboço.");
+                            if (!isBase) { try { ((dynamic)plane).Visible = false; } catch { } }
+                            continue;
+                        }
                         if (!isBase) scope.TrackTempPlane(plane);
 
                         dynamic ps = scope.AddProfileSet();

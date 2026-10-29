@@ -127,6 +127,16 @@ Rule: never copy, open or close documents while the user has a part in in-place 
 Experiment only on throwaway documents you created yourself. When you need to test a fix on the
 user's real geometry, ask first, and do it on the document itself, with their consent.
 
+## Ctrl+Z does nothing after a command; `UndoTransactionCount()` reads 0 (SE 2023, 2026-10-29)
+
+**Cause:** the command deleted a sketch that no feature consumed (`ProfileSet.Delete()` of a probe
+sketch, typically used to find where a new reference plane landed) — in ordered mode that empties the
+document's undo stack, at once or at the next `RefPlanes.Add…`. Wrapping the work in
+`ISECommandEx.BeginUndoTransaction`/`EndUndoTransaction` empties it too. No error is raised.
+**Fix:** locate planes with `RefPlane.GetRootPoint`/`GetNormal` and open a sketch only on the plane
+that passed; discard unused API planes with `Visible = false`; do not use undo transactions. Guard
+with a before/after `UndoTransactionCount()` in a probe. → `api-signatures.md`, "Undo, preview…".
+
 ## In-context part: `Body.Faces` → `E_FAIL`, and "fixing" the false failure breaks the feature (SE 2023, 2026-10-23)
 
 On a part in in-place edit inside its assembly (ordered mode), `Model.Body.Faces(igQueryAll)` threw
