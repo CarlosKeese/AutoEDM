@@ -89,7 +89,24 @@ namespace AutoEDM.AddIn.UI
         private object _kindSuggestedFor;         // face cujo palpite de tipo já foi aplicado
 
         private Label _lblFace, _lblEdge;
-        private Button _btnFace, _btnEdge, _btnCreate, _btnClose, _btnCatalog;
+        private Button _btnFace, _btnEdge, _btnCreate, _btnPreview, _btnClose, _btnCatalog;
+
+        /// <summary>
+        /// Alojamento(s) cortado(s) como PRÉVIA (Carlos, 2026-10-29): quantos passos o corte somou ao
+        /// histórico da peça, a partir de qual contagem, e os IDs da seleção — os proxies da face e
+        /// das arestas morrem no corte e no desfazer, e os IDs voltam iguais depois do Undo (sonda
+        /// tools/UndoProbe --ids). Null = nenhuma prévia no modelo.
+        /// </summary>
+        private sealed class PreviewState
+        {
+            public int Before, Steps, FaceId;
+            public List<int> EdgeIds = new List<int>();
+            public string Summary;
+            // Plano B (peça editada dentro da montagem: o histórico não registra o corte): desfaz
+            // APAGANDO o que entrou no PathFinder. Created != null = este caminho.
+            public List<string> FeaturesBefore, Created;
+        }
+        private PreviewState _preview;
         private ComboBox _cboKind, _cboMotion, _cboElastomer, _cboPressure, _cboSection, _cboRing, _cboFit, _cboSizing;
         private NumericUpDown _numOffset, _numMating, _numBar, _numTol;
         private CheckBox _chkMetric, _chkFinish;
@@ -283,8 +300,11 @@ namespace AutoEDM.AddIn.UI
             _btnCatalog = Button("Abrir catálogo…", 12, y, 130, OpenCatalog);
             _tips.SetToolTip(_btnCatalog, "Abre o arquivo de medidas de anel no bloco de notas. " +
                                           "Cole ali a lista do fornecedor e reabra esta janela.");
+            _btnPreview = Button("Prévia", 192, y, 100, Preview);
+            _tips.SetToolTip(_btnPreview, "Corta o(s) alojamento(s) no modelo para você conferir. Depois: \"Manter\" fica com ele; " +
+                                          "\"Desfazer prévia\" (ou Fechar) desfaz pelo histórico da peça, e a seleção volta.");
             _btnCreate = Button("Criar alojamento", 300, y, 140, Create);
-            _btnCreate.Enabled = false;
+            SetCanCreate(false);
             _btnClose = Button("Fechar", 448, y, 100, (s, e) => Close());
 
             _cboKind.SelectedIndexChanged += (s, e) => { UpdateOffsetUi(); Recompute(); };
@@ -338,6 +358,8 @@ namespace AutoEDM.AddIn.UI
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            // Fechar com a prévia no modelo = Cancelar de um recurso nativo: ela sai.
+            if (_preview != null) UndoPreview(reselect: false);
             StopPicking();
             ClearHighlight(ref _hlFace);
             ClearHighlight(ref _hlEdge);
@@ -462,7 +484,7 @@ namespace AutoEDM.AddIn.UI
             _plans = new List<GroovePlan>();
             ClearHighlight(ref _hlEdge);
             UpdateEdgeLabel();
-            _btnCreate.Enabled = false;
+            SetCanCreate(false);
             StartStep(Step.Edge);
         }
 
@@ -727,7 +749,7 @@ namespace AutoEDM.AddIn.UI
         private void Recompute()
         {
             if (_loading) return;
-            _btnCreate.Enabled = false;
+            SetCanCreate(false);
 
             if (_comFace == null || _comEdges.Count == 0)
             {
@@ -992,7 +1014,7 @@ namespace AutoEDM.AddIn.UI
             double d2 = SectionFor(plan);
             double ideal = ORingGrooveCalculator.IdealInnerDiameter(Kind(), plan.SealingDiameterMm, d2, Motion(), Rubber(), Pressure(),
                 Context(plan, GrooveSizing.Table).MatingDiameterMm);
-            _btnCreate.Enabled = false;
+            SetCanCreate(false);
             Report(
                 plan.Target.Description + "\r\n\r\n" +
                 "Nenhum anel no catálogo para esta seção.\r\n\r\n" +
@@ -1017,7 +1039,7 @@ namespace AutoEDM.AddIn.UI
             }
 
             var ready = _plans.Where(pl => pl.Ready).ToList();
-            _btnCreate.Enabled = ready.Count > 0;
+            SetCanCreate(ready.Count > 0);
             if (_plans.Count == 0) return;
 
             var sb = new System.Text.StringBuilder();
@@ -1092,9 +1114,249 @@ namespace AutoEDM.AddIn.UI
 
         private void Create(object sender, EventArgs e)
         {
+            if (_preview != null) { KeepPreview(); return; }
             var ready = _plans.Where(pl => pl.Ready).ToList();
             if (ready.Count == 0) return;
+            if (!CanCut(ready, confirmOffSpec: true)) return;
 
+            CutOutcome r = CutAll(ready);
+            MessageBox.Show(r.Summary(_chkFinish.Checked), "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK,
+                r.Failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+
+            if (r.Done.Count > 0)
+            {
+                ClearSelection();
+                Report($"{r.Done.Count} alojamento(s) criado(s). Clique na face do próximo.");
+                StartStep(Step.Face);   // já reabre na etapa 1, como um recurso da SE
+            }
+        }
+
+        /// <summary>
+        /// PRÉVIA (Carlos, 2026-10-29: "verificar uma prévia antes de aplicar o recurso", como os
+        /// nativos). A API não tem a prévia dinâmica do SE; então corta de verdade e guarda quantos
+        /// passos o corte somou ao histórico da peça — "Desfazer prévia" é <c>PartDocument.Undo(n)</c>
+        /// com esse n (medido: canal = 7 passos, ~50 ms). Depende de o corte NÃO zerar o histórico
+        /// (esboço de sondagem apagado zerava — corrigido no ORingGrooveModeler).
+        /// </summary>
+        private void Preview(object sender, EventArgs e)
+        {
+            if (_preview != null) { UndoPreview(reselect: true); return; }
+            var ready = _plans.Where(pl => pl.Ready).ToList();
+            if (ready.Count == 0) return;
+            if (!CanCut(ready, confirmOffSpec: false)) return;
+
+            int before = UndoCount();
+            List<string> featuresBefore = PreviewFeatures.Names(Doc());
+            if (before < 0 && featuresBefore == null)
+            {
+                MessageBox.Show("Prévia indisponível neste documento: nem o histórico de desfazer nem a lista de features " +
+                                "são legíveis pela API. Use \"Criar alojamento\".",
+                    "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var state = new PreviewState { Before = before, FaceId = IdOf(_comFace), FeaturesBefore = featuresBefore };
+            state.EdgeIds.AddRange(ready.Select(pl => IdOf(pl.ComEdge)).Where(id => id >= 0));
+
+            CutOutcome r = CutAll(ready);
+            int steps = before < 0 ? 0 : UndoCount() - before;
+            if (r.Done.Count == 0)
+            {
+                // Nada vingou: o que o corte deixou (feature reprovada) sai junto, se der.
+                if (steps > 0) { _preview = new PreviewState { Before = before, Steps = steps, FaceId = state.FaceId, EdgeIds = state.EdgeIds }; UndoPreview(reselect: true); }
+                MessageBox.Show(r.Summary(_chkFinish.Checked), "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (steps <= 0)
+                state.Created = PreviewFeatures.Added(featuresBefore, PreviewFeatures.Names(Doc()));
+            if (steps <= 0 && state.Created.Count > 0)
+                Log.Info($"Alojamento de O'ring: histórico não registrou o corte (antes {before}, depois {before + steps}) — " +
+                         $"a prévia sai apagando {state.Created.Count} feature(s): {string.Join(", ", state.Created)}.");
+            else if (steps <= 0)
+            {
+                Log.Warn($"Alojamento de O'ring: prévia sem passos no histórico (antes {before}, depois {before + steps}) e sem feature nova legível — fica como criado.");
+                MessageBox.Show("O alojamento foi cortado, mas o histórico de desfazer da peça não registrou o corte — a prévia " +
+                                "não pode ser desfeita por aqui. Ele ficou CRIADO; se não servir, apague a feature.\r\n\r\n" + r.Summary(_chkFinish.Checked),
+                    "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ClearSelection();
+                StartStep(Step.Face);
+                return;
+            }
+
+            state.Steps = steps;
+            state.Summary = r.Summary(_chkFinish.Checked);
+            _preview = state;
+            if (state.Created == null) Log.Info($"Alojamento de O'ring: PRÉVIA no modelo — {steps} passo(s) no histórico (de {before}).");
+            // Os realces apontam para proxies que o corte matou.
+            ClearHighlight(ref _hlFace);
+            ClearHighlight(ref _hlEdge);
+            LockForPreview(true);
+            Report("PRÉVIA no modelo — confira.\r\n\"Manter\" fica com ela; \"Desfazer prévia\" (ou Fechar) desfaz e a seleção " +
+                   "volta para você ajustar.\r\n\r\n" + state.Summary);
+        }
+
+        private void KeepPreview()
+        {
+            string summary = _preview.Summary;
+            _preview = null;
+            LockForPreview(false);
+            Log.Info("Alojamento de O'ring: prévia MANTIDA.");
+            ClearSelection();
+            Report(summary + "\r\nMantido. Clique na face do próximo.");
+            StartStep(Step.Face);
+        }
+
+        /// <summary>
+        /// Tira a prévia pelo histórico da peça — só se ele estiver EXATAMENTE onde a prévia o
+        /// deixou: se o usuário fez outra coisa no SE nesse meio-tempo, desfazer n passos levaria o
+        /// trabalho dele junto. Com <paramref name="reselect"/>, a face e as arestas voltam pelos IDs.
+        /// </summary>
+        private bool UndoPreview(bool reselect)
+        {
+            PreviewState p = _preview;
+            _preview = null;
+            if (p == null) return true;
+            if (!IsDisposed) LockForPreview(false);
+            if (p.Created != null) return DeletePreview(p, reselect);
+
+            int now = UndoCount();
+            if (now != p.Before + p.Steps)
+            {
+                Log.Warn($"Alojamento de O'ring: prévia NÃO desfeita — histórico em {now}, a prévia deixou {p.Before + p.Steps}.");
+                MessageBox.Show($"A peça mudou depois da prévia (histórico em {now}; a prévia deixou {p.Before + p.Steps}). " +
+                                "Para não desfazer o que você fez, a prévia NÃO foi desfeita — use Ctrl+Z ou apague o alojamento à mão.",
+                    "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (reselect) { ClearSelection(); StartStep(Step.Face); }
+                return false;
+            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try { Doc().Undo(p.Steps); }
+            catch (Exception ex)
+            {
+                Log.Error("Alojamento de O'ring: Undo da prévia falhou.", ex);
+                MessageBox.Show("Não deu para desfazer a prévia: " + ex.GetBaseException().Message + "\r\nUse Ctrl+Z no Solid Edge.",
+                    "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (reselect) { ClearSelection(); StartStep(Step.Face); }
+                return false;
+            }
+            Log.Info($"Alojamento de O'ring: prévia desfeita — Undo({p.Steps}) em {sw.ElapsedMilliseconds} ms.");
+            if (reselect) Reselect(p);
+            return true;
+        }
+
+        /// <summary>Plano B: tira a prévia apagando as features que ela criou (ver <see cref="PreviewFeatures"/>).</summary>
+        private bool DeletePreview(PreviewState p, bool reselect)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            if (!PreviewFeatures.DeleteCreated(Doc(), p.FeaturesBefore, p.Created, out List<string> left, out string refused))
+            {
+                Log.Warn($"Alojamento de O'ring: prévia NÃO desfeita — {refused}.");
+                MessageBox.Show($"A prévia NÃO foi desfeita: {refused}. Para não apagar o que você fez, nada foi apagado — " +
+                                "apague o alojamento à mão (" + string.Join(", ", p.Created) + ").",
+                    "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (reselect) { ClearSelection(); StartStep(Step.Face); }
+                return false;
+            }
+            if (left.Count > 0)
+            {
+                MessageBox.Show("A prévia foi desfeita em parte; sobrou no PathFinder: " + string.Join(", ", left) + ". Apague à mão.",
+                    "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (reselect) { ClearSelection(); StartStep(Step.Face); }
+                return false;
+            }
+            Log.Info($"Alojamento de O'ring: prévia desfeita apagando {p.Created.Count} feature(s) em {sw.ElapsedMilliseconds} ms.");
+            if (reselect) Reselect(p);
+            return true;
+        }
+
+        /// <summary>Refaz a seleção depois do Undo pelos IDs (os proxies antigos morreram).</summary>
+        private void Reselect(PreviewState p)
+        {
+            object face = null;
+            var edges = new List<object>();
+            try
+            {
+                dynamic faces = Doc().Models.Item(1).Body.Faces[1];   // igQueryAll
+                for (int i = 1; i <= (int)faces.Count && face == null; i++)
+                {
+                    dynamic f = faces.Item(i);
+                    if (IdOf((object)f) == p.FaceId) face = (object)f;
+                }
+                if (face != null)
+                {
+                    dynamic col = ((dynamic)face).Edges;
+                    for (int i = 1; i <= (int)col.Count; i++)
+                    {
+                        object ed = col.Item(i);
+                        if (p.EdgeIds.Contains(IdOf(ed))) edges.Add(ed);
+                    }
+                }
+            }
+            catch (Exception ex) { Log.Warn("Alojamento de O'ring: seleção não refeita depois da prévia — " + ex.GetBaseException().Message); }
+
+            ClearSelection();
+            if (face == null || edges.Count == 0)
+            {
+                Report("Prévia desfeita. A seleção não pôde ser refeita — clique na face de novo.");
+                StartStep(Step.Face);
+                return;
+            }
+            _comFace = face;
+            _kindSuggestedFor = face;   // o tipo que você escolheu fica; não volta para o palpite da geometria
+            Highlight(ref _hlFace, face, Rgb(255, 128, 0), append: false);
+            foreach (object ed in edges)
+            {
+                _comEdges.Add(ed);
+                Highlight(ref _hlEdge, ed, Rgb(0, 176, 80), append: true);
+            }
+            Recompute();
+            UpdateStepUi();
+        }
+
+        /// <summary>Trava os campos enquanto a prévia está no modelo: a seleção dela morreu no corte,
+        /// e mexer num campo recalcularia sobre proxies mortos. Guarda e devolve o estado de cada um.</summary>
+        private void LockForPreview(bool on)
+        {
+            if (on)
+            {
+                _lockedStates.Clear();
+                foreach (Control c in Controls)
+                {
+                    if (c == _btnCreate || c == _btnPreview || c == _btnClose || c == _txtReport) continue;
+                    _lockedStates[c] = c.Enabled;
+                    c.Enabled = false;
+                }
+                _btnCreate.Enabled = _btnPreview.Enabled = true;
+            }
+            else
+            {
+                foreach (var kv in _lockedStates) kv.Key.Enabled = kv.Value;
+                _lockedStates.Clear();
+            }
+            _btnCreate.Text = on ? "Manter" : "Criar alojamento";
+            _btnPreview.Text = on ? "Desfazer prévia" : "Prévia";
+        }
+        private readonly Dictionary<Control, bool> _lockedStates = new Dictionary<Control, bool>();
+
+        private void SetCanCreate(bool on)
+        {
+            _btnCreate.Enabled = on;
+            if (_btnPreview != null) _btnPreview.Enabled = on;
+        }
+
+        private int UndoCount()
+        {
+            try { return (int)Doc().UndoTransactionCount(); } catch { return -1; }
+        }
+
+        private static int IdOf(object o)
+        {
+            try { return (int)((dynamic)o).ID; } catch { return -1; }
+        }
+
+        /// <summary>Ambiente e norma, conferidos antes de cortar (criar ou prévia).</summary>
+        private bool CanCut(List<GroovePlan> ready, bool confirmOffSpec)
+        {
             // AMBIENTE, conferido AQUI e não só no botão da ribbon: esta janela é MODELESS e
             // fica aberta enquanto o usuário mexe no Solid Edge — nada impede que ele troque a
             // peça para síncrono entre abrir a janela e clicar em Criar. Em síncrono o esboço
@@ -1107,12 +1369,13 @@ namespace AutoEDM.AddIn.UI
                     ModelingEnvironment.WrongEnvironmentMessage("Alojamento de O'ring", ModelingEnv.Ordered, env),
                     "AutoEDM — ambiente de modelagem", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Log.Warn($"Alojamento de O'ring: criação recusada — peça em modelagem {ModelingEnvironment.Name(env)}.");
-                return;
+                return false;
             }
 
             // O Carlos pediu AVISAR em vez de recusar: mostra o que está fora e deixa decidir.
+            // Na prévia não pergunta: ela é justamente para olhar, e o relatório já mostra o que está fora.
             var offSpec = ready.Where(pl => !pl.Spec.IsWithinStandard).ToList();
-            if (offSpec.Count > 0)
+            if (confirmOffSpec && offSpec.Count > 0)
             {
                 var lines = offSpec.Select(pl => "• " + pl.EdgeLabel + ": " + string.Join(" / ", pl.Spec.Issues
                     .Where(i => i.Level == GrooveIssueLevel.Error).Select(i => i.Message)));
@@ -1120,16 +1383,57 @@ namespace AutoEDM.AddIn.UI
                     $"{offSpec.Count} de {ready.Count} alojamento(s) estão FORA do que a norma admite:\r\n\r\n\r\n\r\n" +
                     string.Join("\r\n\r\n", lines) + "\r\n\r\n\r\n\r\nCriar assim mesmo?",
                     "AutoEDM — alojamento fora da norma", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-                if (r != DialogResult.Yes) { Log.Info("Alojamento de O'ring: criação cancelada (fora da norma)."); return; }
+                if (r != DialogResult.Yes) { Log.Info("Alojamento de O'ring: criação cancelada (fora da norma)."); return false; }
                 Log.Warn("Alojamento de O'ring: criado FORA DA NORMA a pedido do usuário.");
             }
+            return true;
+        }
 
+        /// <summary>O que um corte deu, aresta por aresta — e o texto que o operador lê.</summary>
+        private sealed class CutOutcome
+        {
+            public readonly List<string> Done = new List<string>(), Failed = new List<string>(), FinishIssues = new List<string>();
+
+            public string Summary(bool finishChecked)
+            {
+                var sb = new System.Text.StringBuilder();
+                if (Done.Count > 0)
+                {
+                    sb.AppendLine($"{Done.Count} alojamento(s) criado(s):");
+                    foreach (var d in Done) sb.AppendLine("  ✓ " + d);
+                }
+                if (Failed.Count > 0)
+                {
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.AppendLine($"{Failed.Count} NÃO foi/foram criado(s):");
+                    foreach (var f in Failed) sb.AppendLine("  ✗ " + f);
+                    sb.AppendLine();
+                    sb.AppendLine("O log traz o passo exato que falhou (%LOCALAPPDATA%\\AutoEDM\\logs).");
+                }
+                if (Done.Count > 0 && !finishChecked)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("Raio do fundo e quebra de canto NÃO cortados (opção desmarcada) — estão no relatório.");
+                }
+                if (FinishIssues.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("Acabamento que faltou (aplique à mão; o canal está certo):");
+                    foreach (var f in FinishIssues) sb.AppendLine("  ! " + f);
+                }
+                return sb.ToString();
+            }
+        }
+
+        private CutOutcome CutAll(List<GroovePlan> ready)
+        {
             // Devolve o mouse à SE ANTES de modelar: o corte cria features, e nenhum comando
             // nosso pode estar ativo enquanto isso.
             StopPicking();
-            var done = new List<string>();
-            var failed = new List<string>();
-            var finishIssues = new List<string>();
+            var outcome = new CutOutcome();
+            var done = outcome.Done;
+            var failed = outcome.Failed;
+            var finishIssues = outcome.FinishIssues;
             try
             {
                 Log.Info($"===== ALOJAMENTO DE O'RING ({ready.Count} aresta(s)) =====");
@@ -1162,41 +1466,7 @@ namespace AutoEDM.AddIn.UI
                 Enabled = true;
                 Log.Info($"===== FIM (ALOJAMENTO DE O'RING) — {done.Count} criado(s), {failed.Count} falha(s) =====");
             }
-
-            var sb = new System.Text.StringBuilder();
-            if (done.Count > 0)
-            {
-                sb.AppendLine($"{done.Count} alojamento(s) criado(s):");
-                foreach (var d in done) sb.AppendLine("  ✓ " + d);
-            }
-            if (failed.Count > 0)
-            {
-                if (sb.Length > 0) sb.AppendLine();
-                sb.AppendLine($"{failed.Count} NÃO foi/foram criado(s):");
-                foreach (var f in failed) sb.AppendLine("  ✗ " + f);
-                sb.AppendLine();
-                sb.AppendLine("O log traz o passo exato que falhou (%LOCALAPPDATA%\\AutoEDM\\logs).");
-            }
-            if (done.Count > 0 && !_chkFinish.Checked)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Raio do fundo e quebra de canto NÃO cortados (opção desmarcada) — estão no relatório.");
-            }
-            if (finishIssues.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Acabamento que faltou (aplique à mão; o canal está certo):");
-                foreach (var f in finishIssues) sb.AppendLine("  ! " + f);
-            }
-            MessageBox.Show(sb.ToString(), "AutoEDM — Alojamento de O'ring", MessageBoxButtons.OK,
-                failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-
-            if (done.Count > 0)
-            {
-                ClearSelection();
-                Report($"{done.Count} alojamento(s) criado(s). Clique na face do próximo.");
-                StartStep(Step.Face);   // já reabre na etapa 1, como um recurso da SE
-            }
+            return outcome;
         }
 
         private void ClearSelection()
@@ -1209,7 +1479,7 @@ namespace AutoEDM.AddIn.UI
             ClearHighlight(ref _hlEdge);
             Warn(_lblFace, "— nenhuma face selecionada —");
             Warn(_lblEdge, "— nenhuma aresta selecionada —");
-            _btnCreate.Enabled = false;
+            SetCanCreate(false);
         }
 
         /// <summary>Liga/desliga os anéis métricos: troca o catálogo da escolha e refaz a lista de

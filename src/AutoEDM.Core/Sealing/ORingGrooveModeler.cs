@@ -765,9 +765,10 @@ namespace AutoEDM.Sealing
         /// selecionado ao vivo, 2026-09-21). O que resolveu, ao vivo no mesmo dia, foi
         /// <c>ShowDimensions = false</c> na feature; <c>feature.Profile</c> veio nulo e
         /// <c>GetProfiles</c> deu DISP_E_TYPEMISMATCH — ficam como tentativa, sem custo.
-        /// Cosmético: falha só no log.
+        /// Cosmético: falha só no log. Também usado pelos furos da refrigeração (Carlos, 2026-10-30:
+        /// os esboços dos furos ficavam na tela depois de concluir).
         /// </summary>
-        private static void HideFeatureSketch(object feature)
+        internal static void HideFeatureSketch(object feature)
         {
             var profiles = new List<object>();
             object single = Prop(feature, "Profile");

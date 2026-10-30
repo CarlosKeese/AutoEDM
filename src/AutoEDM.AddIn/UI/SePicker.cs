@@ -57,6 +57,18 @@ namespace AutoEDM.AddIn.UI
         /// <c>VisibleFacePicker.TryScreenToModel</c>).</summary>
         public System.Drawing.Point LastScreenPoint { get; private set; }
 
+        /// <summary>
+        /// Mouse passou sobre a janela de modelo (argumento: a janela, que tem a câmera). Só com
+        /// <see cref="TrackHover"/> ligado. Chega DENTRO do callback da SE e muitas vezes por
+        /// segundo: quem recebe deve só anotar e adiar o trabalho (destaque ao passar o mouse,
+        /// Carlos 2026-10-30).
+        /// </summary>
+        public event Action<object> Hovered;
+
+        /// <summary>Pede à SE os eventos de movimento (<c>Mouse.EnabledMove</c>). Vale a partir
+        /// do próximo <see cref="Start(string, seLocateFilterConstants[])"/>.</summary>
+        public bool TrackHover { get; set; }
+
         private readonly SolidEdgeFramework.Application _app;
         private SolidEdgeFramework.Command _cmd;
         private SolidEdgeFramework.Mouse _mouse;
@@ -64,9 +76,11 @@ namespace AutoEDM.AddIn.UI
         // Os delegates PRECISAM ficar em campo: são eles que a gente descadastra no Stop().
         // Sem isso o sink continua pendurado no ponto de conexão da SE depois do comando morrer.
         private SolidEdgeFramework.DISEMouseEvents_MouseClickEventHandler _onClick;
+        private SolidEdgeFramework.DISEMouseEvents_MouseMoveEventHandler _onMove;
         private SolidEdgeFramework.DISECommandEvents_TerminateEventHandler _onTerminate;
 
         private bool _stopping;
+        private bool _moveLogged;           // 1º MouseMove vai para o log: prova que a SE entrega
 
         public SePicker(SolidEdgeFramework.Application app)
         {
@@ -122,12 +136,19 @@ namespace AutoEDM.AddIn.UI
 
                 _onClick = OnMouseClick;
                 ((SolidEdgeFramework.DISEMouseEvents_Event)_mouse).MouseClick += _onClick;
+                if (TrackHover)
+                {
+                    TrySet("EnabledMove", () => _mouse.EnabledMove = true);
+                    _onMove = OnMouseMove;
+                    ((SolidEdgeFramework.DISEMouseEvents_Event)_mouse).MouseMove += _onMove;
+                }
 
                 SetStatus(prompt);
                 Running = true;
-                Log.Info(string.Format("[picker] etapa iniciada — filtros: {0}; WindowTypes={1}, LocateMode={2}.",
+                Log.Info(string.Format("[picker] etapa iniciada — filtros: {0}; WindowTypes={1}, LocateMode={2}{3}.",
                     string.Join(", ", Array.ConvertAll(filters, f => f.ToString())),
-                    Read(() => _mouse.WindowTypes), Read(() => _mouse.LocateMode)));
+                    Read(() => _mouse.WindowTypes), Read(() => _mouse.LocateMode),
+                    TrackHover ? ", movimento ligado" : ""));
                 return true;
             }
             catch (Exception e)
@@ -149,9 +170,12 @@ namespace AutoEDM.AddIn.UI
 
                 if (_mouse != null && _onClick != null)
                     try { ((SolidEdgeFramework.DISEMouseEvents_Event)_mouse).MouseClick -= _onClick; } catch { }
+                if (_mouse != null && _onMove != null)
+                    try { ((SolidEdgeFramework.DISEMouseEvents_Event)_mouse).MouseMove -= _onMove; } catch { }
                 if (_cmd != null && _onTerminate != null)
                     try { ((SolidEdgeFramework.DISECommandEvents_Event)_cmd).Terminate -= _onTerminate; } catch { }
                 _onClick = null;
+                _onMove = null;
                 _onTerminate = null;
 
                 // Limpar o filtro antes de encerrar: se por algum motivo o comando sobreviver
@@ -200,6 +224,17 @@ namespace AutoEDM.AddIn.UI
             Running = false;
             try { handler(graphic); }
             catch (Exception e) { Log.Error("[picker] erro tratando a seleção.", e); }
+        }
+
+        private void OnMouseMove(short button, short shift, double x, double y, double z,
+            object window, int keyPointType, object graphic)
+        {
+            if (!Running) return;
+            if (!_moveLogged) { _moveLogged = true; Log.Info("[picker] a SE entrega MouseMove ao comando."); }
+            var handler = Hovered;
+            if (handler == null) return;
+            try { handler(window); }
+            catch (Exception e) { Log.Error("[picker] erro no movimento do mouse.", e); }
         }
 
         private void OnTerminate()

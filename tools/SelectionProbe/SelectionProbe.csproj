@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sonda da SELEÇÃO (destaque ao passar o mouse, Carlos 2026-10-29): console que se ANEXA à Solid Edge
+    aberta, assume o mouse com um comando próprio e só cria realce — não altera o modelo.
+    Fora do AutoEDM.sln de propósito.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>AutoEDM.Tools.SelectionProbe</RootNamespace>
+    <AssemblyName>SelectionProbe</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <!-- x64 obrigatório: um build 32 bits simplesmente não conecta na SE. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AutoEDM.Core\AutoEDM.Core.csproj" />
+  </ItemGroup>
+
+</Project>

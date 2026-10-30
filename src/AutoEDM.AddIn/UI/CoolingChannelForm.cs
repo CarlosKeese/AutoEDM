@@ -37,7 +37,24 @@ namespace AutoEDM.AddIn.UI
         private bool _picking, _loading;
         private object _highlight;
 
-        private Button _btnPick, _btnAll, _btnClear, _btnCreate, _btnClose;
+        private Button _btnPick, _btnAll, _btnClear, _btnCreate, _btnPreview, _btnClose;
+
+        /// <summary>
+        /// Furos feitos como PRÉVIA (Carlos, 2026-10-29): de que contagem do histórico da peça ela
+        /// partiu e quantos passos somou — "Desfazer prévia" é <c>PartDocument.Undo(n)</c>. As linhas
+        /// clicadas morrem a cada furo; voltam pelas pontas (<see cref="CoolingLineReader.FindEdge"/>).
+        /// </summary>
+        private sealed class PreviewState
+        {
+            public int Before, Steps;
+            public List<double[][]> LineEnds = new List<double[][]>();
+            public string Summary;
+            // Plano B (histórico zerado: peça dentro da montagem, furo refeito do outro lado):
+            // desfaz APAGANDO o que entrou no PathFinder. Created != null = este caminho.
+            public List<string> FeaturesBefore, Created;
+        }
+        private PreviewState _preview;
+        private readonly Dictionary<Control, bool> _lockedStates = new Dictionary<Control, bool>();
         private ComboBox _cboDia, _cboFitting, _cboPlug;
         private NumericUpDown _numOvershoot;
         private CheckBox _chkAutoOvershoot;
@@ -126,6 +143,10 @@ namespace AutoEDM.AddIn.UI
             });
             y += 178;
 
+            _btnPreview = Button("Prévia", 210, y, 100, (s, e) => Preview());
+            _tips.SetToolTip(_btnPreview, "Fura no modelo para você conferir. Depois: \"Manter\" fica com os furos; " +
+                                          "\"Desfazer prévia\" (ou Fechar) desfaz pelo histórico da peça, e as linhas voltam.");
+            _btnPreview.Enabled = false;
             _btnCreate = Button("Criar canais", 318, y, 110, (s, e) => Create());
             _btnClose = Button("Fechar", 436, y, 92, (s, e) => Close());
 
@@ -189,6 +210,8 @@ namespace AutoEDM.AddIn.UI
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            // Fechar com a prévia no modelo = Cancelar de um recurso nativo: ela sai.
+            if (_preview != null) UndoPreview(reselect: false);
             StopPicking();
             ClearHighlight();
             if (_picker != null) { _picker.Dispose(); _picker = null; }
@@ -324,7 +347,7 @@ namespace AutoEDM.AddIn.UI
             finally { Cursor = Cursors.Default; }
 
             FillGrid();
-            _btnCreate.Enabled = _plan.Holes.Count > 0;
+            _btnCreate.Enabled = _btnPreview.Enabled = _plan.Holes.Count > 0;
             if (_lines.Count == 0)
                 Report("Nenhuma linha ainda. Clique nas linhas do esboço 3D, ou use \"Todas do esboço 3D\"." +
                        (warnings.Count > 0 ? "\r\n" + string.Join("\r\n", warnings) : ""));
@@ -366,38 +389,226 @@ namespace AutoEDM.AddIn.UI
 
         private void Create()
         {
-            if (_plan == null || _plan.Holes.Count == 0) return;
+            if (_preview != null) { KeepPreview(); return; }
+            if (!CanDrill(confirmProblems: true)) return;
+            CoolingResult res = Drill("criar");
+            if (res == null) return;
+            Report(Summary(res) + "\r\nConfira na árvore (cada furo tem o nome do canal ou da rosca). A peça NÃO foi salva.");
+            ClearHighlight();
+        }
+
+        private bool CanDrill(bool confirmProblems)
+        {
+            if (_plan == null || _plan.Holes.Count == 0) return false;
             StopPicking();
 
             dynamic doc = Doc();
             int type = -1; try { type = (int)doc.Type; } catch { }
-            if (type != 1) { Report("O documento ativo não é mais a PEÇA. Volte para a peça e clique em \"Criar canais\"."); return; }
-            if (_plan.Problems.Count > 0 &&
+            if (type != 1) { Report("O documento ativo não é mais a PEÇA. Volte para a peça e clique em \"Criar canais\"."); return false; }
+            if (confirmProblems && _plan.Problems.Count > 0 &&
                 MessageBox.Show(this, $"O plano tem {_plan.Problems.Count} problema(s) — essas passadas NÃO vão virar furo.\n\nCriar o resto assim mesmo?",
                     "AutoEDM — Refrigeração", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                return;
+                return false;
+            return true;
+        }
 
-            CoolingResult res;
+        /// <summary>Faz os furos do plano; null (com o motivo no relatório) se a criação estourou.</summary>
+        private CoolingResult Drill(string what)
+        {
             Cursor = Cursors.WaitCursor;
             try
             {
-                Log.Info("===== REFRIGERAÇÃO: criar =====\n" + CoolingService.Describe(_lines, _plan, Options()));
-                res = CoolingChannelModeler.Create(_app, _lines, _plan, Options());
+                Log.Info($"===== REFRIGERAÇÃO: {what} =====\n" + CoolingService.Describe(_lines, _plan, Options()));
+                return CoolingChannelModeler.Create(_app, _lines, _plan, Options());
             }
             catch (Exception e)
             {
                 Log.Error("Refrigeração: falha ao criar.", e);
                 Report("Não foi possível criar os canais. Detalhes no log:\r\n" + ElectrodeAddIn.Current?.LogPath);
-                return;
+                return null;
             }
             finally { Cursor = Cursors.Default; }
+        }
 
+        private string Summary(CoolingResult res)
+        {
             var lines = new List<string> { $"{res.Created} de {_plan.Holes.Count} furo(s) criado(s)." };
             lines.AddRange(res.Failed.Select(f => "FALHOU: " + f));
             lines.AddRange(res.Warnings.Select(w => "AVISO: " + w));
-            lines.Add("Confira na árvore (cada furo tem o nome do canal ou da rosca). A peça NÃO foi salva.");
-            Report(string.Join("\r\n", lines));
-            ClearHighlight();
+            return string.Join("\r\n", lines);
+        }
+
+        // ------------------------------------------------------------------ prévia
+
+        /// <summary>
+        /// PRÉVIA (Carlos, 2026-10-29): a API não tem a prévia dinâmica dos recursos nativos; fura de
+        /// verdade e guarda quantos passos os furos somaram ao histórico — "Desfazer prévia" é
+        /// <c>PartDocument.Undo(n)</c>. Depende de a criação NÃO zerar o histórico (a sondagem dos
+        /// planos-base com esboço zerava — corrigido no CoolingChannelModeler). Um furo refeito do
+        /// outro lado ainda apaga o esboço dele e zera o histórico: aí a prévia fica como criada.
+        /// </summary>
+        private void Preview()
+        {
+            if (_preview != null) { UndoPreview(reselect: true); return; }
+            if (!CanDrill(confirmProblems: false)) return;
+
+            int before = UndoCount();
+            List<string> featuresBefore = PreviewFeatures.Names(Doc());
+            if (before < 0 && featuresBefore == null)
+            {
+                Report("Prévia indisponível: nem o histórico de desfazer nem a lista de features desta peça são legíveis pela API. Use \"Criar canais\".");
+                return;
+            }
+            var state = new PreviewState { Before = before, FeaturesBefore = featuresBefore };
+            foreach (CoolingLine l in _lines) state.LineEnds.Add(new[] { l.StartMm, l.EndMm });
+
+            CoolingResult res = Drill("prévia");
+            if (res == null) return;
+            int steps = before < 0 ? 0 : UndoCount() - before;
+            if (res.Created == 0)
+            {
+                if (steps > 0) { state.Steps = steps; _preview = state; UndoPreview(reselect: true); }
+                Report("Prévia: nenhum furo saiu.\r\n" + Summary(res));
+                return;
+            }
+            if (steps <= 0)
+                state.Created = PreviewFeatures.Added(featuresBefore, PreviewFeatures.Names(Doc()));
+            if (steps <= 0 && state.Created.Count > 0)
+                Log.Info($"Refrigeração: histórico não registrou os furos (antes {before}, depois {before + steps}) — " +
+                         $"a prévia sai apagando {state.Created.Count} feature(s): {string.Join(", ", state.Created)}.");
+            else if (steps <= 0)
+            {
+                Log.Warn($"Refrigeração: prévia sem passos no histórico (antes {before}, depois {before + steps}) e sem feature nova legível — fica como criada.");
+                Report("Os furos foram feitos, mas nem o histórico de desfazer nem a lista de features registraram a mudança — " +
+                       "a prévia NÃO pode ser desfeita por aqui e ficou CRIADA. Se não servir, apague os furos.\r\n\r\n" + Summary(res));
+                ClearHighlight();
+                return;
+            }
+
+            state.Steps = steps;
+            state.Summary = Summary(res);
+            _preview = state;
+            if (state.Created == null) Log.Info($"Refrigeração: PRÉVIA no modelo — {steps} passo(s) no histórico (de {before}).");
+            ClearHighlight();   // as linhas realçadas morreram com os furos
+            LockForPreview(true);
+            Report("PRÉVIA no modelo — confira.\r\n\"Manter\" fica com os furos; \"Desfazer prévia\" (ou Fechar) desfaz e as " +
+                   "linhas voltam para você ajustar.\r\n\r\n" + state.Summary);
+        }
+
+        private void KeepPreview()
+        {
+            string summary = _preview.Summary;
+            _preview = null;
+            LockForPreview(false);
+            Log.Info("Refrigeração: prévia MANTIDA.");
+            _picked.Clear();
+            Report(summary + "\r\nMantido. Confira na árvore (cada furo tem o nome do canal ou da rosca). A peça NÃO foi salva.");
+        }
+
+        /// <summary>
+        /// Tira a prévia pelo histórico — só se ele estiver EXATAMENTE onde a prévia o deixou (senão
+        /// desfaria trabalho do usuário). Com <paramref name="reselect"/>, as linhas voltam e o plano é refeito.
+        /// </summary>
+        private bool UndoPreview(bool reselect)
+        {
+            PreviewState p = _preview;
+            _preview = null;
+            if (p == null) return true;
+            if (!IsDisposed) LockForPreview(false);
+            if (p.Created != null) return DeletePreview(p, reselect);
+
+            int now = UndoCount();
+            if (now != p.Before + p.Steps)
+            {
+                Log.Warn($"Refrigeração: prévia NÃO desfeita — histórico em {now}, a prévia deixou {p.Before + p.Steps}.");
+                MessageBox.Show($"A peça mudou depois da prévia (histórico em {now}; a prévia deixou {p.Before + p.Steps}). " +
+                                "Para não desfazer o que você fez, a prévia NÃO foi desfeita — use Ctrl+Z ou apague os furos à mão.",
+                    "AutoEDM — Refrigeração", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try { Doc().Undo(p.Steps); }
+            catch (Exception ex)
+            {
+                Log.Error("Refrigeração: Undo da prévia falhou.", ex);
+                MessageBox.Show("Não deu para desfazer a prévia: " + ex.GetBaseException().Message + "\r\nUse Ctrl+Z no Solid Edge.",
+                    "AutoEDM — Refrigeração", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            Log.Info($"Refrigeração: prévia desfeita — Undo({p.Steps}) em {sw.ElapsedMilliseconds} ms.");
+            if (reselect) Reselect(p);
+            return true;
+        }
+
+        /// <summary>Plano B: tira a prévia apagando as features que ela criou (ver <see cref="PreviewFeatures"/>).</summary>
+        private bool DeletePreview(PreviewState p, bool reselect)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            if (!PreviewFeatures.DeleteCreated(Doc(), p.FeaturesBefore, p.Created, out List<string> left, out string refused))
+            {
+                Log.Warn($"Refrigeração: prévia NÃO desfeita — {refused}.");
+                MessageBox.Show($"A prévia NÃO foi desfeita: {refused}. Para não apagar o que você fez, nada foi apagado — " +
+                                "apague os furos à mão (" + string.Join(", ", p.Created) + ").",
+                    "AutoEDM — Refrigeração", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            if (left.Count > 0)
+            {
+                MessageBox.Show("A prévia foi desfeita em parte; sobrou no PathFinder: " + string.Join(", ", left) + ". Apague à mão.",
+                    "AutoEDM — Refrigeração", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            Log.Info($"Refrigeração: prévia desfeita apagando {p.Created.Count} feature(s) em {sw.ElapsedMilliseconds} ms.");
+            if (reselect) Reselect(p);
+            return true;
+        }
+
+        private void Reselect(PreviewState p)
+        {
+            // Linhas clicadas: as arestas antigas morreram; voltam pelas pontas. Com "todas do esboço
+            // 3D" o Recompute já relê tudo do documento.
+            if (!_allLines)
+            {
+                _picked.Clear();
+                dynamic doc = Doc();
+                foreach (double[][] ends in p.LineEnds)
+                {
+                    object edge = null;
+                    try { edge = CoolingLineReader.FindEdge(doc, ends[0], ends[1]); } catch { }
+                    if (edge != null) _picked.Add(edge);
+                }
+                if (_picked.Count < p.LineEnds.Count)
+                    Log.Warn($"Refrigeração: {p.LineEnds.Count - _picked.Count} linha(s) não reencontrada(s) depois da prévia.");
+            }
+            Recompute();
+            RebuildHighlight();
+        }
+
+        private void LockForPreview(bool on)
+        {
+            if (on)
+            {
+                _lockedStates.Clear();
+                foreach (Control c in Controls)
+                {
+                    if (c == _btnCreate || c == _btnPreview || c == _btnClose || c == _txtReport) continue;
+                    _lockedStates[c] = c.Enabled;
+                    c.Enabled = false;
+                }
+                _btnCreate.Enabled = _btnPreview.Enabled = true;
+            }
+            else
+            {
+                foreach (var kv in _lockedStates) kv.Key.Enabled = kv.Value;
+                _lockedStates.Clear();
+            }
+            _btnCreate.Text = on ? "Manter" : "Criar canais";
+            _btnPreview.Text = on ? "Desfazer prévia" : "Prévia";
+        }
+
+        private int UndoCount()
+        {
+            try { return (int)Doc().UndoTransactionCount(); } catch { return -1; }
         }
 
         // ------------------------------------------------------------------ realce

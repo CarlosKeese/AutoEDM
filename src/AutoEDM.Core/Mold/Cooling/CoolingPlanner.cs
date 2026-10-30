@@ -143,11 +143,15 @@ namespace AutoEDM.Mold.Cooling
                     DiameterMm = opt.DiameterMm,
                     DrillPoint = point,
                     Extended = extended,
+                    ExtensionMm = extended ? extension : 0,
+                    FarLineIndex = far.Line.Index,
+                    FarAtLineStart = far.AtLineStart,
+                    FarBeyondMm = depth - length,
                 });
 
                 // ---- roscas coaxiais nas bocas que pedem
-                AddThread(plan, entry.Key, entryTerm, entryPoint, dir, length, opt);
-                if (far.AtFace) AddThread(plan, far.Key, farTerm, far.Drawn, Vec.Scale(dir, -1), length, opt);
+                AddThread(plan, entry, extended ? extension : 0, entryTerm, entryPoint, dir, length, opt);
+                if (far.AtFace) AddThread(plan, far, 0, farTerm, far.Drawn, Vec.Scale(dir, -1), length, opt);
             }
 
             plan.FreeEnds.Sort((a, b) => a.LineIndex != b.LineIndex ? a.LineIndex.CompareTo(b.LineIndex) : (a.AtStart ? 0 : 1).CompareTo(b.AtStart ? 0 : 1));
@@ -202,8 +206,9 @@ namespace AutoEDM.Mold.Cooling
             });
         }
 
-        private static void AddThread(CoolingPlan plan, string key, CoolingTerminal t, double[] p, double[] inward, double runLength, CoolingOptions opt)
+        private static void AddThread(CoolingPlan plan, EndInfo mouth, double extension, CoolingTerminal t, double[] p, double[] inward, double runLength, CoolingOptions opt)
         {
+            string key = mouth.Key;
             if (t != CoolingTerminal.Fitting && t != CoolingTerminal.Plug) return;
             PipeThread th = t == CoolingTerminal.Fitting ? opt.FittingThread : opt.PlugThread;
             string what = t == CoolingTerminal.Fitting ? "Engate" : "Tampão";
@@ -218,6 +223,9 @@ namespace AutoEDM.Mold.Cooling
             plan.Holes.Add(new CoolingHolePlan
             {
                 Label = $"{what} {th.Size.Trim()} - {key}",
+                EntryLineIndex = mouth.Line.Index,
+                EntryAtLineStart = mouth.AtLineStart,
+                ExtensionMm = extension,
                 EntryMm = p,
                 TowardMm = Vec.Add(p, inward, Math.Min(threadDepth, runLength) / 2.0),
                 DirMm = inward,

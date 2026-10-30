@@ -78,6 +78,17 @@ namespace AutoEDM.AddIn.UI
         /// criar eletrodo, em "Atualizar peças" e quando um proxy guardado morre.</summary>
         private VisibleScene _scene;
 
+        // Destaque AO PASSAR O MOUSE (Carlos, 2026-10-30): no SmartLocate a SE não acende nada, e
+        // o realce nativo do QuickPick acendia a peça de trás. Aqui acende a face que o RAIO vai
+        // pegar. O MouseMove só anota; o timer lê no máximo a cada 30 ms o último movimento.
+        private readonly System.Windows.Forms.Timer _hoverTimer = new System.Windows.Forms.Timer { Interval = 30 };
+        private object _hoverWindow;        // janela do último MouseMove ainda não lido
+        private bool _hoverPending;
+        private bool _hoverOff;             // raio falhou no movimento: desliga até o próximo clique
+        private object _hoverHighlight;     // HighlightSet só da face sob o cursor
+        private string _hoverKey;
+        private readonly List<long> _hoverMs = new List<long>();
+
         private Button _btnPick, _btnUndo, _btnClear, _btnFromSelection, _btnCreate, _btnClose, _btnRefresh;
 
         private ListBox _list;
@@ -195,13 +206,18 @@ namespace AutoEDM.AddIn.UI
         {
             base.OnShown(e);
             LoadFromSelectSet(explain: false);
+            _hoverTimer.Tick += (s, a) => HoverTick();
+            _hoverTimer.Start();
             StartPicking();
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            _hoverTimer.Stop();
+            _hoverTimer.Dispose();
             StopPicking();
             ClearHighlight();
+            LogHoverStats();
             if (_picker != null) { _picker.Dispose(); _picker = null; }
             base.OnFormClosed(e);
         }
@@ -247,6 +263,7 @@ namespace AutoEDM.AddIn.UI
         private void StartPicking()
         {
             StopPicking();
+            _hoverOff = false;
             if (Picker() != null && _picker.Start(
                     "AutoEDM — clique nas FACES do fundo do bolsão (de novo na mesma face para tirar; Esc encerra).",
                     SolidEdgeConstants.seLocateModes.seSmartLocate, AnyFace))
@@ -266,6 +283,8 @@ namespace AutoEDM.AddIn.UI
         {
             if (_picker != null) _picker.Stop();
             _picking = false;
+            _hoverPending = false;
+            ClearHover();
             UpdatePickButton();
         }
 
@@ -284,7 +303,8 @@ namespace AutoEDM.AddIn.UI
             if (_picker != null) return _picker;
             try
             {
-                _picker = new SePicker((SolidEdgeFramework.Application)_app) { AcceptEmptyClicks = true };
+                _picker = new SePicker((SolidEdgeFramework.Application)_app) { AcceptEmptyClicks = true, TrackHover = true };
+                _picker.Hovered += w => { _hoverWindow = w; _hoverPending = true; };
                 _picker.Picked += OnPicked;
                 _picker.Cancelled += OnPickCancelled;
                 _picker.Missed += OnPickMissed;
@@ -402,6 +422,87 @@ namespace AutoEDM.AddIn.UI
                 return null;
             }
             finally { Cursor = Cursors.Default; }
+        }
+
+        /// <summary>
+        /// Acende a face que o clique pegaria. Mesmo raio do clique, sem log por leitura; só
+        /// redesenha quando a face muda. Face já escolhida não acende (fica o laranja dela).
+        /// </summary>
+        private void HoverTick()
+        {
+            if (!_hoverPending || !_picking || _hoverOff) return;
+            _hoverPending = false;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            VisiblePick seen = PickUnderCursor(_hoverWindow);
+            _hoverMs.Add(sw.ElapsedMilliseconds);
+            string key = seen?.Face != null ? KeyOf(seen.Face) : null;
+            if (key != null && _picks.Exists(p => p.Key == key)) key = null;
+            if (key == _hoverKey) return;
+            _hoverKey = key;
+            if (key == null) ClearHover();
+            else ShowHover(seen.HighlightItem);
+        }
+
+        private VisiblePick PickUnderCursor(object window)
+        {
+            try
+            {
+                Point screen = Cursor.Position;
+                if (!VisibleFacePicker.TryScreenToModel(window, screen.X, screen.Y, out double[] pointM, quiet: true)) return null;
+                if (!VisibleFacePicker.TryReadCamera(window, out double[] eye, out double[] target, out bool perspective)) return null;
+                if (!RayMath.TryViewRay(eye, target, perspective, pointM, out double[] origin, out double[] dir)) return null;
+                dynamic doc = Doc();
+                if (doc == null) return null;
+                if (_scene == null) _scene = VisibleScene.Build((object)doc);
+                return VisibleFacePicker.PickNearest(doc, origin, dir, _scene, quiet: true);
+            }
+            catch (Exception e)
+            {
+                // Cena guardada inválida: quem relê é o próximo clique (PickByView). Até lá o
+                // destaque fica desligado, para não reler a montagem a cada 30 ms.
+                _hoverOff = true;
+                ClearHover();
+                Log.Warn($"{LogTag}: destaque ao passar o mouse desligado até o próximo clique — " + e.GetBaseException().Message);
+                return null;
+            }
+        }
+
+        private void ShowHover(object item)
+        {
+            try
+            {
+                dynamic doc = Doc();
+                if (doc == null || item == null) return;
+                if (_hoverHighlight == null) _hoverHighlight = doc.HighlightSets.Add();
+                dynamic hs = _hoverHighlight;
+                hs.RemoveAll();
+                hs.Color = Rgb(255, 235, 110);
+                hs.AddItem(item);
+                hs.Draw();
+            }
+            catch (Exception e)
+            {
+                _hoverOff = true;
+                Log.Warn($"{LogTag}: destaque ao passar o mouse não aplicado — " + e.GetBaseException().Message);
+            }
+        }
+
+        private void ClearHover()
+        {
+            object s = _hoverHighlight;
+            _hoverHighlight = null;
+            _hoverKey = null;
+            if (s == null) return;
+            try { dynamic hs = s; hs.RemoveAll(); hs.Draw(); hs.Delete(); }
+            catch { /* documento já fechado ou realce já sumiu */ }
+        }
+
+        /// <summary>Custo do destaque no log, para comparar com os cliques "[vista]".</summary>
+        private void LogHoverStats()
+        {
+            if (_hoverMs.Count == 0) { Log.Info($"{LogTag}: destaque ao passar o mouse — nenhuma leitura (a SE entregou MouseMove?)."); return; }
+            var s = _hoverMs.OrderBy(x => x).ToList();
+            Log.Info($"{LogTag}: destaque ao passar o mouse — {s.Count} leitura(s); mediana {s[s.Count / 2]} / p90 {s[(int)(s.Count * 0.9)]} / máx {s[s.Count - 1]} ms.");
         }
 
         /// <summary>O jeito antigo, mantido: o que está no SelectSet entra na lista.</summary>

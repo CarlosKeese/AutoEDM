@@ -727,7 +727,13 @@ un-undoable.
   a later Ctrl+Z brings the "cancelled" preview back. Fallback only.
 - Cost of one O'ring preview: cut 0.5–0.7 s on a light part, 1.1–1.4 s with 64 features.
 - **Every face proxy read before a cut or an undo is dead afterwards** (`E_FAIL`). Re-read the
-  target each cycle (10–15 ms light, ≈ 740 ms with 64 features).
+  target each cycle (10–15 ms light, ≈ 740 ms with 64 features). **`Face.ID` and `Edge.ID` survive
+  cut + undo** (same IDs found twice in a row): store IDs, re-find by walking `Body.Faces[1]` (26–63 ms).
+- **Part edited IN PLACE inside an assembly (live 2026-10-30):** after the O'ring cut the part's
+  `UndoTransactionCount()` read 0 (before 0 or 1, after 0) — there is nothing to `Undo(n)`. Detect
+  `steps <= 0` and fall back to deleting the new features (diff the `DesignEdgebarFeatures` names before
+  and after, delete newest first; refuse if the list changed meanwhile). On the same part opened alone,
+  a 9-hole cooling preview was 30 steps and `Undo(30)` took 153 ms.
 
 **Ordered-mode reference planes made by the API:** they are not undo steps, `Delete()` on them throws
 `E_INVALIDARG` ("O valor não recai no intervalo esperado"), and they disappear by themselves when the

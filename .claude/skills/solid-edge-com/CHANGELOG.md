@@ -1,5 +1,13 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-10-30 — holes that follow a 3D sketch; undo in place
+
+`references/modeling-recipes.md`: associative cooling holes (normal plane at the tip, `AddFromTo` plane
+to plane, parallel planes for overshoot, a face-parallel plane at 0 mm for a mouth prolonged to the
+face; `AtDistance` does not go past the tip; a face as From removes nothing). `references/api-signatures.md`
+(undo section): `Face.ID`/`Edge.ID` survive cut + undo; a part edited in place reads 0 undo steps after
+a feature — fall back to deleting the new features.
+
 ## 2026-10-29 (3) — undo stack, preview by undo, probe sketches
 
 Measured live with AutoEDM `tools/UndoProbe`. `references/api-signatures.md` (new section at the end):

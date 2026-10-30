@@ -128,6 +128,19 @@ namespace AutoEDM.Mold.Cooling
         public double ThreadDepthMm { get; set; }
         /// <summary>A entrada foi prolongada até a face (o plano não pode nascer na aresta da linha).</summary>
         public bool Extended { get; set; }
+
+        // Furo ASSOCIATIVO ao esboço 3D (Carlos, 2026-10-30; receita da sonda UndoProbe --assoc):
+        // perfil no plano normal à linha na ponta EntryLineIndex/EntryAtLineStart, e o furo vai de
+        // um plano a outro (AddFromTo) em vez de uma profundidade fixa.
+
+        /// <summary>Quanto a boca fica ALÉM da ponta da linha (prolongamento até a face); 0 = na ponta.</summary>
+        public double ExtensionMm { get; set; }
+        /// <summary>Linha e ponta onde o furo termina (a outra ponta da passada). 0 = furo roscado:
+        /// termina <see cref="DepthMm"/> para dentro da boca.</summary>
+        public int FarLineIndex { get; set; }
+        public bool FarAtLineStart { get; set; }
+        /// <summary>Quanto o fundo passa da ponta de lá (sobrefuro no cruzamento, rompimento na face).</summary>
+        public double FarBeyondMm { get; set; }
     }
 
     public sealed class CoolingPlan

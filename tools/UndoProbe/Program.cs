@@ -33,6 +33,9 @@ namespace AutoEDM.Tools.UndoProbe
             if (Array.IndexOf(args, "--minimo") >= 0) return MinimalRepro();
             if (Array.IndexOf(args, "--passos") >= 0) return ORingSteps();
             if (Array.IndexOf(args, "--lado") >= 0) return PlaneSideWithoutSketch();
+            if (Array.IndexOf(args, "--ids") >= 0) return IdsSurviveUndo();
+            if (Array.IndexOf(args, "--assoc") >= 0) return AssocProbe.Run();
+            if (Array.IndexOf(args, "--refrig") >= 0) return AssocProbe.Refrig();
 
             using (var connector = new SolidEdgeConnector())
             {
@@ -531,6 +534,67 @@ namespace AutoEDM.Tools.UndoProbe
                     try { if (original != null) original.Activate(); } catch { }
                 }
             }
+        }
+
+        /// <summary>
+        /// A prévia do O'ring corta e desfaz; os proxies da face/aresta escolhidas morrem nos dois.
+        /// Os Face.ID/Edge.ID sobrevivem (depois do Undo, a mesma face volta com o mesmo ID)?
+        /// </summary>
+        private static int IdsSurviveUndo()
+        {
+            using (var connector = new SolidEdgeConnector())
+            {
+                dynamic app = connector.Connect(startIfNotRunning: false, makeVisible: false);
+                if (app == null) { Console.WriteLine("Nenhuma Solid Edge aberta."); return 1; }
+                dynamic original = null;
+                try { original = app.ActiveDocument; } catch { }
+                dynamic doc = app.Documents.Add("SolidEdge.PartDocument");
+                try
+                {
+                    doc.ModelingMode = 1;
+                    Build(doc, "base", Cyl(40, 30, 0));
+                    doc.ModelingMode = 2;
+                    try { app.DoIdle(); } catch { }
+                    object face; Sealing.ORingTarget target;
+                    FindShaft(app, doc, out face, out target);
+                    int faceId = (int)((dynamic)face).ID, edgeId = (int)((dynamic)target.Edge).ID;
+                    Console.WriteLine($"===== IDs: face {faceId}, aresta {edgeId}; Ø{target.SealingDiameterMm:0.###}, aresta em {target.EdgeAxialMm:0.###}");
+                    for (int round = 1; round <= 2; round++)
+                    {
+                        int u0 = Undos(doc);
+                        string name; List<string> problems;
+                        Sealing.ORingGrooveModeler.Cut(app, target, Spec(target), 5.0, true, out name, out problems);
+                        int steps = Undos(doc) - u0;
+                        doc.Undo(steps);
+                        var sw = Stopwatch.StartNew();
+                        object f2 = FaceById(doc, faceId), e2 = null;
+                        if (f2 != null)
+                        {
+                            dynamic edges = ((dynamic)f2).Edges;
+                            for (int j = 1; j <= (int)edges.Count; j++) { dynamic e = edges.Item(j); if ((int)e.ID == edgeId) { e2 = (object)e; break; } }
+                        }
+                        Sealing.ORingTarget t2 = f2 != null && e2 != null ? Sealing.ORingTargetReader.Read(f2, e2) : null;
+                        Console.WriteLine($"  [{round}] corte {steps} passo(s), Undo; face {faceId}: {(f2 != null ? "ACHADA" : "sumiu")}, aresta {edgeId}: {(e2 != null ? "ACHADA" : "sumiu")}" +
+                                          (t2 != null && t2.Ok ? $"; alvo relido Ø{t2.SealingDiameterMm:0.###}, aresta em {t2.EdgeAxialMm:0.###} ({sw.ElapsedMilliseconds} ms)" : "; alvo NÃO relido"));
+                        if (t2 == null || !t2.Ok) return 4;
+                        target = t2;
+                    }
+                    return 0;
+                }
+                catch (Exception ex) { Console.WriteLine("FALHOU: " + Msg(ex)); return 8; }
+                finally
+                {
+                    try { doc.Close(false); } catch { }
+                    try { if (original != null) original.Activate(); } catch { }
+                }
+            }
+        }
+
+        private static object FaceById(dynamic doc, int id)
+        {
+            dynamic faces = doc.Models.Item(1).Body.Faces[1];
+            for (int i = 1; i <= (int)faces.Count; i++) { dynamic f = faces.Item(i); if ((int)f.ID == id) return (object)f; }
+            return null;
         }
 
         /// <summary>Vetor de um método com 1 parâmetro OUT double[3] (GetRootPoint, GetNormal).</summary>

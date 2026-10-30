@@ -89,7 +89,9 @@ namespace AutoEDM.Selection
         /// ida-e-volta <c>TransformModelToDC</c>/<c>TransformDCToModel</c> sobre um ponto da face
         /// fechou (DC em pixels da janela de DESENHO, não da moldura <c>hWnd</c>).
         /// </summary>
-        public static bool TryScreenToModel(object window, int screenX, int screenY, out double[] pointM)
+        /// <remarks><paramref name="quiet"/>: sem a linha de Info (o destaque ao passar o mouse lê
+        /// isto a cada 30 ms; avisos de falha continuam no log).</remarks>
+        public static bool TryScreenToModel(object window, int screenX, int screenY, out double[] pointM, bool quiet = false)
         {
             pointM = null;
             if (window == null) return false;
@@ -110,7 +112,7 @@ namespace AutoEDM.Selection
                 view.GetType().InvokeMember("TransformDCToModel", BindingFlags.InvokeMethod, null, view, args,
                     new[] { mod }, CultureInfo.InvariantCulture, null);
                 pointM = new[] { D(args[2]), D(args[3]), D(args[4]) };
-                Log.Info(string.Format(CultureInfo.InvariantCulture,
+                if (!quiet) Log.Info(string.Format(CultureInfo.InvariantCulture,
                     "[vista] cursor na janela de desenho ({0}, {1}) px → modelo ({2:0.###}, {3:0.###}, {4:0.###}) mm.",
                     p.X, p.Y, pointM[0] * 1000, pointM[1] * 1000, pointM[2] * 1000));
                 return true;
@@ -127,8 +129,9 @@ namespace AutoEDM.Selection
         /// visíveis. Resultado com <c>Face == null</c> quando nada é atingido.
         /// <paramref name="scene"/> é a leitura das peças guardada entre cliques
         /// (<see cref="VisibleScene"/>); null = lê tudo agora (mais lento, sempre fresco).
+        /// <paramref name="quiet"/>: o resumo fica só em <c>Summary</c>, fora do log.
         /// </summary>
-        public static VisiblePick PickNearest(dynamic asmDoc, double[] originM, double[] dirM, VisibleScene scene = null)
+        public static VisiblePick PickNearest(dynamic asmDoc, double[] originM, double[] dirM, VisibleScene scene = null, bool quiet = false)
         {
             var sw = Stopwatch.StartNew();
             var res = new VisiblePick();
@@ -174,7 +177,7 @@ namespace AutoEDM.Selection
             if (bestFace == null)
             {
                 res.Summary = $"[vista] nenhum impacto — {counts} ({sw.ElapsedMilliseconds} ms).";
-                Log.Info(res.Summary);
+                if (!quiet) Log.Info(res.Summary);
                 return res;
             }
 
@@ -184,7 +187,7 @@ namespace AutoEDM.Selection
             res.DistanceMm = Units.MToMm(bestT);
             res.HighlightItem = TryCreateReference(asmDoc, comBest, bestFace);
             res.Summary = $"[vista] face à vista: '{name}', {res.DistanceMm:0.000} mm ao longo do raio — {counts} ({sw.ElapsedMilliseconds} ms).";
-            Log.Info(res.Summary);
+            if (!quiet) Log.Info(res.Summary);
             return res;
         }
 

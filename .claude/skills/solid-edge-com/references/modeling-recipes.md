@@ -130,7 +130,31 @@ such an edge worked for the FIRST hole; every later call with edges read before 
 `E_FAIL` — the model recompute invalidated them. Re-read the edge (match by endpoints) right before
 each use, or avoid it: for axis-parallel channels a plane `AddParallelByDistance` of the base plane
 perpendicular to the channel, at the entry, needs no edge at all (and also serves an entry that is
-not on the line).
+not on the line) — **but such a hole does NOT follow the sketch** (fixed distance, fixed centre,
+fixed depth): the user edits the 3D sketch and the holes stay put.
+
+**Holes that FOLLOW a 3D sketch (associative; measured 2026-10-30, AutoEDM `tools/UndoProbe --assoc`
+and `--refrig`, ordered, changing `Line3D.Length` by API).** All 7 holes of a 3-line cooling layout
+followed:
+
+- Profile on `RefPlanes.AddNormalToCurve(edge, igCurveStart 14 | igCurveEnd 15, RefPlanes.Item(1),
+  igPivotStart 3 | igPivotEnd 4, Missing, Missing)` at the line's tip, with the edge **re-read right
+  before** (match by endpoints). The plane's origin IS the tip and the sketch origin lands on it: the
+  hole centre is (0, 0), no relation needed. It moves with the tip. Axis-parallel lines work too.
+- Depth from plane to plane: `Holes.AddFromTo(Profile, FromFaceOrRefPlane, ToFaceOrRefPlane, HoleData)`
+  (threaded: `AddFromToEx(…, HoleData, bPhysicalThread)`), From = the mouth plane, To = the normal
+  plane at the far tip. Overshoot/breakthrough beyond the tip: `RefPlanes.AddParallelByDistance(thatPlane,
+  d, side)` — a parallel plane follows its parent. **`AddNormalToCurveAtDistance` does NOT go past the
+  tip** (+d goes inward, −d lands on the tip).
+- Mouth prolonged to the face (line ends inside the plate): **a face as From does nothing** (planar or
+  cylindrical: no material removed, no error). Use a plane parallel to the face at **0 mm** (accepted)
+  as From, profile still on the normal plane at the line tip: the mouth stays on the face when the
+  line shrinks. A parallel to the normal plane at a fixed distance does not (the mouth leaves the face).
+- `Profile.IncludeEdge(line edge)` on that plane → `E_FAIL` (not needed).
+- `Line3D.Length = x` (reach it as `PartDocument.Sketches3D.Item(i).Lines3D.Item(j)`, late-bound — the
+  interop 219 has no 3D-sketch types) moved the end in most runs but the START in one: read both tips
+  back (`Sketch3DFeatures[i].Edges`) instead of assuming which one moved.
+- Hide every plane made (`Visible = false`); they are parents of the hole.
 
 **Fixation holes (validated recipe).** Mark centers with **`Profile.Holes2d.Add(x,y)`** —
 NOT `Circles2d` (a plain circle makes the hole feature create **zero holes, with no error**).

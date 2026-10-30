@@ -26,9 +26,10 @@ namespace AutoEDM.Mold.Cooling
     /// ponta de broca (118°, profundidade até o ombro), a rosca de tubo e o nome saem do próprio
     /// <c>HoleData</c> — receitas já validadas no projeto (skill <c>modeling-recipes.md</c>).
     ///
-    /// Por que o plano nasce da ARESTA da linha (<c>RefPlanes.AddNormalToCurve</c> na ponta de
-    /// entrada — a receita do O'ring, validada ao vivo): o furo fica preso à linha do esboço 3D;
-    /// mover a linha leva o furo junto, e linha inclinada não precisa de caso especial.
+    /// O furo ACOMPANHA o esboço 3D (Carlos, 2026-10-30: "editar o rascunho 3D não atualiza os
+    /// furos"): ver <see cref="TryHoleAssociative"/>. Se a receita associativa falhar num furo, ele
+    /// sai pelo caminho antigo — plano paralelo ao plano-base a distância FIXA, centro e
+    /// profundidade fixos (<see cref="Candidate"/>) — e o log diz que aquele não acompanha.
     ///
     /// Nada é aceito por "não lançou": o referencial do esboço é CONFERIDO (origem na ponta,
     /// normal no eixo do canal) e o furo criado é MEDIDO (as faces dele têm de cobrir um ponto
@@ -68,6 +69,11 @@ namespace AutoEDM.Mold.Cooling
                 if (doc == null) { res.Failed.Add($"{h.Label}: documento ativo sumiu."); break; }
 
                 string why;
+                if (TryHoleAssociative(doc, lines, h, opt, res.Warnings, out why)) { res.Created++; continue; }
+                Log.Info($"  [associativo] {why} — vai pelo plano a distância fixa (não acompanha o esboço 3D).");
+                doc = null;
+                try { doc = app.ActiveDocument; } catch { }
+                if (doc == null) { res.Failed.Add($"{h.Label}: documento ativo sumiu."); break; }
                 if (TryHole(doc, line, frames, h, opt, res.Warnings, out why)) res.Created++;
                 else res.Failed.Add($"{h.Label}: {why}");
             }
@@ -238,7 +244,7 @@ namespace AutoEDM.Mold.Cooling
                         }
 
                         string status = StatusOf(feat);
-                        bool reaches = Reaches(feat, h.TowardMm, h.DiameterMm / 2.0 + 0.5, out string measure);
+                        bool reaches = Reaches(feat, h, h.DiameterMm / 2.0 + 0.5, out string measure);
                         Log.Info($"  furo lado {side}: {status}; {measure}.");
                         if (status != "igFeatureFailed" && reaches)
                         {
@@ -246,6 +252,8 @@ namespace AutoEDM.Mold.Cooling
                             scope.Release(plane);
                             if (!isBase) scope.HideTempPlane(plane);
                             try { ((dynamic)feat).Name = h.Label; } catch (Exception e) { Log.Warn("  nome do furo não aplicado — " + e.GetBaseException().Message); }
+                            try { prof.Visible = false; } catch { }
+                            Sealing.ORingGrooveModeler.HideFeatureSketch(feat);
                             return true;
                         }
 
@@ -264,6 +272,177 @@ namespace AutoEDM.Mold.Cooling
                 }
             }
             return false;
+        }
+
+        /// <summary>
+        /// Furo PRESO ao esboço 3D — receita medida na sonda <c>tools/UndoProbe --assoc</c> (peça
+        /// descartável, 2026-10-30), mudando o comprimento da linha pela API:
+        /// <list type="bullet">
+        /// <item>Perfil num plano NORMAL à linha na ponta (<c>AddNormalToCurve</c>, aresta relida
+        ///   agora): a origem do esboço cai na ponta, então o centro do furo vai junto com ela.</item>
+        /// <item>Furo de plano a plano (<c>Holes.AddFromTo</c>/<c>AddFromToEx</c>): até o plano
+        ///   normal na ponta de lá, ou um PARALELO a ele (sobrefuro, rompimento) — paralelo acompanha
+        ///   o plano-pai. <c>AddNormalToCurveAtDistance</c> NÃO passa da ponta (negativo cai nela).</item>
+        /// <item>Boca prolongada até a face: o "de" é um plano paralelo À FACE a 0 mm (a face
+        ///   direto no <c>AddFromTo</c> não fura nada — nem plana nem cilíndrica). Assim a boca fica
+        ///   na face mesmo se a linha encolher.</item>
+        /// <item>Rosca (engate/tampão): da boca até um paralelo a ela, na profundidade da rosca.</item>
+        /// </list>
+        /// Planos criados ficam ESCONDIDOS (são pais do furo). Falhou = nada fica: furo apagado,
+        /// esboço descartado, planos escondidos; quem chama tenta o caminho antigo.
+        /// </summary>
+        private static bool TryHoleAssociative(dynamic doc, IList<CoolingLine> lines, CoolingHolePlan h, CoolingOptions opt, List<string> warnings, out string why)
+        {
+            why = "receita associativa indisponível";
+            CoolingLine line = lines?.FirstOrDefault(l => l.Index == h.EntryLineIndex);
+            if (line == null) { why = "linha da boca não identificada"; return false; }
+            if (Math.Abs(ProfilePlaneFrame.Dot(Vec.Unit(Vec.Sub(line.EndMm, line.StartMm)), h.DirMm)) < 0.9999)
+            {
+                why = "o furo não está no eixo da linha";
+                return false;
+            }
+            double[] tip = h.EntryAtLineStart ? line.StartMm : line.EndMm;
+            var planes = new List<object>();
+
+            using (var scope = new SketchScope(doc, "Refrigeração " + h.Label))
+            {
+                object feat = null;
+                dynamic ps = null;
+                try
+                {
+                    object mouth = NormalPlaneAt(doc, line, h.EntryAtLineStart, h.DirMm, planes);
+                    if (mouth == null) { why = "plano normal à linha na boca não saiu"; return Undo(planes, null, scope, null); }
+
+                    object from = mouth;
+                    if (h.ExtensionMm > opt.EndToleranceMm)
+                    {
+                        object face = FaceAt(doc, h.EntryMm, h.DirMm);
+                        from = face != null ? ParallelThrough(doc, face, 0, h.EntryMm, planes) : null;
+                        if (from == null)
+                        {
+                            Log.Info("  [associativo] face da boca não achada — boca a distância fixa da ponta da linha.");
+                            from = ParallelThrough(doc, mouth, h.ExtensionMm, h.EntryMm, planes);
+                        }
+                        if (from == null) { why = "plano da boca na face não saiu"; return Undo(planes, null, scope, null); }
+                    }
+
+                    object to;
+                    if (h.FarLineIndex > 0)
+                    {
+                        CoolingLine far = lines.FirstOrDefault(l => l.Index == h.FarLineIndex);
+                        object farPlane = far == null ? null : NormalPlaneAt(doc, far, h.FarAtLineStart, h.DirMm, planes);
+                        double[] farTip = far == null ? null : h.FarAtLineStart ? far.StartMm : far.EndMm;
+                        to = farPlane == null ? null
+                           : h.FarBeyondMm > opt.EndToleranceMm ? ParallelThrough(doc, farPlane, h.FarBeyondMm, Vec.Add(farTip, h.DirMm, h.FarBeyondMm), planes)
+                           : farPlane;
+                    }
+                    else to = ParallelThrough(doc, from, h.DepthMm, Vec.Add(h.EntryMm, h.DirMm, h.DepthMm), planes);
+                    if (to == null) { why = "plano do fundo não saiu"; return Undo(planes, null, scope, null); }
+
+                    ps = scope.AddProfileSet();
+                    dynamic prof = ps.Profiles.Add(mouth);
+                    ProfilePlaneFrame frame = ProfilePlaneFrame.Discover((object)prof);
+                    double x = 0, y = 0;
+                    if (frame == null || !frame.TryTo2dMm((object)prof, tip, out x, out y))
+                        Log.Info("  [associativo] referencial do esboço ilegível — centro na origem (é a ponta da linha).");
+                    prof.Holes2d.Add(Units.MmToM(x), Units.MmToM(y));
+                    try { prof.End(1); } catch (Exception e) { Log.Warn("  Profile.End: " + e.GetBaseException().Message); }
+
+                    object hd = HoleData(doc, h, opt, warnings);
+                    if (hd == null) { why = "o Solid Edge recusou os dados do furo (HoleData)"; return Undo(planes, null, scope, ps); }
+                    dynamic holes = doc.Models.Item(1).Holes;
+                    feat = h.Thread != null ? (object)holes.AddFromToEx(prof, from, to, hd, false) : (object)holes.AddFromTo(prof, from, to, hd);
+
+                    string status = StatusOf(feat);
+                    bool reaches = Reaches(feat, h, h.DiameterMm / 2.0 + 0.5, out string measure);
+                    Log.Info($"  [associativo] furo de plano a plano: {status}; {measure}.");
+                    if (status == "igFeatureFailed" || !reaches) { why = "o furo de plano a plano não vingou"; return Undo(planes, feat, scope, ps); }
+
+                    scope.Release((object)ps);
+                    foreach (object p in planes) { scope.Release(p); Hide(p); }
+                    try { ((dynamic)feat).Name = h.Label; } catch (Exception e) { Log.Warn("  nome do furo não aplicado — " + e.GetBaseException().Message); }
+                    try { prof.Visible = false; } catch { }
+                    Sealing.ORingGrooveModeler.HideFeatureSketch(feat);
+                    Log.Info($"  [associativo] {h.Label}: preso ao esboço 3D ({planes.Count} plano(s) escondido(s)).");
+                    return true;
+                }
+                catch (Exception e)
+                {
+                    why = "erro na receita associativa: " + e.GetBaseException().Message;
+                    return Undo(planes, feat, scope, ps);
+                }
+            }
+        }
+
+        /// <summary>Desfaz uma tentativa associativa: furo apagado, esboço descartado, planos escondidos. Sempre false.</summary>
+        private static bool Undo(List<object> planes, object feat, SketchScope scope, object ps)
+        {
+            if (feat != null) { try { ((dynamic)feat).Delete(); } catch (Exception e) { Log.Warn("  [associativo] furo não pôde ser apagado — " + e.GetBaseException().Message); } }
+            if (ps != null) scope.DropProfileSet(ps);
+            foreach (object p in planes) Hide(p);
+            return false;
+        }
+
+        private static void Hide(object plane) { try { ((dynamic)plane).Visible = false; } catch { } }
+
+        /// <summary>
+        /// Plano normal à linha na ponta pedida, com a aresta RELIDA agora (a lida antes morre a cada
+        /// recurso) e a geometria CONFERIDA: origem na ponta, normal no eixo.
+        /// </summary>
+        private static object NormalPlaneAt(dynamic doc, CoolingLine line, bool atLineStart, double[] axis, List<object> planes)
+        {
+            double[] tip = atLineStart ? line.StartMm : line.EndMm;
+            object edge = CoolingLineReader.FindEdge(doc, line.StartMm, line.EndMm);
+            if (edge == null || !EdgeGeometry.TryGetEndPointsMm(edge, out double[] a, out double[] b, out _)) return null;
+            bool atEdgeStart = Vec.Dist(a, tip) < 1e-3;
+            for (int orient = 1; orient <= 3; orient++)
+            {
+                object p = NormalPlane(doc, edge, atEdgeStart, orient);
+                if (p == null) continue;
+                planes.Add(p);
+                ProfilePlaneFrame f = ProfilePlaneFrame.OfRefPlane(p);
+                if (f == null || (Vec.Dist(f.Origin, tip) < 0.01 && Math.Abs(ProfilePlaneFrame.Dot(f.Normal, axis)) > 0.999)) return p;
+                Log.Info($"  [associativo] plano normal (orientação {orient}) fora da ponta/eixo — escondido.");
+                Hide(p);
+            }
+            return null;
+        }
+
+        /// <summary>Plano paralelo a <paramref name="basePlane"/> (plano ou face plana) a <paramref name="distMm"/>, do lado que passa por <paramref name="targetMm"/>.</summary>
+        private static object ParallelThrough(dynamic doc, object basePlane, double distMm, double[] targetMm, List<object> planes)
+        {
+            foreach (int side in new[] { igRight, igLeft })
+            {
+                object p;
+                try { p = (object)doc.RefPlanes.AddParallelByDistance(basePlane, Units.MmToM(distMm), side, Type.Missing, Type.Missing, Type.Missing); }
+                catch (Exception e) { Log.Warn($"  [associativo] AddParallelByDistance({distMm:0.###} mm, lado {side}): " + e.GetBaseException().Message); continue; }
+                planes.Add(p);
+                ProfilePlaneFrame f = ProfilePlaneFrame.OfRefPlane(p);
+                if (f == null || Math.Abs(f.SignedDistance(targetMm)) < 0.01) return p;
+                Hide(p);
+                if (distMm < 1e-9) break;   // a 0 mm os dois lados são o mesmo plano
+            }
+            return null;
+        }
+
+        /// <summary>A face plana do corpo onde está a boca, perpendicular ao canal (pela caixa dela: achatada no eixo).</summary>
+        private static object FaceAt(dynamic doc, double[] pointMm, double[] axis)
+        {
+            try
+            {
+                dynamic faces = doc.Models.Item(1).Body.Faces[igQueryAll];
+                int n = (int)faces.Count;
+                for (int i = 1; i <= n; i++)
+                {
+                    object f = (object)faces.Item(i);
+                    if (!FaceGeometry.TryGetRangeMm(f, out double[] mn, out double[] mx)) continue;
+                    bool inside = true;
+                    for (int k = 0; k < 3; k++) if (pointMm[k] < mn[k] - 0.05 || pointMm[k] > mx[k] + 0.05) inside = false;
+                    if (inside && Math.Abs(ProfilePlaneFrame.Dot(Vec.Sub(mx, mn), axis)) < 0.05) return f;
+                }
+            }
+            catch (Exception e) { Log.Warn("  [associativo] faces do corpo ilegíveis — " + e.GetBaseException().Message); }
+            return null;
         }
 
         /// <summary>
@@ -346,9 +525,16 @@ namespace AutoEDM.Mold.Cooling
             }
         }
 
-        /// <summary>As faces do furo cobrem o ponto de dentro do canal? É o que diz se o lado está certo.</summary>
-        private static bool Reaches(object feat, double[] pointMm, double tolMm, out string measure)
+        /// <summary>
+        /// O furo foi para o lado certo? Primeiro: as faces cobrem o ponto de dentro (boca + 5 mm).
+        /// Se não cobrem, ainda vale se a caixa das faces está À FRENTE da boca e no eixo do canal:
+        /// onde o canal atravessa furo que já existia, o furo novo não cria face (L1/L3 da MD-15428,
+        /// 2026-10-30: faces só em X −65…65 com a boca em −80; o lado certo era apagado e o outro,
+        /// furando para fora, falhava).
+        /// </summary>
+        private static bool Reaches(object feat, CoolingHolePlan h, double tolMm, out string measure)
         {
+            double[] pointMm = h.TowardMm;
             measure = "sem faces legíveis";
             try
             {
@@ -368,10 +554,19 @@ namespace AutoEDM.Mold.Cooling
                 if (read == 0) { measure = $"{n} face(s), nenhuma caixa legível — aceito pelo Status"; return true; }
                 bool inside = true;
                 for (int k = 0; k < 3; k++) if (pointMm[k] < mn[k] - tolMm || pointMm[k] > mx[k] + tolMm) inside = false;
+
+                // Centro da caixa: avanço ao longo do canal a partir da boca e afastamento do eixo.
+                double[] c = { (mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2 };
+                double[] rel = ProfilePlaneFrame.Sub(c, h.EntryMm);
+                double ahead = ProfilePlaneFrame.Dot(rel, h.DirMm);
+                double off2 = ProfilePlaneFrame.Dot(rel, rel) - ahead * ahead;
+                bool onAxisAhead = ahead > tolMm && off2 < tolMm * tolMm;
+
                 measure = string.Format(CultureInfo.InvariantCulture,
                     "{0} face(s), caixa X {1:0.#}…{2:0.#} Y {3:0.#}…{4:0.#} Z {5:0.#}…{6:0.#} mm, ponto de dentro {7}",
-                    n, mn[0], mx[0], mn[1], mx[1], mn[2], mx[2], inside ? "COBERTO" : "fora");
-                return inside;
+                    n, mn[0], mx[0], mn[1], mx[1], mn[2], mx[2],
+                    inside ? "COBERTO" : onAxisAhead ? $"fora, mas as faces estão {ahead:0.#} mm à frente da boca, no eixo (atravessa furo existente?) — aceito" : "fora");
+                return inside || onAxisAhead;
             }
             catch (Exception e)
             {
