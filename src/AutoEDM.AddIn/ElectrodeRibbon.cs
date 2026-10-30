@@ -164,8 +164,24 @@ namespace AutoEDM.AddIn
                             "peça-mestra, NA MESMA POSIÇÃO — a posição é lida de volta e conferida depois de " +
                             "escrita, e a troca é desfeita se não bater.\n\n" +
                             "Nenhum arquivo é apagado do disco e a montagem NÃO é salva automaticamente.\n\n" +
+                            "No modelo: VERDE = peça-mestra (fica), LARANJA = ocorrências que serão trocadas.\n\n" +
                             "Aplicar?";
-                        if (!ShowReport(title + " — peças repetidas", ask, "Aplicar")) return;
+                        bool go;
+                        using (var hl = new OccurrenceHighlight((object)doc, "Limpar importação"))
+                        {
+                            var masters = new System.Collections.Generic.List<object>();
+                            var replaced = new System.Collections.Generic.List<object>();
+                            foreach (DuplicateGroup g in scan.Groups)
+                            {
+                                foreach (ImportedOccurrence o in g.Master.Occurrences) masters.Add(o.Com);
+                                foreach (GroupMember m in g.Members)
+                                    foreach (ImportedOccurrence o in m.Part.Occurrences) replaced.Add(o.Com);
+                            }
+                            hl.Add(masters, OccurrenceHighlight.Green);
+                            hl.Add(replaced, OccurrenceHighlight.Orange);
+                            go = ShowReport(title + " — peças repetidas", ask, "Aplicar");
+                        }
+                        if (!go) return;
 
                         applied = AssemblyUnifier.Apply((object)doc, scan, choice.ToleranceMm);
                         Log.Info(applied.Summary());
@@ -751,7 +767,7 @@ namespace AutoEDM.AddIn
                 AutoEDM.Mold.MoldBase.MoldBaseOptions initial = AutoEDM.Mold.MoldBase.MoldBaseBuilder.InitialOptions(scan, settings.MoldBaseChoices);
                 AutoEDM.Mold.MoldBase.MoldBasePlan plan;
                 AutoEDM.Mold.MoldBase.MoldBaseOptions chosen;
-                using (var form = new MoldBaseForm(scan, settings.HeightAxis, initial, o => AutoEDM.Mold.MoldBase.MoldBaseBuilder.Plan(scan, o)))
+                using (var form = new MoldBaseForm(scan, settings.HeightAxis, initial, o => AutoEDM.Mold.MoldBase.MoldBaseBuilder.Plan(scan, o), (object)doc))
                 {
                     if (form.ShowDialog() != DialogResult.OK) return;
                     plan = form.Plan;
@@ -1159,8 +1175,20 @@ namespace AutoEDM.AddIn
         {
             Run(CmdDuplicarEletrodo, (connector, doc, p) =>
             {
-                DuplicateElectrodeResult res = NewBuilder(connector).DuplicateElectrodeToNextGap(doc, p);
-                MessageBox.Show(res.Message, "AutoEDM — Duplicar eletrodo", MessageBoxButtons.OK,
+                const string title = "AutoEDM — Duplicar eletrodo";
+                // Prévia por realce: as posições que recebem a cópia ficam acesas enquanto a pergunta está aberta.
+                // (object)doc: com `dynamic` a chamada seria despachada em tempo de execução, e lambda não pode ser
+                // argumento de chamada dinâmica.
+                DuplicateElectrodeResult res = NewBuilder(connector).DuplicateElectrodeToNextGap((object)doc, p, (positions, ask) =>
+                {
+                    using (var hl = new OccurrenceHighlight((object)doc, "Duplicar eletrodo"))
+                    {
+                        hl.Add(positions, OccurrenceHighlight.Orange);
+                        return MessageBox.Show(ask, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
+                    }
+                });
+                if (res.Cancelled) return;
+                MessageBox.Show(res.Message, title, MessageBoxButtons.OK,
                     res.Created ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             });
         }

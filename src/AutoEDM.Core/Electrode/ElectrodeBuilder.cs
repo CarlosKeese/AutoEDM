@@ -55,6 +55,8 @@ namespace AutoEDM.Electrode
         public string Message { get; set; }
         public string NewPath { get; set; }
         public int InstanceCount { get; set; }
+        /// <summary>O usuário recusou na confirmação: nada foi escrito.</summary>
+        public bool Cancelled { get; set; }
     }
 
     /// <summary>
@@ -1514,8 +1516,13 @@ namespace AutoEDM.Electrode
         /// cópia como documento separado, ajusta GAP/cor/nome/variável NELA, salva e fecha — só
         /// então adiciona as ocorrências novas na montagem. ESCREVE um arquivo novo + a
         /// montagem (novas ocorrências); não salva a montagem.
+        ///
+        /// <paramref name="confirm"/> (prévia por realce do botão, 2026-10-30): chamado ANTES de qualquer
+        /// escrita com as ocorrências que recebem a cópia e o texto do que será feito; false cancela. Null
+        /// (MCP) segue direto.
         /// </summary>
-        public DuplicateElectrodeResult DuplicateElectrodeToNextGap(dynamic asmDoc, ElectrodeParams p)
+        public DuplicateElectrodeResult DuplicateElectrodeToNextGap(dynamic asmDoc, ElectrodeParams p,
+            Func<IReadOnlyList<object>, string, bool> confirm = null)
         {
             var result = new DuplicateElectrodeResult();
             if (_connector.Application == null)
@@ -1578,6 +1585,7 @@ namespace AutoEDM.Electrode
             // várias posições. TryGetPlacement já devolve METROS/RADIANOS (mesma unidade do
             // PutTransform/PutOrigin) — sem conversão aqui.
             var placements = new List<(double xM, double yM, double zM, double azRad)>();
+            var positions = new List<object>();
             foreach (var occ in ctx.GetOccurrences())
             {
                 if (!SameDocument(occ, sourcePath)) continue;
@@ -1587,6 +1595,7 @@ namespace AutoEDM.Electrode
                     continue;
                 }
                 placements.Add((xM, yM, zM, azRad));
+                positions.Add((object)occ.ComOccurrence);
             }
             if (placements.Count == 0)
             {
@@ -1597,6 +1606,19 @@ namespace AutoEDM.Electrode
             Log.Info($"Duplicar eletrodo: {placements.Count} posição(ões) da mesma peça na montagem.");
 
             string newPath = NextAvailablePath(sourcePath, next.Ra);
+            if (confirm != null)
+            {
+                string ask = $"'{selected.Name}' está no Ra {currentRa:0.0}. Criar a cópia '{System.IO.Path.GetFileName(newPath)}' " +
+                             $"({next.Label}) e colocá-la em {placements.Count} posição(ões) — realçadas em laranja no modelo?\n\n" +
+                             "A peça original não é alterada e a montagem NÃO é salva.";
+                if (!confirm(positions, ask))
+                {
+                    result.Cancelled = true;
+                    result.Message = "Cancelado: nada foi criado.";
+                    Log.Info("Duplicar eletrodo: cancelado na confirmação.");
+                    return result;
+                }
+            }
             dynamic newDoc = null;
             try
             {

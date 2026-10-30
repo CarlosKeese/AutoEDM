@@ -14,7 +14,8 @@ namespace AutoEDM.AddIn.UI
     /// (Polimold, MUD, Babyplast) e os componentes a gerar, as peças da montagem (o que vai na caixa e o que é
     /// produto), a disposição, os números da casa e as escolhas Polimold. À direita, o porta-molde DESENHADO em corte
     /// e em planta (<see cref="MoldBaseView"/>) e o plano com as conferências — os dois refeitos a cada mudança.
-    /// Nada é criado antes do OK.
+    /// Nada é criado antes do OK. Enquanto a janela está aberta, as peças marcadas ficam acesas no modelo
+    /// (laranja = caixa, verde = produto) e acompanham a grade.
     /// </summary>
     public sealed class MoldBaseForm : Form
     {
@@ -30,13 +31,16 @@ namespace AutoEDM.AddIn.UI
         private readonly TextBox _report;
         private readonly Button _ok;
         private bool _loading = true;
+        private readonly OccurrenceHighlight _highlight;   // prévia: as peças da caixa e o produto acesos no modelo
+        private string _highlightKey;
 
         public MoldBaseOptions Options { get; private set; }
         public MoldBasePlan Plan { get; private set; }
 
-        public MoldBaseForm(MoldBaseScan scan, HeightAxis axis, MoldBaseOptions initial, Func<MoldBaseOptions, MoldBasePlan> planner)
+        public MoldBaseForm(MoldBaseScan scan, HeightAxis axis, MoldBaseOptions initial, Func<MoldBaseOptions, MoldBasePlan> planner, object doc = null)
         {
             _scan = scan;
+            if (doc != null) _highlight = new OccurrenceHighlight(doc, "Porta-molde");
             _planner = planner;
             Options = initial.Clone();
             Text = "AutoEDM — Porta-molde";
@@ -58,7 +62,7 @@ namespace AutoEDM.AddIn.UI
             kind.Controls.AddRange(new Control[] { _guides, _returnPins });
             y += 80;
 
-            Controls.Add(new Label { Left = x, Top = y, Width = w, Height = 18, Text = "Peças da montagem — o que entra na caixa e o que é PRODUTO (curso):" });
+            Controls.Add(new Label { Left = x, Top = y, Width = w, Height = 18, Text = "Peças da montagem (no modelo: laranja = caixa, verde = produto):" });
             y += 19;
             _grid = new DataGridView
             {
@@ -189,6 +193,24 @@ namespace AutoEDM.AddIn.UI
             Recalc();
         }
 
+        /// <summary>Reacende só quando a marcação da grade muda (o resto do Recalc não mexe no que é aceso).</summary>
+        private void RefreshHighlight()
+        {
+            if (_highlight == null) return;
+            string key = string.Concat(_scan.Items.Select(i => !i.Include ? "0" : i.IsProduct ? "P" : "C"));
+            if (key == _highlightKey) return;
+            _highlightKey = key;
+            _highlight.Clear();
+            _highlight.Add(_scan.Items.Where(i => i.Include && !i.IsProduct).Select(i => i.Occurrence), OccurrenceHighlight.Orange);
+            _highlight.Add(_scan.Items.Where(i => i.Include && i.IsProduct).Select(i => i.Occurrence), OccurrenceHighlight.Green);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            _highlight?.Dispose();
+            base.OnFormClosed(e);
+        }
+
         private void Recalc()
         {
             if (_loading) return;
@@ -198,6 +220,7 @@ namespace AutoEDM.AddIn.UI
                 it.Include = Convert.ToBoolean(row.Cells[0].Value);
                 it.IsProduct = Convert.ToBoolean(row.Cells[1].Value);
             }
+            RefreshHighlight();
             MoldBaseOptions o = Options;
             o.Family = (MoldBaseFamily)(_family.SelectedIndex + 1);
             o.WithGuides = _guides.Checked;
