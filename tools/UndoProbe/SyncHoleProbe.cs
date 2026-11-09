@@ -50,6 +50,7 @@ namespace AutoEDM.Tools.UndoProbe
                             break;
                         case "sets": AddSync(app, Pins, separateSets: true); break;
                         case "um-set": AddSync(app, Pins, separateSets: false); break;
+                        case "rascunho": AddSyncFromSketch(app, Pins); break;
                         default: Console.WriteLine("variante desconhecida"); return 3;
                     }
                     try { app.DoIdle(); } catch { }
@@ -83,10 +84,14 @@ namespace AutoEDM.Tools.UndoProbe
             object hd = hdc.GetType().InvokeMember("Add", BindingFlags.InvokeMethod, null, hdc, a);
 
             var profs = new List<SolidEdgePart.Profile>();
+            var setNames = new List<string>();
+            int setsBefore = (int)doc.ProfileSets.Count;
             dynamic shared = separateSets ? null : doc.ProfileSets.Add();
             foreach (double[] c in centers)
             {
                 dynamic set = separateSets ? doc.ProfileSets.Add() : shared;
+                string nm = Try(() => (string)set.Name);
+                if (!setNames.Contains(nm)) setNames.Add(nm);
                 dynamic prof;
                 try { prof = set.Profiles.Add(plane); }
                 catch (Exception ex) { Console.WriteLine($"  Profiles.Add ({profs.Count + 1}º, {(separateSets ? "set próprio" : "mesmo set")}): {Msg(ex)}"); return; }
@@ -94,10 +99,70 @@ namespace AutoEDM.Tools.UndoProbe
                 Console.WriteLine($"  perfil em X={c[0]}: End(1) = {Try(() => Convert.ToString(prof.End(1)))}");
                 profs.Add((SolidEdgePart.Profile)(object)prof);
             }
-            Console.WriteLine($"  AddSync({profs.Count}, Profile[], lado 1, igFinite, 9 mm, Ø4) …");
+            Console.WriteLine($"  AddSync({profs.Count}, Profile[], lado 1, igFinite, 9 mm, Ø4) …  [desfazer antes: {Undo(app)}]");
             Console.Out.Flush();
             object h = doc.Models.Item(1).Holes.AddSync(profs.Count, profs.ToArray(), 1, 13, (object)0.009, hd);
+            Console.WriteLine($"  [desfazer depois do furo: {Undo(app)}] {Sets(app)}");
             Console.WriteLine($"  → {Try(() => Convert.ToString(((dynamic)h).Name))}, Status {Try(() => Convert.ToString(((dynamic)h).Status))}");
+            // Apagar os esboços PELO NOME, do documento RELIDO (os proxies antigos morrem com o AddSync).
+            dynamic fresh = app.ActiveDocument;
+            int withSets = (int)fresh.ProfileSets.Count;
+            foreach (string nm in setNames)
+            {
+                dynamic sets = fresh.ProfileSets;
+                for (int i = (int)sets.Count; i >= 1; i--)
+                    if (Try(() => (string)sets.Item(i).Name) == nm) { try { sets.Item(i).Delete(); } catch (Exception ex) { Console.WriteLine($"  Delete {nm}: {Msg(ex)}"); } break; }
+            }
+            Console.WriteLine($"  ProfileSets: antes {setsBefore}, com os do furo {withSets}, depois de apagar {Try(() => Convert.ToString(app.ActiveDocument.ProfileSets.Count))} ({string.Join(", ", setNames)})");
+            Console.WriteLine($"  [desfazer depois de apagar: {Undo(app)}] {Sets(app)}");
+        }
+
+        /// <summary>Furos a partir de um ESBOÇO SÍNCRONO (Rascunhos): Sketches.AddByPlane + Sketch.Profiles.Add por furo.</summary>
+        private static void AddSyncFromSketch(dynamic app, double[][] centers)
+        {
+            dynamic doc = app.ActiveDocument;
+            dynamic plane = doc.RefPlanes.AddParallelByDistance(doc.RefPlanes.Item(1), TopMm / 1000, 2, Type.Missing, Type.Missing, Type.Missing);
+            object hdc = (object)doc.HoleDataCollection;
+            var a = new object[21];
+            for (int i = 0; i < a.Length; i++) a[i] = Type.Missing;
+            a[0] = 33; a[1] = Units.MmToM(4); a[20] = true;
+            object hd = hdc.GetType().InvokeMember("Add", BindingFlags.InvokeMethod, null, hdc, a);
+            Console.WriteLine($"  antes: Sketches = {Try(() => Convert.ToString(doc.Sketches.Count))}; {Sets(app)}; desfazer {Undo(app)}");
+            var profs = new List<SolidEdgePart.Profile>();
+            dynamic sk = null;
+            foreach (double[] c in centers)
+            {
+                // UM rascunho por furo (Sketch.Profiles.Add dá E_FAIL; 2 furos no mesmo Sketch.Profile, AddSync E_FAIL).
+                sk = doc.Sketches.AddByPlane(plane);
+                Console.WriteLine($"  Sketches.AddByPlane → {Try(() => (string)sk.Name)}, ModelingModeType {Try(() => Convert.ToString(sk.ModelingModeType))}");
+                dynamic prof = sk.Profile;
+                prof.Holes2d.Add(c[0] / 1000, c[1] / 1000);
+                Console.WriteLine($"  perfil em X={c[0]}: End(1) = {Try(() => Convert.ToString(prof.End(1)))}");
+                profs.Add((SolidEdgePart.Profile)(object)prof);
+            }
+            Console.WriteLine($"  Sketch.Profiles.Count = {Try(() => Convert.ToString(sk.Profiles.Count))}; {Sets(app)}");
+            object h = doc.Models.Item(1).Holes.AddSync(profs.Count, profs.ToArray(), 1, 13, (object)0.009, hd);
+            Console.WriteLine($"  AddSync → {Try(() => Convert.ToString(((dynamic)h).Name))}, Status {Try(() => Convert.ToString(((dynamic)h).Status))}");
+            dynamic fresh = app.ActiveDocument;
+            Console.WriteLine($"  depois: Sketches = {Try(() => Convert.ToString(fresh.Sketches.Count))}; {Sets(app)}; desfazer {Undo(app)}");
+        }
+
+        private static string Undo(dynamic app) => Try(() => Convert.ToString(app.ActiveDocument.UndoTransactionCount()));
+
+        private static string Sets(dynamic app)
+        {
+            var parts = new List<string>();
+            try
+            {
+                dynamic sets = app.ActiveDocument.ProfileSets;
+                for (int i = 1; i <= (int)sets.Count; i++)
+                {
+                    dynamic ps = sets.Item(i);
+                    parts.Add($"{Try(() => (string)ps.Name)}(perfis {Try(() => Convert.ToString(ps.Profiles.Count))}, cmd {Try(() => Convert.ToString(ps.Profiles.FeatureCommandType))})");
+                }
+            }
+            catch (Exception ex) { parts.Add("ilegível: " + Msg(ex)); }
+            return "ProfileSets: " + string.Join(", ", parts);
         }
 
         private static string CountHoles(dynamic app)

@@ -1,5 +1,11 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-09 (4) — which sketch for a synchronous hole
+
+`references/modeling-recipes.md`: temp `ProfileSets.Add()` + `AddSync` + delete it BY NAME from a re-read document keeps
+the undo stack and ends like a hand-made hole; `Sketches.AddByPlane` works only one sketch per hole, empties the undo
+stack and leaves visible sketches. `AddSync` adds its own internal ProfileSets.
+
 ## 2026-11-09 (3) — synchronous hole group = shared HoleData
 
 `references/modeling-recipes.md`: in synchronous, identical holes made in one Hole command are n Hole features

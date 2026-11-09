@@ -633,12 +633,13 @@ namespace AutoEDM.Electrode
             double cxMm, double cyMm, string label, string threadDesc = null, FixationPattern tap = null)
         {
             object hole = null;
-            dynamic ps = null;
-            dynamic doc = null;   // fora do try: o `finally` precisa dele p/ conferir a exclusão do esboço
+            string psName = null;
+            int mode = 1;
+            dynamic doc = null;
             try
             {
                 doc = app.ActiveDocument; // RCW novo — sobrevive à desconexão do furo anterior
-                int mode = 1; try { mode = (int)doc.ModelingMode; } catch { }
+                try { mode = (int)doc.ModelingMode; } catch { }
 
                 dynamic plane = doc.RefPlanes.AddParallelByDistance(
                     doc.RefPlanes.Item(1), Units.MmToM(planeZmm), 2, Type.Missing, Type.Missing, Type.Missing);
@@ -652,7 +653,8 @@ namespace AutoEDM.Electrode
                 }
                 else holeData = PlainHoleData(doc, diaMm);
 
-                ps = doc.ProfileSets.Add();
+                dynamic ps = doc.ProfileSets.Add();
+                try { psName = (string)ps.Name; } catch { }
                 dynamic prof = ps.Profiles.Add(plane);
                 prof.Holes2d.Add(Units.MmToM(cxMm), Units.MmToM(cyMm));
                 prof.End(1);
@@ -689,8 +691,9 @@ namespace AutoEDM.Electrode
             {
                 // Só no SÍNCRONO o furo não depende do esboço. No ORDENADO o esboço é do furo: apagá-lo
                 // apaga o furo junto (errors.md, cascata do esboço consumido) — fica, escondido pelo recurso.
-                int m = 1; try { m = (int)doc.ModelingMode; } catch { }
-                if (m != 2 || hole == null) AutoEDM.Com.SketchScope.DeleteVerified(doc, (object)ps, $"Furo {label}");
+                // Pelo NOME, no documento relido: o AddSync mata o proxy da peça e dos esboços.
+                if ((mode != 2 || hole == null) && psName != null)
+                    DeleteSketchesByName(app, new System.Collections.Generic.List<string> { psName }, $"Furo {label}");
             }
             return hole;
         }
@@ -706,7 +709,7 @@ namespace AutoEDM.Electrode
         private static object PinGroup(dynamic app, double planeZmm, double diaMm, double depthMm, double[][] centersMm)
         {
             dynamic doc = null;
-            var sets = new System.Collections.Generic.List<object>();
+            var sets = new System.Collections.Generic.List<string>();
             object hole = null;
             try
             {
@@ -721,7 +724,7 @@ namespace AutoEDM.Electrode
                 for (int i = 0; i < centersMm.Length; i++)
                 {
                     dynamic ps = doc.ProfileSets.Add();
-                    sets.Add((object)ps);
+                    try { sets.Add((string)ps.Name); } catch { }
                     dynamic prof = ps.Profiles.Add(plane);
                     prof.Holes2d.Add(Units.MmToM(centersMm[i][0]), Units.MmToM(centersMm[i][1]));
                     prof.End(1);
@@ -742,13 +745,47 @@ namespace AutoEDM.Electrode
                 Log.Warn($"  Pinos Ø{diaMm:0.#} em grupo falharam ({e.GetBaseException().Message}) — um por um.");
                 hole = null;
             }
-            finally
-            {
-                // Síncrono: o furo não depende do esboço; o esboço feito por código ficaria preso.
-                dynamic fresh = null; try { fresh = app.ActiveDocument; } catch { }
-                foreach (object ps in sets) AutoEDM.Com.SketchScope.DeleteVerified(fresh ?? doc, ps, "Pinos em grupo");
-            }
+            finally { DeleteSketchesByName(app, sets, "Pinos em grupo"); }
             return hole;
+        }
+
+        /// <summary>
+        /// Apaga os esboços feitos por código PELO NOME, no documento RELIDO. <c>ProfileSets.Add()</c> cria
+        /// esboço ORDENADO mesmo em peça síncrona: se ficar, aparece fora de Rascunhos e o usuário não
+        /// apaga (Carlos, 2026-11-09). Depois do <c>AddSync</c> o proxy da peça — e com ele os dos
+        /// esboços — morre, e o <c>Delete</c> pelo proxy velho não é confiável; pelo nome, num documento
+        /// fresco, é (sonda <c>--furosync</c>: 5 → 3, sobram só os 2 que a própria SE cria para os furos).
+        /// Confere pela contagem e LOGA o que resistir.
+        /// </summary>
+        private static void DeleteSketchesByName(dynamic app, System.Collections.Generic.List<string> names, string what)
+        {
+            if (names == null || names.Count == 0) return;
+            dynamic doc = null;
+            try { doc = app.ActiveDocument; } catch { }
+            if (doc == null) { Log.Warn($"  {what}: documento sumiu — esboço(s) {string.Join(", ", names)} podem ter ficado."); return; }
+            foreach (string name in names)
+            {
+                bool found = false;
+                try
+                {
+                    dynamic sets = doc.ProfileSets;
+                    int before = (int)sets.Count;
+                    for (int i = before; i >= 1; i--)
+                    {
+                        dynamic ps = sets.Item(i);
+                        string n = null; try { n = (string)ps.Name; } catch { }
+                        if (n != name) continue;
+                        found = true;
+                        ps.Delete();
+                        int after = (int)doc.ProfileSets.Count;
+                        if (after < before) Log.Info($"  {what}: esboço {name} apagado.");
+                        else Log.Warn($"  {what}: esboço {name} NÃO saiu (Delete sem erro, contagem {after}) — fica preso no ordenado.");
+                        break;
+                    }
+                }
+                catch (Exception e) { Log.Warn($"  {what}: esboço {name} não apagou — {e.GetBaseException().Message}"); continue; }
+                if (!found) Log.Info($"  {what}: esboço {name} já não existe.");
+            }
         }
 
         /// <summary>

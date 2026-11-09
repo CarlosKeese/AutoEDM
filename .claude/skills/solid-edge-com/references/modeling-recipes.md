@@ -189,6 +189,21 @@ HoleData, give n LOOSE holes (what the AutoEDM Criar Base did before). As always
 re-read `app.ActiveDocument` before the next call (the part proxy disconnects). In ORDERED use the
 pattern recipe below instead.
 
+**Which sketch for a synchronous hole — measured 2026-11-09 (`--furosync sets|rascunho`).**
+`ProfileSets.Add()` makes an ORDERED sketch even in a synchronous part; left behind, it shows outside
+"Sketches/Rascunhos" and the user cannot delete it. Still, it is the RIGHT route:
+
+| | temp `ProfileSets.Add()` + `AddSync` + delete it | `Sketches.AddByPlane` (synchronous sketch) |
+|---|---|---|
+| holes, shared HoleData | 2/2, yes | 2/2, yes — only with ONE sketch per hole (`Sketch.Profiles.Add` → `E_FAIL`; 2 holes in one `Sketch.Profile` → `AddSync` `E_FAIL`) |
+| undo (`UndoTransactionCount`) | 4 → 12 → **12** after the delete | 4 → **0** (stack emptied) |
+| left in the part | only the n `ProfileSet`s SE makes for the holes (1 profile each) — same as a hand-made Hole | the same, PLUS n visible sketches |
+
+`AddSync` itself adds n internal `ProfileSet`s (one profile each); a hand-made hole leaves exactly the
+same. Delete YOUR temp sets **by name from a re-read `app.ActiveDocument`**: the `ProfileSet` proxies die
+with the part proxy after `AddSync`, and `Delete()` through them is not reliable (the leftover sketch the
+user saw). Record `ps.Name` before the hole, then find it in `doc.ProfileSets` and delete; check the count.
+
 **Several holes in ONE Hole feature (ordered; how the UI does it — PROVED 2026-11-09).** The
 Hole command with N circles is NOT a Hole with N `Holes2d`: the recorder (AutoEDM
 `se_gravador_iniciar/gravar`) on a 3-hole Hole made by hand showed a feature of type
