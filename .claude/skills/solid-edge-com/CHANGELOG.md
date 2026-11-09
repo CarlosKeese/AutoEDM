@@ -1,5 +1,10 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-09 (6) — both hole-group recipes confirmed live
+
+Ordered pattern (Alívio de extratores, real mold plate) and synchronous shared-HoleData group with drill point and chamfer
+(Criar Base) both validated by the user in the AutoEDM buttons; marked CONFIRMED LIVE in `modeling-recipes.md`.
+
 ## 2026-11-09 (5) — drill point and chamfer on a synchronous hole group
 
 `references/modeling-recipes.md`: BottomAngle + VBottomDimType and SetStartChamfer on the shared HoleData apply to every

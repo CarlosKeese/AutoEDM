@@ -174,7 +174,8 @@ two centers in one profile yields only **one** hole.
 profile each, `FeatureGroups` unchanged — and **both holes pointing to the SAME `HoleData`**
 (`HoleData_2`). Sharing the HoleData IS the group: the PathFinder shows them grouped, editing one edits
 all, and "Separar" (detach) gives one hole its own HoleData. API (AutoEDM `tools/UndoProbe --furosync
-sets`, confirmed in the PathFinder by the user, then the Criar Base dowel pins):
+sets`, confirmed in the PathFinder by the user; CONFIRMED LIVE in the AutoEDM Criar Base button 2026-11-09 —
+grouped dowel pins with drill point and chamfer, temp sketches deleted by name, nothing left behind):
 
 ```
 hd    = HoleDataCollection.Add(…21 params…, IgnoreSavedDefaultValues = true)   // ONE for the group
@@ -215,7 +216,8 @@ Hole command with N circles is NOT a Hole with N `Holes2d`: the recorder (AutoED
 `igUserDefinedPatternFeatureObject (-1468087919)`, listed in `Model.UserDefinedPatterns` (NOT in
 `Model.Holes`), with 3 `Model.HoleGeometries` and ONE `ProfileSet` holding **3 Profiles, one hole
 each**. The API recipe that reproduces it (AutoEDM `tools/UndoProbe --multifuro padrao-manual` /
-`padrao-preso` / `botao`, throwaway parts, then the "Alívio de extratores" button):
+`padrao-preso` / `botao`, throwaway parts; CONFIRMED LIVE in the "Alívio de extratores" button on a real mold
+plate, MD-15428, 2026-11-09):
 
 ```
 ps      = doc.ProfileSets.Add()

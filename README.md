@@ -506,7 +506,7 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | WEDM: exportar perfis (um `.igs` por altura Z) | ✅ validado no SE e no Pitágoras |
 | WEDM: curvas nas extremidades paralelas a XY das superfícies | ✅ validado no SE (2026-09-16) |
 | Alojamento de O'ring pela ISO 3601 | 🚧 construído, aguardando validação no SE |
-| Alívio de extratores (furos da face, guia pela convenção) | 🚧 construído, coberto por teste, aguardando validação no SE |
+| Alívio de extratores (furos da face, guia pela convenção) | ✅ validado no SE (2026-11-09, MD-15428) — grupos num recurso só, presos aos furos |
 | Aplicar GAP (offset + cor + nome da feature) | 🚧 corrigido, aguardando confirmação final no SE |
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só funciona em edição em contexto (in-place) |
