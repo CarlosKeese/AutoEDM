@@ -168,6 +168,27 @@ with `ExtentType = igFinite (13)` for a **blind** hole (ordered part → `AddFin
 side, depth, HoleData)`). Then delete the ProfileSet. **One `Holes2d.Add` per profile** —
 two centers in one profile yields only **one** hole.
 
+**Identical holes as ONE editable group — SYNCHRONOUS (PROVED 2026-11-09).** In synchronous the UI's
+"several holes in one Hole command" is NOT a pattern and NOT a `FeatureGroup`: the recorder showed
+`Model.Holes` +2 (one Hole feature per hole), `Model.HoleGeometries` +2, two `ProfileSet`s of ONE
+profile each, `FeatureGroups` unchanged — and **both holes pointing to the SAME `HoleData`**
+(`HoleData_2`). Sharing the HoleData IS the group: the PathFinder shows them grouped, editing one edits
+all, and "Separar" (detach) gives one hole its own HoleData. API (AutoEDM `tools/UndoProbe --furosync
+sets`, confirmed in the PathFinder by the user, then the Criar Base dowel pins):
+
+```
+hd    = HoleDataCollection.Add(…21 params…, IgnoreSavedDefaultValues = true)   // ONE for the group
+for each hole: ps_i = ProfileSets.Add(); prof_i = ps_i.Profiles.Add(plane)
+               prof_i.Holes2d.Add(x, y); prof_i.End(1)
+Holes.AddSync(n, Profile[] TYPED {prof_1 … prof_n}, side, igFinite 13, depthMeters, hd)
+// returns ONE Hole (the first); Model.Holes grows by n; then delete the ProfileSets (synchronous)
+```
+
+The same profiles in ONE `ProfileSet` also cut both. Separate `AddSync(1, …)` calls, each with its own
+HoleData, give n LOOSE holes (what the AutoEDM Criar Base did before). As always after `AddSync`,
+re-read `app.ActiveDocument` before the next call (the part proxy disconnects). In ORDERED use the
+pattern recipe below instead.
+
 **Several holes in ONE Hole feature (ordered; how the UI does it — PROVED 2026-11-09).** The
 Hole command with N circles is NOT a Hole with N `Holes2d`: the recorder (AutoEDM
 `se_gravador_iniciar/gravar`) on a 3-hole Hole made by hand showed a feature of type

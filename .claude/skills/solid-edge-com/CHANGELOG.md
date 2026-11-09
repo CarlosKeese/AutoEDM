@@ -1,5 +1,11 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-09 (3) — synchronous hole group = shared HoleData
+
+`references/modeling-recipes.md`: in synchronous, identical holes made in one Hole command are n Hole features
+sharing ONE HoleData (recorder; no FeatureGroup, no pattern); `Holes.AddSync(n, Profile[], …, hd)` reproduces it
+(grouped in the PathFinder, "Separar" works — confirmed by the user). Separate calls with their own HoleData = loose holes.
+
 ## 2026-11-09 (2) — ribbon cache symptom
 
 `references/addin-ribbon.md`: a new button with no label/generic icon = `GuiVersion` not bumped; an `imageId`

@@ -36,6 +36,9 @@ namespace AutoEDM.Tools.UndoProbe
             if (Array.IndexOf(args, "--ids") >= 0) return IdsSurviveUndo();
             if (Array.IndexOf(args, "--assoc") >= 0) return AssocProbe.Run();
             if (Array.IndexOf(args, "--refrig") >= 0) return AssocProbe.Refrig();
+            int fs = Array.IndexOf(args, "--furosync");
+            SyncHoleProbe.Keep = Array.IndexOf(args, "--manter") >= 0;
+            if (fs >= 0) return SyncHoleProbe.Run(fs + 1 < args.Length ? args[fs + 1] : "controle");
             int mf = Array.IndexOf(args, "--multifuro");
             if (mf >= 0) return MultiHoleProbe.Run(mf + 1 < args.Length ? args[mf + 1] : "controle");
 

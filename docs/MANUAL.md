@@ -585,7 +585,7 @@ Dimensiona e modela o bloco, a faixa de medição e a fixação, sobre as superf
 - `diag = 15/√2 + 4 + 4 = 18,61 mm` (arranjo a 45°)
 - Cabem furos se `(maior ≥ 23 e menor ≥ 8)` **ou** `menor ≥ 18,61`. Senão, **eixo** no topo.
 
-**Padrão de fixação** (`FixationPattern.cs`): rosca central **M6**, broca-guia **Ø5,0**, profundidade do furo **10,0 mm** até o ombro, profundidade da **rosca 6,0 mm** — menor de propósito, o macho não chega ao fundo; ponta da broca 118°; chanfro de entrada 0,5 × 45°; pinos **2 × Ø4,0 × 9,0 mm de profundidade, 15,0 mm entre centros**. Eixo alternativo: **Ø9,6** padrão, **Ø6,1** só quando o 9,6 não cabe, altura 20,0 mm.
+**Padrão de fixação** (`FixationPattern.cs`): rosca central **M6**, broca-guia **Ø5,0**, profundidade do furo **10,0 mm** até o ombro, profundidade da **rosca 6,0 mm** — menor de propósito, o macho não chega ao fundo; ponta da broca 118°; chanfro de entrada 0,5 × 45°; pinos **2 × Ø4,0 × 9,0 mm de profundidade, 15,0 mm entre centros**. Eixo alternativo: **Ø9,6** padrão, **Ø6,1** só quando o 9,6 não cabe, altura 20,0 mm. Os 2 pinos saem num **grupo** (um `HoleData` compartilhado, `Holes.AddSync(2, …)`): editar um edita os dois, e o "Separar" do SE solta um deles; se o grupo falhar, saem um por um. Furos lisos com `IgnoreSavedDefaultValues = true`.
 
 **Escolha do blank:** o mais **compacto** primeiro (área `BlockX·BlockY`), desempate pela menor altura imposta. Barra redonda **não deita**. Corte deitado arredonda para mm inteiro. Blank de material especial (CuW80) só entra se a peça pedir aquele material.
 

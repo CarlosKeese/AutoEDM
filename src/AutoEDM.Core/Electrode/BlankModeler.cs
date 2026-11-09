@@ -520,8 +520,16 @@ namespace AutoEDM.Electrode
                     m6 = HoleAt(app, topZmm, fix.CenterTapDrillDiameter, fix.CenterHoleDepth, centerXmm + 0.0, centerYmm + 0.0, "M6 (Ø5 simples)");
                 }
                 created.Add(m6);
-                created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d1x, centerYmm + d1y, "Ø4 #1"));
-                created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d2x, centerYmm + d2y, "Ø4 #2"));
+                // Os 2 pinos são IGUAIS: um grupo, como a interface faz (Carlos, 2026-11-09) — editar um
+                // edita os dois, e "Separar" no SE solta um deles. Se o grupo não vingar, um por um.
+                object pins = PinGroup(app, topZmm, fix.DowelDiameter, fix.DowelDepth,
+                    new[] { new[] { centerXmm + d1x, centerYmm + d1y }, new[] { centerXmm + d2x, centerYmm + d2y } });
+                if (pins != null) created.Add(pins);
+                else
+                {
+                    created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d1x, centerYmm + d1y, "Ø4 #1"));
+                    created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d2x, centerYmm + d2y, "Ø4 #2"));
+                }
                 created.RemoveAll(f => f == null);
 
                 // Verificação numérica: onde os furos REALMENTE caíram (doc fresco).
@@ -683,6 +691,62 @@ namespace AutoEDM.Electrode
                 // apaga o furo junto (errors.md, cascata do esboço consumido) — fica, escondido pelo recurso.
                 int m = 1; try { m = (int)doc.ModelingMode; } catch { }
                 if (m != 2 || hole == null) AutoEDM.Com.SketchScope.DeleteVerified(doc, (object)ps, $"Furo {label}");
+            }
+            return hole;
+        }
+
+        /// <summary>
+        /// Furos IGUAIS num grupo, no SÍNCRONO — o que a interface faz com vários furos no mesmo comando
+        /// (gravador, 2026-11-09): um recurso por furo em <c>Model.Holes</c>, um ProfileSet de UM perfil
+        /// por furo e todos apontando para o MESMO <c>HoleData</c>. Pela API é uma chamada só:
+        /// <c>Holes.AddSync(n, Profile[] TIPADO, lado 1, igFinite 13, profundidade, HoleData)</c> — provado
+        /// em <c>tools/UndoProbe --furosync sets</c> e conferido no PathFinder pelo Carlos (agrupados,
+        /// "Separar" funciona). Só no síncrono; null = quem chama faz um por um.
+        /// </summary>
+        private static object PinGroup(dynamic app, double planeZmm, double diaMm, double depthMm, double[][] centersMm)
+        {
+            dynamic doc = null;
+            var sets = new System.Collections.Generic.List<object>();
+            object hole = null;
+            try
+            {
+                doc = app.ActiveDocument;                              // fresco: o AddSync anterior mata o proxy
+                int mode = 1; try { mode = (int)doc.ModelingMode; } catch { }
+                if (mode != 1) return null;                            // agrupado só provado no síncrono
+
+                dynamic plane = doc.RefPlanes.AddParallelByDistance(
+                    doc.RefPlanes.Item(1), Units.MmToM(planeZmm), 2, Type.Missing, Type.Missing, Type.Missing);
+                object holeData = PlainHoleData(doc, diaMm);           // UM HoleData para todos = o grupo
+                var profs = new SolidEdgePart.Profile[centersMm.Length];
+                for (int i = 0; i < centersMm.Length; i++)
+                {
+                    dynamic ps = doc.ProfileSets.Add();
+                    sets.Add((object)ps);
+                    dynamic prof = ps.Profiles.Add(plane);
+                    prof.Holes2d.Add(Units.MmToM(centersMm[i][0]), Units.MmToM(centersMm[i][1]));
+                    prof.End(1);
+                    profs[i] = (SolidEdgePart.Profile)(object)prof;
+                }
+                hole = (object)doc.Models.Item(1).Holes.AddSync(profs.Length, profs, 1, 13, (object)Units.MmToM(depthMm), holeData);
+                try { plane.Visible = false; } catch { }
+                if (FeatureFailed(hole))
+                {
+                    Log.Warn($"  Pinos Ø{diaMm:0.#} em grupo: Status FALHA — um por um.");
+                    try { ((dynamic)hole).Delete(); } catch { }
+                    hole = null;
+                }
+                else Log.Info($"  Pinos Ø{diaMm:0.#} ×{centersMm.Length} em GRUPO (um HoleData) — ok.");
+            }
+            catch (Exception e)
+            {
+                Log.Warn($"  Pinos Ø{diaMm:0.#} em grupo falharam ({e.GetBaseException().Message}) — um por um.");
+                hole = null;
+            }
+            finally
+            {
+                // Síncrono: o furo não depende do esboço; o esboço feito por código ficaria preso.
+                dynamic fresh = null; try { fresh = app.ActiveDocument; } catch { }
+                foreach (object ps in sets) AutoEDM.Com.SketchScope.DeleteVerified(fresh ?? doc, ps, "Pinos em grupo");
             }
             return hole;
         }
