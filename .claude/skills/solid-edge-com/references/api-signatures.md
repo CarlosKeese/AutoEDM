@@ -743,3 +743,24 @@ next feature is computed (RefPlanes 9 → 5 after one protrusion). Discard an un
 **New part made ORDERED before its first feature:** `Models.Item(1).Body` → `E_FAIL` after an API
 protrusion (volume and faces unreadable). On a throwaway part, build the body in synchronous and then
 switch to ordered.
+
+## Foreign import, facets from Python, and assembly picks (measured live 2026-11-06, SE 2023 v223, pywin32)
+
+- **`Documents.Open("x.x_t")` does not translate foreign files**: it fails with `0x800300FC` (STG_E_INVALIDNAME).
+  Use **`Documents.OpenWithTemplate(arquivo, template_par)`** with an installed part template, for example
+  `...\Solid Edge 2023\Template\ISO Metric\iso metric part.par`. It opened a SOLIDWORKS 2025 x_t (Parasolid 36.1)
+  in 3 s, multi-body (`Models.Count` = 7), and `doc.SaveAs("x.stp")` wrote STEP. Another x_t with the same
+  version failed every time with `msxml3.dll "Nome de propriedade inválido"`, with both
+  `RecognizeFeaturesIfPartTemplate` values. The fallback was to open the `.par`.
+- **`doc.SaveAs("x.stp")` on a `.par` exports a copy**: `FullName` stays the `.par`. Then `Close(False)`.
+  **`OccurrenceDocument.SaveAs` of a part that is open inside an assembly fails with `E_POINTER`.**
+  Do not open that `.par` on its own to export it: closing it could discard unsaved edits made in context.
+- **`Body.GetFacetData` from pywin32**: the dynamic wrapper fails, with `E_INVALIDARG` without by-ref outs and a
+  `TypeError` with `VARIANT` objects. What works is the raw dispatch:
+  `ole = body._oleobj_; did = ole.GetIDsOfNames("GetFacetData"); ole.Invoke(did, 0, pythoncom.DISPATCH_METHOD, True,
+  tol, VARIANT(VT_BYREF|VT_I4,0), VARIANT(VT_BYREF|VT_ARRAY|VT_R8,[]) ×3, VARIANT(VT_BYREF|VT_ARRAY|VT_I4,[]) ×2)`.
+  It returned about 20k facets in 0.2 s, with points in metres in part coordinates. Move them to assembly
+  coordinates with `Occurrence.GetTransform()` (m, rad).
+- **Faces picked in an assembly come back as `Reference`** (`SelectSet.Item(i)`). Use `.Parent` for the
+  occurrence and `.Object` for the face in part coordinates (`GetRange` works). `Reference.GetMatrix([0.0]*16)`
+  failed from pywin32, so use `Parent.GetTransform()`. The AutoEDM `se_medir_selecao` does not measure `Reference`.

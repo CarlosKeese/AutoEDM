@@ -6,6 +6,7 @@
 - Synchronous vs ordered
 - `ProfileSets` sketches
 - Fixation holes
+- Several holes in ONE Hole feature (UserDefinedPatterns.AddByProfiles)
 - Annular grooves (O-ring / snap-ring housings)
 - Threaded holes / physical threads
 
@@ -112,12 +113,14 @@ refuse *without throwing* — and (b) that the **feature is still there**, by bo
 Without (b), a delete that took the feature with it would be logged as `CREATED ✓` over a part
 with no groove in it.
 
-**A `ProfileSet` takes exactly ONE `Profile` — the second `Profiles.Add` returns `E_FAIL`.**
+**A `ProfileSet` takes ONE plane — a second `Profiles.Add` on a DIFFERENT plane returns `E_FAIL`.**
 Confirmed on a real part (2026-09-08) by breaking it: a routine that probed three base planes
 was "optimised" to reuse a single probe set, one profile per plane. Plane 1 read fine, planes 2
 and 3 threw `E_FAIL`, no plane matched, and the feature silently stopped being created — the
-only symptom was two warning lines and zero geometry. The plural collection name promises
-nothing; it holds one.
+only symptom was two warning lines and zero geometry. **On the SAME plane, several profiles in one
+set work** (measured 2026-11-09, `tools/UndoProbe --multifuro set`: `Profiles.Count = 3`, each
+`End(1) = 0`) — and it is exactly how the UI builds a multi-hole Hole feature (see "Several holes in
+ONE Hole feature" below).
 
 So **probe sketches are sketches, and you cannot pool them**. Counting them still matters — one
 throwaway `ProfileSet` per base plane, times every item in a batch, is a lot of sketches — but
@@ -164,6 +167,42 @@ Then `HoleData = PartDocument.HoleDataCollection.Add(HoleType, DiameterMeters, �
 with `ExtentType = igFinite (13)` for a **blind** hole (ordered part → `AddFinite(Profile,
 side, depth, HoleData)`). Then delete the ProfileSet. **One `Holes2d.Add` per profile** —
 two centers in one profile yields only **one** hole.
+
+**Several holes in ONE Hole feature (ordered; how the UI does it — PROVED 2026-11-09).** The
+Hole command with N circles is NOT a Hole with N `Holes2d`: the recorder (AutoEDM
+`se_gravador_iniciar/gravar`) on a 3-hole Hole made by hand showed a feature of type
+`igUserDefinedPatternFeatureObject (-1468087919)`, listed in `Model.UserDefinedPatterns` (NOT in
+`Model.Holes`), with 3 `Model.HoleGeometries` and ONE `ProfileSet` holding **3 Profiles, one hole
+each**. The API recipe that reproduces it (AutoEDM `tools/UndoProbe --multifuro padrao-manual` /
+`padrao-preso` / `botao`, throwaway parts, then the "Alívio de extratores" button):
+
+```
+ps      = doc.ProfileSets.Add()
+for each centre:  prof_i = ps.Profiles.Add(plane)        // same set, same plane
+                  prof_i.Holes2d.Add(x, y)               // ONE hole per profile
+                  (optional: IncludeEdge(mouth edge) → ToggleConstruction → Relations2d.AddConcentric(hole2d, circle))
+                  prof_i.End(1)                          // 0
+seed    = Model.Holes.AddFinite(prof_1, side, depth, HoleData)
+udp     = Model.UserDefinedPatterns.AddByProfiles(N, Profile[] TYPED {prof_1 … prof_N}, seed)
+          // InvokeMember; the seed's OWN profile goes in the array too
+```
+
+Result: `udp.Status` OK, `NumberInputFeatures = N`, N holes in the body, **one** item in the tree (the
+seed is absorbed: it becomes the pattern, exactly like the UI feature); name it via `udp.Name`.
+With the concentric relation each hole **follows** its parent hole: moving the parent's `Hole2d`
+(`hole.Profile.Holes2d.Item(1).SetCenterPoint`) + `Model.Recompute()` moved the pattern hole with it.
+What does NOT work (all measured):
+
+- N `Holes2d` in ONE profile: **any** `Profile.End(…)` (0, 1, 8193, 524288) collapses `Holes2d.Count`
+  3 → 1 and only one hole is cut; with no `End` the hole is born `igFeatureFailed` with 0 faces.
+- One set with N profiles + `Holes.AddFinite(prof_1)` alone: only prof_1 is cut (1 of 3).
+- `AddByProfiles` with only the OTHER positions (seed's profile left out), one `ProfileSet` each:
+  without relations the pattern is born OK but EMPTY (0 faces, body reads `E_FAIL`); **with
+  IncludeEdge + AddConcentric in those profiles it CRASHED Solid Edge** (native, no exception — the
+  process just closed, unsaved work lost; MD-15428, 2026-11-09 10:22). Never test this API on the
+  user's model: use a throwaway part.
+- `Hole.Faces(igQueryAll)` of a grouped feature can list only one hole's faces: verify a multi-hole
+  feature by scanning the BODY (a cylinder of the relief Ø centred on each hole).
 
 **Annular grooves (O-ring housings, snap-ring grooves, reliefs) — one recipe covers all three
 placements.** A groove in a flat face, a groove around a shaft and a groove inside a bore look

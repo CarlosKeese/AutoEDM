@@ -116,6 +116,12 @@ property). It no longer does:
   work, snapshot again, and diff **by name** (not count — stitching CONSUMES input surfaces, so
   counts drop; names catch adds AND removes). Log the doc identity (`Name/Type/Models.Count`)
   each snapshot — an empty diff usually means `ActiveDocument` wasn't the part being edited.
+  **When the API "can't" do what the UI does, record the UI first** — the UI feature may not be
+  the object you assumed. 2026-11-09: three rounds of "several `Holes2d` + `Holes.AddFinite`" cut
+  one hole; the recorder on a 3-hole Hole made by hand showed it lands in `UserDefinedPatterns`
+  (not `Holes`) with ONE `ProfileSet` of 3 profiles — which led straight to the
+  `AddByProfiles` recipe (`modeling-recipes.md`). The collection a feature lands in, and the
+  `Profiles.Count` of its new `ProfileSet`, are the two lines to read first.
 - **Live probe from OUTSIDE SE, no rebuild/deploy (2026-09-21 — how the Attach/GetFaces/paint
   fixes were found in minutes instead of deploy rounds).** Windows PowerShell **5.1**
   (`powershell.exe`, .NET Framework — pwsh 7 has no `GetActiveObject`) +

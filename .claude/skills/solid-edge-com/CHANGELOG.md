@@ -1,5 +1,18 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-09 — several holes in ONE Hole feature; what crashes Solid Edge
+
+Measured live (AutoEDM "Alívio de extratores" + `tools/UndoProbe --multifuro`, throwaway parts).
+`references/modeling-recipes.md`: new section "Several holes in ONE Hole feature" — the UI multi-hole
+Hole is a `UserDefinedPattern`; recipe = one `ProfileSet` with one profile per hole, seed
+`Holes.AddFinite(prof_1)`, `UserDefinedPatterns.AddByProfiles(N, all profiles, seed)`, holes tied to
+their parents with `IncludeEdge` + `AddConcentric` (follows a moved parent); what does not work
+(`End` collapses `Holes2d` 3 → 1; no `End` = failed hole; seed profile left out = empty pattern or a
+CRASH). The "one Profile per ProfileSet" note narrowed to profiles on different planes.
+`references/errors.md`: SE closing inside `AddByProfiles`; plane proxies dead after deleting a feature
+on them; features failing on a part made ordered before its first solid. `references/discovery.md`:
+record the UI action before concluding the API can't.
+
 ## 2026-10-30 — holes that follow a 3D sketch; undo in place
 
 `references/modeling-recipes.md`: associative cooling holes (normal plane at the tip, `AddFromTo` plane
