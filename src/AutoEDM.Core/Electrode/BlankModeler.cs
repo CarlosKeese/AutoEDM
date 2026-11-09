@@ -496,7 +496,8 @@ namespace AutoEDM.Electrode
                 Log.Info($"Furos (ModelingMode={mode}): {fix.CenterThread} ROSCADO — broca Ø{fix.CenterTapDrillDiameter:0.#}, " +
                          $"furo {fix.CenterHoleDepth:0.#} (até o ombro, ponta {fix.CenterBottomAngle:0.#}°), " +
                          $"rosca {fix.CenterThreadDepth:0.#}, chanfro {fix.CenterChamferSetback:0.##}×{fix.CenterChamferAngle:0.#}° + " +
-                         $"2×Ø{fix.DowelDiameter:0.#}×{fix.DowelDepth:0.#} @ {fix.DowelCenterDistance:0.#} ({layout}); bloco {blockXmm:0.0}×{blockYmm:0.0}.");
+                         $"2×Ø{fix.DowelDiameter:0.#}×{fix.DowelDepth:0.#} (até o ombro, ponta {fix.DowelBottomAngle:0.#}°, chanfro {fix.DowelChamferSetback:0.##}×{fix.DowelChamferAngle:0.#}°) " +
+                         $"@ {fix.DowelCenterDistance:0.#} ({layout}); bloco {blockXmm:0.0}×{blockYmm:0.0}.");
 
                 // RAIZ dos furos (log 2026-07-15): o `Holes.AddSync` do M6 DESCONECTA o proxy
                 // da peça (RPC_E_DISCONNECTED 0x80010108) — nem retry nem DelayCompute salvam
@@ -522,13 +523,13 @@ namespace AutoEDM.Electrode
                 created.Add(m6);
                 // Os 2 pinos são IGUAIS: um grupo, como a interface faz (Carlos, 2026-11-09) — editar um
                 // edita os dois, e "Separar" no SE solta um deles. Se o grupo não vingar, um por um.
-                object pins = PinGroup(app, topZmm, fix.DowelDiameter, fix.DowelDepth,
+                object pins = PinGroup(app, topZmm, fix,
                     new[] { new[] { centerXmm + d1x, centerYmm + d1y }, new[] { centerXmm + d2x, centerYmm + d2y } });
                 if (pins != null) created.Add(pins);
                 else
                 {
-                    created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d1x, centerYmm + d1y, "Ø4 #1"));
-                    created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d2x, centerYmm + d2y, "Ø4 #2"));
+                    created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d1x, centerYmm + d1y, "Ø4 #1", dowel: fix));
+                    created.Add(HoleAt(app, topZmm, fix.DowelDiameter, fix.DowelDepth, centerXmm + d2x, centerYmm + d2y, "Ø4 #2", dowel: fix));
                 }
                 created.RemoveAll(f => f == null);
 
@@ -630,7 +631,7 @@ namespace AutoEDM.Electrode
         /// <param name="tap">Só para furo ROSCADO: profundidade da rosca, ângulo de ponta de
         /// broca e chanfro de entrada. Nulo = defaults do <see cref="FixationPattern"/>.</param>
         private static object HoleAt(dynamic app, double planeZmm, double diaMm, double depthMm,
-            double cxMm, double cyMm, string label, string threadDesc = null, FixationPattern tap = null)
+            double cxMm, double cyMm, string label, string threadDesc = null, FixationPattern tap = null, FixationPattern dowel = null)
         {
             object hole = null;
             string psName = null;
@@ -651,7 +652,7 @@ namespace AutoEDM.Electrode
                     if (hd == null) return null; // sem HoleData de rosca não adianta furar: cai no fallback Ø5
                     holeData = (object)hd;
                 }
-                else holeData = PlainHoleData(doc, diaMm);
+                else holeData = dowel != null ? DowelHoleData(doc, dowel) : PlainHoleData(doc, diaMm);
 
                 dynamic ps = doc.ProfileSets.Add();
                 try { psName = (string)ps.Name; } catch { }
@@ -706,8 +707,9 @@ namespace AutoEDM.Electrode
         /// em <c>tools/UndoProbe --furosync sets</c> e conferido no PathFinder pelo Carlos (agrupados,
         /// "Separar" funciona). Só no síncrono; null = quem chama faz um por um.
         /// </summary>
-        private static object PinGroup(dynamic app, double planeZmm, double diaMm, double depthMm, double[][] centersMm)
+        private static object PinGroup(dynamic app, double planeZmm, FixationPattern fix, double[][] centersMm)
         {
+            double diaMm = fix.DowelDiameter, depthMm = fix.DowelDepth;
             dynamic doc = null;
             var sets = new System.Collections.Generic.List<string>();
             object hole = null;
@@ -719,7 +721,7 @@ namespace AutoEDM.Electrode
 
                 dynamic plane = doc.RefPlanes.AddParallelByDistance(
                     doc.RefPlanes.Item(1), Units.MmToM(planeZmm), 2, Type.Missing, Type.Missing, Type.Missing);
-                object holeData = PlainHoleData(doc, diaMm);           // UM HoleData para todos = o grupo
+                object holeData = DowelHoleData(doc, fix);             // UM HoleData para todos = o grupo
                 var profs = new SolidEdgePart.Profile[centersMm.Length];
                 for (int i = 0; i < centersMm.Length; i++)
                 {
@@ -794,15 +796,33 @@ namespace AutoEDM.Electrode
         /// usuário (rebaixo fantasma, Ø trocado — errors.md, "collection Add succeeds but…"); revisão dos
         /// botões de furação, 2026-11-09.
         /// </summary>
-        private static object PlainHoleData(dynamic doc, double diaMm)
+        private static object PlainHoleData(dynamic doc, double diaMm, double bottomAngleDeg = 0)
         {
             object hdc = (object)doc.HoleDataCollection;
             var a = new object[21];
             for (int i = 0; i < a.Length; i++) a[i] = Type.Missing;
             a[0] = 33;                        // igRegularHole
             a[1] = Units.MmToM(diaMm);
+            if (bottomAngleDeg > 0)
+            {
+                a[6] = bottomAngleDeg;        // BottomAngle — ponta de broca, em GRAUS
+                a[13] = 145;                  // VBottomDimType = igVBottomDimToFlat: profundidade até o OMBRO
+            }
             a[20] = true;                     // IgnoreSavedDefaultValues
             return hdc.GetType().InvokeMember("Add", System.Reflection.BindingFlags.InvokeMethod, null, hdc, a);
+        }
+
+        /// <summary>
+        /// Furo de pino Ø4 (Carlos, 2026-11-09): 7 mm até o ombro, ponta 118°, chanfro de entrada 0,4 × 45°.
+        /// Receita provada em <c>tools/UndoProbe --furosync sets --pino</c>: Add de 21 parâmetros com
+        /// BottomAngle (graus) + VBottomDimType 145, e <c>SetStartChamfer(1, recuo m, ângulo graus)</c> no
+        /// HoleData antes do AddSync — lidos de volta nos dois furos do grupo.
+        /// </summary>
+        private static object DowelHoleData(dynamic doc, FixationPattern fix)
+        {
+            object hd = PlainHoleData(doc, fix.DowelDiameter, fix.DowelBottomAngle);
+            if (hd != null && fix.DowelChamferSetback > 0) EnsureStartChamfer(hd, fix.DowelChamferSetback, fix.DowelChamferAngle);
+            return hd;
         }
 
         /// <summary>
@@ -920,7 +940,10 @@ namespace AutoEDM.Electrode
         /// <c>SetStartChamfer(on, setback, angle)</c> se o SE não tiver aplicado (o
         /// <c>Add</c> de 21 params nem tem esses parâmetros). Nunca lança: chanfro é acabamento.
         /// </summary>
-        private static void EnsureStartChamfer(object hd, FixationPattern tap)
+        private static void EnsureStartChamfer(object hd, FixationPattern tap) =>
+            EnsureStartChamfer(hd, tap.CenterChamferSetback, tap.CenterChamferAngle);
+
+        private static void EnsureStartChamfer(object hd, double setbackMm, double angleDeg)
         {
             int on = 0; double setback = 0, angle = 0;
             try
@@ -934,14 +957,14 @@ namespace AutoEDM.Electrode
             }
             catch (Exception e) { Log.Warn("  Chanfro: GetStartChamfer falhou: " + e.GetBaseException().Message); }
 
-            bool ok = on != 0 && Math.Abs(Units.MToMm(setback) - tap.CenterChamferSetback) < 0.01;
+            bool ok = on != 0 && Math.Abs(Units.MToMm(setback) - setbackMm) < 0.01;
             if (!ok)
             {
                 try
                 {
                     hd.GetType().InvokeMember("SetStartChamfer", BindingFlags.InvokeMethod, null, hd,
-                        new object[] { 1, Units.MmToM(tap.CenterChamferSetback), tap.CenterChamferAngle });
-                    Log.Info($"  Chanfro de entrada aplicado por SetStartChamfer: {tap.CenterChamferSetback:0.##} × {tap.CenterChamferAngle:0.#}°.");
+                        new object[] { 1, Units.MmToM(setbackMm), angleDeg });
+                    Log.Info($"  Chanfro de entrada aplicado por SetStartChamfer: {setbackMm:0.##} × {angleDeg:0.#}°.");
                     return;
                 }
                 catch (Exception e) { Log.Warn("  Chanfro: SetStartChamfer falhou: " + e.GetBaseException().Message); return; }

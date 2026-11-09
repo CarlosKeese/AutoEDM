@@ -184,6 +184,11 @@ Holes.AddSync(n, Profile[] TYPED {prof_1 … prof_n}, side, igFinite 13, depthMe
 // returns ONE Hole (the first); Model.Holes grows by n; then delete the ProfileSets (synchronous)
 ```
 
+Drill point and entry chamfer go on that ONE HoleData and so apply to the whole group (measured with
+`--furosync sets --pino`, read back from both holes): `Add` param 6 `BottomAngle` = 118 (DEGREES) + param
+13 `VBottomDimType` = 145 (`igVBottomDimToFlat`, depth measured to the shoulder), and
+`hd.SetStartChamfer(1, setbackMeters, angleDegrees)` before `AddSync` → both holes `BottomAngle 118`,
+`GetStartChamfer` = on, 0.4 mm × 45°.
 The same profiles in ONE `ProfileSet` also cut both. Separate `AddSync(1, …)` calls, each with its own
 HoleData, give n LOOSE holes (what the AutoEDM Criar Base did before). As always after `AddSync`,
 re-read `app.ActiveDocument` before the next call (the part proxy disconnects). In ORDERED use the

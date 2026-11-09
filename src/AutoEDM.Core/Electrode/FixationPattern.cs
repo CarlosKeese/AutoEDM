@@ -42,8 +42,20 @@ namespace AutoEDM.Electrode
         /// <summary>Diâmetro dos dois furos de pino.</summary>
         public double DowelDiameter { get; set; } = 4.0;
 
-        /// <summary>Profundidade dos furos de pino Ø4 (mm) — confirmado Carlos.</summary>
-        public double DowelDepth { get; set; } = 9.0;
+        /// <summary>
+        /// Profundidade dos furos de pino Ø4 (mm), medida até o OMBRO como no M6 — o cone da broca fica
+        /// abaixo (Carlos, 2026-11-09: 9 → 7 mm).
+        /// </summary>
+        public double DowelDepth { get; set; } = 7.0;
+
+        /// <summary>Ponta da broca no fundo dos furos de pino (graus, ângulo total) — Carlos, 2026-11-09.</summary>
+        public double DowelBottomAngle { get; set; } = 118.0;
+
+        /// <summary>Chanfro de entrada dos furos de pino: recuo em mm (0,4 × 45°) — Carlos, 2026-11-09.</summary>
+        public double DowelChamferSetback { get; set; } = 0.4;
+
+        /// <summary>Chanfro de entrada dos furos de pino: ângulo em GRAUS (0,4 × 45°).</summary>
+        public double DowelChamferAngle { get; set; } = 45.0;
 
         /// <summary>Distância entre os centros dos dois furos Ø4 (mm) — 7,5 mm do centro.</summary>
         public double DowelCenterDistance { get; set; } = 15.0;

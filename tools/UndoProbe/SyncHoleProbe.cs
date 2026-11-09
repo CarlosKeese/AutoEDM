@@ -81,7 +81,13 @@ namespace AutoEDM.Tools.UndoProbe
             var a = new object[21];
             for (int i = 0; i < a.Length; i++) a[i] = Type.Missing;
             a[0] = 33; a[1] = Units.MmToM(4); a[20] = true;
+            if (Pin) { a[6] = 118.0; a[13] = 145; }                 // ponta 118°, profundidade até o ombro
             object hd = hdc.GetType().InvokeMember("Add", BindingFlags.InvokeMethod, null, hdc, a);
+            if (Pin)
+            {
+                try { hd.GetType().InvokeMember("SetStartChamfer", BindingFlags.InvokeMethod, null, hd, new object[] { 1, 0.0004, 45.0 }); }
+                catch (Exception ex) { Console.WriteLine("  SetStartChamfer: " + Msg(ex)); }
+            }
 
             var profs = new List<SolidEdgePart.Profile>();
             var setNames = new List<string>();
@@ -101,7 +107,8 @@ namespace AutoEDM.Tools.UndoProbe
             }
             Console.WriteLine($"  AddSync({profs.Count}, Profile[], lado 1, igFinite, 9 mm, Ø4) …  [desfazer antes: {Undo(app)}]");
             Console.Out.Flush();
-            object h = doc.Models.Item(1).Holes.AddSync(profs.Count, profs.ToArray(), 1, 13, (object)0.009, hd);
+            object h = doc.Models.Item(1).Holes.AddSync(profs.Count, profs.ToArray(), 1, 13, (object)(Pin ? 0.007 : 0.009), hd);
+            if (Pin) ReadBack(app);
             Console.WriteLine($"  [desfazer depois do furo: {Undo(app)}] {Sets(app)}");
             Console.WriteLine($"  → {Try(() => Convert.ToString(((dynamic)h).Name))}, Status {Try(() => Convert.ToString(((dynamic)h).Status))}");
             // Apagar os esboços PELO NOME, do documento RELIDO (os proxies antigos morrem com o AddSync).
@@ -145,6 +152,28 @@ namespace AutoEDM.Tools.UndoProbe
             Console.WriteLine($"  AddSync → {Try(() => Convert.ToString(((dynamic)h).Name))}, Status {Try(() => Convert.ToString(((dynamic)h).Status))}");
             dynamic fresh = app.ActiveDocument;
             Console.WriteLine($"  depois: Sketches = {Try(() => Convert.ToString(fresh.Sketches.Count))}; {Sets(app)}; desfazer {Undo(app)}");
+        }
+
+        public static bool Pin;
+
+        /// <summary>Lê de volta, dos furos criados, ângulo da ponta, tipo de cota, chanfro e profundidade.</summary>
+        private static void ReadBack(dynamic app)
+        {
+            dynamic holes = app.ActiveDocument.Models.Item(1).Holes;
+            for (int i = 1; i <= (int)holes.Count; i++)
+            {
+                dynamic h = holes.Item(i);
+                object hd = h.HoleData;
+                object[] ch = { 0, 0.0, 0.0 };
+                var mod = new ParameterModifier(3); mod[0] = true; mod[1] = true; mod[2] = true;
+                string chamfer;
+                try { hd.GetType().InvokeMember("GetStartChamfer", BindingFlags.InvokeMethod, null, hd, ch, new[] { mod }, null, null);
+                      chamfer = $"ligado={ch[0]}, {Convert.ToDouble(ch[1]) * 1000:0.###} mm × {Convert.ToDouble(ch[2]):0.#}°"; }
+                catch (Exception ex) { chamfer = "? " + Msg(ex); }
+                Console.WriteLine($"  {Try(() => (string)h.Name)}: Ø{Try(() => (Convert.ToDouble(((dynamic)hd).HoleDiameter) * 1000).ToString("0.##"))}, " +
+                                  $"ponta {Try(() => Convert.ToString(((dynamic)hd).BottomAngle))}°, VBottomDimType {Try(() => Convert.ToString(((dynamic)hd).VBottomDimType))}, " +
+                                  $"chanfro {chamfer}, Depth {Try(() => (Convert.ToDouble(h.Depth) * 1000).ToString("0.##"))} mm");
+            }
         }
 
         private static string Undo(dynamic app) => Try(() => Convert.ToString(app.ActiveDocument.UndoTransactionCount()));

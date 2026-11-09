@@ -1,5 +1,10 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-09 (5) — drill point and chamfer on a synchronous hole group
+
+`references/modeling-recipes.md`: BottomAngle + VBottomDimType and SetStartChamfer on the shared HoleData apply to every
+hole of the group (read back from both).
+
 ## 2026-11-09 (4) — which sketch for a synchronous hole
 
 `references/modeling-recipes.md`: temp `ProfileSets.Add()` + `AddSync` + delete it BY NAME from a re-read document keeps
