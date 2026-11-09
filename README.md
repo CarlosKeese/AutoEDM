@@ -112,6 +112,7 @@ A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cad
 | **Unir superfícies** | **síncrono** | Fecha as regiões abertas da queima (furos e vãos, em qualquer orientação; o rim onde o bloco encosta fica aberto), costura e une ao bloco num sólido único. Arestas coincidentes que a costura não juntou viram aviso, não "Limite". Isolado de propósito: só une, sem GAP nem cor. |
 | **Aplicar GAP** | **ordenado** | Escolha o Ra numa lista (pré-selecionada pelo Ra gravado na peça): aplica o offset de faísca via `Model.FaceOffsets`, pinta a cor do Ra e nomeia a feature na árvore. |
 | **Alojamento de O'ring** | **ordenado** | Canal de anel O'ring pela **ISO 3601**. Capture uma face (cilíndrica = eixo/furo; plana = vedação de face) e uma aresta circular: ele mede o diâmetro, acha o anel mais próximo no catálogo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta. Mostra **esmagamento, estiramento e preenchimento antes de cortar**, e avisa quando algum sai da norma — quem decide é você. |
+| **Alívio de extratores** | **ordenado** | Clique na face de **trás** da placa/postiço: os furos perpendiculares que abrem nela ganham alívio a partir dela, deixando a **guia** do extrator junto à moldagem (2 × Ø, entre 10 e 20 mm, medida da ponta mais curta; alívio Ø + 0,5 até Ø6 e Ø + 1,0 acima — editável). Roscados, com rebaixo/dois Ø (inclusive já aliviados), chanfro/escareado/raio, cegos e incompletos ficam de fora. Prévia por realce (verde/laranja) e desmarcar furo a furo; um recurso de furo por alívio. |
 
 ### Molde — documento de montagem
 
@@ -504,6 +505,7 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | WEDM: exportar perfis (um `.igs` por altura Z) | ✅ validado no SE e no Pitágoras |
 | WEDM: curvas nas extremidades paralelas a XY das superfícies | ✅ validado no SE (2026-09-16) |
 | Alojamento de O'ring pela ISO 3601 | 🚧 construído, aguardando validação no SE |
+| Alívio de extratores (furos da face, guia pela convenção) | 🚧 construído, coberto por teste, aguardando validação no SE |
 | Aplicar GAP (offset + cor + nome da feature) | 🚧 corrigido, aguardando confirmação final no SE |
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só funciona em edição em contexto (in-place) |

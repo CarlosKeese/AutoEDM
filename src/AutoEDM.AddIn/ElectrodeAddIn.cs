@@ -41,7 +41,7 @@ namespace AutoEDM.AddIn
             AssemblyRedirect.Install();
 
             base.OnConnection(application, ConnectMode, AddInInstance);
-            AddInEx.GuiVersion = 29; // incrementar ao mudar a ribbon (v29 = "Porta-molde", id 34)
+            AddInEx.GuiVersion = 30; // incrementar ao mudar a ribbon (v30 = "Alívio de extratores", id 35)
 
             Current = this;
             App = application;

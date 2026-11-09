@@ -59,6 +59,7 @@ namespace AutoEDM.AddIn
         private const int CmdDesenhoProcesso = 32;   // DESENHO: cópia da peça sobre a original numa montagem nova em 02 - PROCESSO
         private const int CmdEletrodoInterpolacao = 33; // Eletrodo redondo: perfil da superfície revolvido em Z, Ø informado
         private const int CmdPortaMolde = 34;        // MOLDE: porta-molde Polimold pelas peças da montagem, guiado por variáveis
+        private const int CmdAlivioExtratores = 35;  // MOLDE: alívio nos furos de extrator que abrem na face clicada (PEÇA ordenada)
 
         /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
         private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
@@ -112,6 +113,7 @@ namespace AutoEDM.AddIn
                 case CmdOrdenarPathFinder: OrdenarPathFinder(); break;
                 case CmdDesenhoProcesso: DesenhoProcesso(); break;
                 case CmdPortaMolde: PortaMolde(); break;
+                case CmdAlivioExtratores: AlivioExtratores(); break;
             }
         }
 
@@ -587,6 +589,30 @@ namespace AutoEDM.AddIn
                 _coolingForm.Show();
             }
             catch (Exception ex) { Fail("abrir a refrigeração", ex); }
+        }
+
+        /// <summary>
+        /// Botão "Alívio de extratores" do grupo Molde (Carlos, 2026-11-09): na PEÇA ordenada, clica-se
+        /// na face de trás da placa; os furos que abrem nela (menos roscados, com rebaixo, chanfro,
+        /// cegos) ganham alívio, deixando a guia do extrator na outra ponta. Janela modeless única.
+        /// </summary>
+        private static EjectorReliefForm _ejectorForm;
+
+        private void AlivioExtratores()
+        {
+            if (!AllowedHere(CmdAlivioExtratores, explain: true)) return;
+            dynamic app = ElectrodeAddIn.Current?.App;
+            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
+            try
+            {
+                if (_ejectorForm != null && !_ejectorForm.IsDisposed) { _ejectorForm.BringToFront(); _ejectorForm.Activate(); return; }
+                if (_pickForm != null && !_pickForm.IsDisposed) _pickForm.Close();   // uma janela com o mouse da SE por vez
+                Log.Info("===== ALÍVIO DE EXTRATORES — janela aberta =====");
+                _ejectorForm = new EjectorReliefForm((object)app);
+                _ejectorForm.FormClosed += (s, e) => { _ejectorForm = null; Log.Info("===== FIM (ALÍVIO DE EXTRATORES) ====="); };
+                _ejectorForm.Show();
+            }
+            catch (Exception ex) { Fail("abrir o alívio de extratores", ex); }
         }
 
         /// <summary>
@@ -1841,6 +1867,8 @@ namespace AutoEDM.AddIn
                 // Furos ordenados, cada um com esboço num plano normal à linha — o esboço é filho do
                 // furo (mesma regra do O'ring); em síncrono ficaria órfão.
                 { CmdRefrigeracao,        new CommandSpec("REFRIGERAÇÃO",         DocKind.Part, ModelingEnv.Ordered) },
+                // Alívios = furos ordenados com esboço no plano da face (receita da Refrigeração).
+                { CmdAlivioExtratores,    new CommandSpec("ALÍVIO DE EXTRATORES", DocKind.Part, ModelingEnv.Ordered) },
                 // Desenho 2D: só LÊ a peça e cria um DOCUMENTO NOVO (.dft). Não cria recurso na peça,
                 // então qualquer ambiente serve.
                 { CmdDesenho2D,           new CommandSpec("DES. 2D (TORNO)",DocKind.Part, ModelingEnv.Any) },

@@ -501,6 +501,7 @@ A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `S
 | 26 | Nova peça | Molde | montagem | qualquer |
 | 34 | Porta-molde | Molde | montagem (salva) | qualquer |
 | 27 | Refrigeração | Molde | peça | **ORDENADO** |
+| 35 | Alívio de extratores | Molde | peça | **ORDENADO** |
 | 14 | Alojamento de anel | Molde | peça | **ORDENADO** |
 | 18 | Curvas das superfícies | WEDM | peça | **SÍNCRONO** |
 | 17 | Exportar perfis (IGES) | WEDM | peça | **SÍNCRONO** |
@@ -746,6 +747,25 @@ As linhas retas de um **esboço 3D da placa** viram canais. Janela modeless `Coo
 | Roscas oferecidas | ISO Metric + ANSI Inch da base (as outras normas repetem as mesmas G/R); padrão engate **G1/4**, tampão **G1/8** | `CoolingService` |
 | Conferência | referencial do esboço (origem na ponta, normal no eixo) e o furo **medido** (as faces cobrem um ponto de dentro do canal); lado errado → apaga e refaz do outro lado | `CoolingChannelModeler.TryHole` |
 | Nome na árvore | `Refrigeração Ø8 - L1+L2`, `Engate G1/4 - L1:I`, `Tampão G1/8 - L3:F` | `CoolingPlanner` |
+
+## 4.5c2 Alívio de extratores — id 35 (peça, **ordenada**)
+
+Clica-se na face de **trás** da placa/postiço (lado da placa extratora); os furos que abrem nela ganham alívio a partir dela e a **guia** do extrator fica na outra ponta, junto à moldagem. Janela modeless `EjectorReliefForm`; Core `AutoEDM.Mold.Ejector` (`EjectorReliefPlanner` puro, `EjectorHoleReader`, `EjectorReliefModeler`). Sem ferramenta MCP por enquanto.
+
+| Regra | Valor | Onde |
+|---|---|---|
+| Face | plana, perpendicular a X, Y ou Z (`seLocateFace`); ou a 1ª da seleção ao abrir | `EjectorHoleReader.ReadFace` |
+| Furo da face | faces de revolução com eixo paralelo à normal, agrupadas por eixo (coaxial ≤ 0,02 mm), encostando no plano e com o eixo dentro da caixa da face; lado do material = para onde os furos vão (desempate: caixa do corpo) | `EjectorReliefPlanner.Plan` |
+| Trechos | o grupo coaxial é dividido pelo **menor Ø** (onde o extrator desliza): **boca** = o que vem antes dele, desde a face de trás; **saída** = o que vem logo depois. Na saída só conta o que **fecha** o furo; raio, cone ou Ø maior da superfície da moldagem em volta dela são ignorados (MD-15428, 2026-11-09) | `EjectorReliefPlanner.Classify` |
+| Fora | **roscado** (faces de Furo com `TreatmentType = igTappedHole` e de recursos Rosca); **dois Ø** (rebaixo de cabeça, escalonado ou já aliviado — o botão pode rodar de novo); **cone na boca** (chanfro, escareado) ou **cone que estreita** na saída (ponta de broca); cone que **alarga** na saída (sede do lado da moldagem) passa, e a guia vai até o começo dele; **toro na boca** (raio) ou **toro que fecha** a saída (fundo arredondado); **fundo plano** (cego); **incompleto** (caixas não cobrem o Ø); **curto** (alívio < 1 mm) | `EjectorReliefPlanner.Classify` |
+| Comprimento | da face até a ponta **mais curta**: o menor começo das arestas que não encostam na face (saída inclinada/curva); as retas da costura e da divisão em metades não contam | idem |
+| Guia | **2 × Ø, entre 10 e 20 mm**, para cima em 0,5 mm (convenção HASCO/DME/literatura: 1,5–3 × Ø; as normas DIN ISO 8694/6751 fixam o pino, não o furo) | `EjectorReliefOptions.GuideLengthMm` |
+| Alívio | Ø + **0,5** até Ø6, Ø + **1,0** acima, para cima em 0,1 mm; profundidade = comprimento − guia; fundo reto | `EjectorReliefOptions.ReliefDiameterMm` |
+| Aviso | alívios vizinhos com parede < 0,5 mm | `EjectorReliefPlanner.Plan` |
+| Prévia | realce verde (aliviar) / laranja (fora); passar o mouse numa linha da tabela destaca o furo em **amarelo** no modelo | `EjectorReliefForm` |
+| Escolha por furo | a caixa da tabela vale para todos: desmarcar um aprovado pula; **marcar um reprovado força** o alívio ("FORÇADO — motivo", também no log); furo curto (alívio < mínimo) não pode ser forçado. As medidas saem para todos | `EjectorHole.UserChoice`, `EjectorReliefPlanner.Plan(…, choices)` |
+| Modelagem | um recurso por **grupo** de mesmo Ø e profundidade de alívio (`EjectorReliefPlan.Groups`), como o Furo de vários furos da interface: um esboço com um perfil por furo, semente `Holes.AddFinite` no 1º e `UserDefinedPatterns.AddByProfiles(N, todos os perfis, semente)` — um item só na árvore (provado em `tools/UndoProbe --multifuro`); se a SE recusar, sai um por um (`Holes.AddFinite`, `HoleDataCollection.Add` liso), esboço num plano paralelo à **face** a 0 mm (reserva: paralelo ao plano-base); centro **preso ao furo**: `IncludeEdge` da aresta da boca (relida a cada furo), construção, `Relations2d.AddConcentric(Hole2d, círculo)` (reserva `AddKeypoint`); se a SE recusar, sai solto com aviso no log; lado conferido pela medida (faces cobrem um ponto 1 mm dentro do alívio), e o lado bom vale para os seguintes | `EjectorReliefModeler` |
+| Nome na árvore | grupo: `Alívio Ø5,5 × 21,5 (E20, E21, E22)`; furo sozinho: `Alívio E1 Ø6,5` (E1… pela posição na face). A conferência exige o ponto de dentro de **cada** furo coberto por uma face do recurso | idem |
 
 ## 4.5d Porta-molde — id 34 (montagem)
 

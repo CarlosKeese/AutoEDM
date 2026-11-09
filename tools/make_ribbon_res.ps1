@@ -1,4 +1,4 @@
-﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5 e 7..11) para os botões do ribbon.
+﻿# Gera um .res Win32 com os recursos RT_BITMAP (IDs 1..5 e 7..12) para os botões do ribbon.
 # Sem rc.exe: monta o binário .res à mão (formato documentado) + bitmaps via System.Drawing.
 Add-Type -AssemblyName System.Drawing
 
@@ -66,6 +66,13 @@ function New-IconDib([int]$id) {
             $g.FillRectangle($b, 2,11, 3,3); $g.FillRectangle($b, 11,11, 3,3); $g.FillRectangle($b, 1,14, 14,2)
             $e = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0,110,200))
             $g.FillRectangle($e, 6,12, 4,2) }
+        12 { # Alívio de extratores: placa em corte (cinza), furo justo em cima (guia) e largo embaixo (alívio), pino azul
+            $b = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(140,140,140))
+            $g.FillRectangle($b, 1,3, 14,11)
+            $w = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+            $g.FillRectangle($w, 5,7, 6,7)                 # alívio (largo, do lado de trás)
+            $e = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(0,110,200))
+            $g.FillRectangle($e, 7,0, 2,16) }              # extrator: justo na guia, folgado no alívio
     }
     $g.Dispose()
     $ms = New-Object System.IO.MemoryStream
@@ -96,7 +103,7 @@ function Write-ResHeader([UInt32]$dataSize, [UInt16]$typeOrd, [UInt16]$nameOrd, 
 # Cabeçalho nulo obrigatório no início do .res
 Write-ResHeader 0 0 0 0
 
-foreach ($id in @(1, 2, 3, 4, 5, 7, 8, 9, 10, 11)) {   # o 6 (sonda) segue sem imagem, só rótulo
+foreach ($id in @(1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12)) {   # o 6 (sonda) segue sem imagem, só rótulo
     [byte[]]$dib = New-IconDib $id
     Write-Output ("  id {0}: DIB {1} bytes" -f $id, $dib.Length)
     Write-ResHeader ([UInt32]$dib.Length) 2 ([UInt16]$id) 0x1030  # type 2 = RT_BITMAP
