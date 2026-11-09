@@ -30,16 +30,11 @@ namespace AutoEDM.AddIn
         private const int CmdAnalisarZ = 3;      // Analisar eletrodos por Z
         private const int CmdSpecSheet = 4;      // Ficha (spec-sheet)
         private const int CmdCriarBase = 5;       // Criar Base (ambiente de PEÇA)
-        private const int CmdInspecionar = 6;       // SPY: dumpa o objeto COM selecionado
         private const int CmdUnirSuperficies = 7;   // Engrossar a queima e unir ao bloco (ISOLADO)
-        private const int CmdIniciarLeitura = 8;    // Gravador: snapshot inicial (ação manual)
-        private const int CmdGravarLeitura = 9;     // Gravador: diff + dump das features novas
         private const int CmdCriarEletrodoManual = 10; // Criar 1 eletrodo a partir da seleção manual de faces
         private const int CmdAplicarGap = 11;       // GAP + cor + nome no corpo já unido (ambiente de PEÇA)
         private const int CmdDuplicarEletrodo = 12; // Duplicar eletrodo(s) selecionado(s) p/ o próximo Ra da tabela
-        private const int CmdDiagRosca = 13;        // Sonda da rosca M6 (peça descartável)
         private const int CmdAlojamentoORing = 14;  // Alojamento de anel O'ring (janela modeless)
-        private const int CmdSondaInterPart = 15;   // Sonda do inter-part (rodada 2) — só leitura + peça descartável
         private const int CmdListaCorte = 16;       // Lista de corte: perfil do estoque + medida na serra dos eletrodos SELECIONADOS
         private const int CmdExportarPerfisWedm = 17; // WEDM: curvas de construção → um .igs por altura Z (PEÇA síncrona)
         private const int CmdCurvasDasSuperficies = 18; // WEDM: curvas nas extremidades paralelas a XY das superfícies (PEÇA síncrona)
@@ -48,7 +43,6 @@ namespace AutoEDM.AddIn
         private const int CmdMcpStatus = 21;        // MCP: em que pé está a ponte (modo, pedidos atendidos)
         private const int CmdMcpLiberarEscrita = 22; // MCP: permite as ferramentas que ESCREVEM (só o usuário liga)
         private const int CmdMcpSomenteLeitura = 23; // MCP: volta a ponte para somente-leitura
-        private const int CmdSondaMalha = 24;       // ENG. REVERSA: sonda de diagnóstico sobre a malha (SÓ LEITURA)
         private const int CmdListaModificacoes = 25; // Folha de revisões: peças com grupo "Rev.N" na árvore ordenada
         private const int CmdNovaPeca = 26;         // MOLDE: peça vazia codificada (.100/.200/.300) na origem das faces escolhidas
         private const int CmdRefrigeracao = 27;     // MOLDE: canais de refrigeração a partir das linhas do esboço 3D (PEÇA ordenada)
@@ -59,10 +53,9 @@ namespace AutoEDM.AddIn
         private const int CmdDesenhoProcesso = 32;   // DESENHO: cópia da peça sobre a original numa montagem nova em 02 - PROCESSO
         private const int CmdEletrodoInterpolacao = 33; // Eletrodo redondo: perfil da superfície revolvido em Z, Ø informado
         private const int CmdPortaMolde = 34;        // MOLDE: porta-molde Polimold pelas peças da montagem, guiado por variáveis
+        // ids 6, 8, 9, 13, 15 e 24 (Inspecionar, gravador, sondas de rosca, inter-part e malha) foram
+        // aposentados em 2026-11-09: viraram ferramentas MCP (se_inspecionar_selecao, se_gravador_*, se_sonda_*).
         private const int CmdAlivioExtratores = 35;  // MOLDE: alívio nos furos de extrator que abrem na face clicada (PEÇA ordenada)
-
-        /// <summary>Snapshot (nomes dos itens por coleção) no "Iniciar leitura" — diffado no "Gravar log".</summary>
-        private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>> _recBaseline;
 
         public ElectrodeRibbon() : base()
         {
@@ -95,18 +88,12 @@ namespace AutoEDM.AddIn
                 case CmdUnirSuperficies: UnirSuperficies(); break;
                 case CmdAplicarGap: AplicarGap(); break;
                 case CmdDuplicarEletrodo: DuplicarEletrodo(); break;
-                case CmdInspecionar: InspecionarSelecao(); break;
-                case CmdDiagRosca: DiagnosticarRosca(); break;
                 case CmdAlojamentoORing: AlojamentoORing(); break;
-                case CmdSondaInterPart: SondarInterPart(); break;
-                case CmdIniciarLeitura: IniciarLeitura(); break;
-                case CmdGravarLeitura: GravarLeitura(); break;
                 case CmdMcpLigar: McpLigar(); break;
                 case CmdMcpDesligar: McpDesligar(); break;
                 case CmdMcpStatus: McpStatus(); break;
                 case CmdMcpLiberarEscrita: McpDefinirModo(BridgeMode.Write); break;
                 case CmdMcpSomenteLeitura: McpDefinirModo(BridgeMode.ReadOnly); break;
-                case CmdSondaMalha: SondarMalha(); break;
                 case CmdMalhaParaSolido: MalhaParaSolido(); break;
                 case CmdLimparImportacao: LimparImportacao(); break;
                 case CmdDesenho2D: Desenho2D(); break;
@@ -406,25 +393,6 @@ namespace AutoEDM.AddIn
                     "\nVeja as posições no log.",
                     "AutoEDM — Analisar eletrodos", MessageBoxButtons.OK,
                     res.HasEdmOnlyGeometry ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
-            });
-        }
-
-        /// <summary>
-        /// SONDA DO INTER-PART (rodada 2). Só leitura na montagem + peças DESCARTÁVEIS: responde,
-        /// numa rodada, as rotas de cópia entre peças que nunca foram executadas e mapeia a API
-        /// para a skill. Não altera a cavidade, não salva a montagem.
-        /// </summary>
-        private void SondarInterPart()
-        {
-            Run(CmdSondaInterPart, (connector, doc, p) =>
-            {
-                AutoEDM.Experiments.InterPartProbe.Run(connector, doc);
-                MessageBox.Show(
-                    "Sonda concluída. TODO o resultado está no log — é ele que interessa, não esta janela.\n\n" +
-                    "Se quiser o teste decisivo: entre em EDIÇÃO EM CONTEXTO no eletrodo à mão, " +
-                    "deixe aberta e rode a sonda de novo. Comparar os dois logs responde se a cópia " +
-                    "entre peças depende só desse estado.",
-                    "AutoEDM — Sonda inter-part", MessageBoxButtons.OK, MessageBoxIcon.Information);
             });
         }
 
@@ -1220,163 +1188,6 @@ namespace AutoEDM.AddIn
         }
 
         /// <summary>
-        /// GRAVADOR (Carlos, 2026-07-16) — passo 1: tira o snapshot das contagens das coleções
-        /// (superfícies de construção + features do Model) do documento ativo. O usuário clica,
-        /// faz a ação manual no SE (criar "Limite", costurar, estender/mover…) e depois clica em
-        /// "Gravar log da leitura". Assim o AutoEDM dumpa exatamente as features que ele criou.
-        /// </summary>
-        private void IniciarLeitura()
-        {
-            dynamic app = ElectrodeAddIn.Current?.App;
-            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
-            try
-            {
-                Log.Info("===== INICIAR LEITURA DE AÇÃO MANUAL =====");
-                dynamic doc = app.ActiveDocument;
-                if (doc == null) { MessageBox.Show("Nenhum documento ativo.", "AutoEDM"); return; }
-                if (!ConfirmDocParaGravacao(doc, "iniciar a gravação")) return;
-                _recBaseline = ComDiagnostics.SnapshotInventory((object)doc);
-                MessageBox.Show(
-                    "Gravação INICIADA.\n\nAgora faça a ação manual no Solid Edge (ex.: criar a superfície 'Limite', costurar, estender/mover a face até o bloco).\n\n" +
-                    "Quando terminar, clique em \"Encerrar gravação\".",
-                    "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex) { Fail("iniciar a leitura de ação manual", ex); }
-        }
-
-        /// <summary>
-        /// GRAVADOR — passo 2: diffa contra o snapshot do "Iniciar leitura" e dumpa (SPY) as
-        /// features NOVAS de cada coleção que cresceu — revela a coleção/tipo/propriedades das
-        /// features que o usuário criou à mão, para reproduzir por COM.
-        /// </summary>
-        private void GravarLeitura()
-        {
-            dynamic app = ElectrodeAddIn.Current?.App;
-            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
-            try
-            {
-                Log.Info("===== GRAVAR LOG DA LEITURA =====");
-                if (_recBaseline == null)
-                {
-                    MessageBox.Show("Clique primeiro em \"Iniciar gravação\", faça a ação, e só então clique em \"Encerrar gravação\".", "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                dynamic doc = app.ActiveDocument;
-                if (doc == null) { MessageBox.Show("Nenhum documento ativo.", "AutoEDM"); return; }
-                if (!ConfirmDocParaGravacao(doc, "gravar o log")) return;
-                ComDiagnostics.DumpNewSince((object)doc, _recBaseline);
-                _recBaseline = null; // consome o snapshot (evita diff contra estado velho)
-                MessageBox.Show(
-                    "Leitura gravada no log (procure as linhas [REC] e [SPY]):\n%LOCALAPPDATA%\\AutoEDM\\logs\n\nMe mande esse log.",
-                    "AutoEDM — Gravador", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Log.Info("===== FIM (GRAVAR LOG DA LEITURA) =====");
-            }
-            catch (Exception ex) { Fail("gravar o log da leitura", ex); }
-        }
-
-        /// <summary>
-        /// SPY: dumpa o(s) objeto(s) COM selecionado(s) no SE (tipo + propriedades/valores +
-        /// assinaturas de método/setter, recursivo 1 nível, coleções expandidas) para o log.
-        /// Serve para descobrir a API REAL sem adivinhar — ex.: crie um furo (ou uma superfície
-        /// copiada/offsetada/costurada) DO SEU JEITO no SE, selecione a feature e clique aqui: o
-        /// log revela a coleção/método/propriedades para reproduzir por COM. Funciona em
-        /// qualquer documento (peça/montagem). Cada clique TAMBÉM engorda o dump acumulado do
-        /// SDK (%LOCALAPPDATA%\AutoEDM\logs\SE_API_dump_&lt;versão&gt;.txt) com a type library de
-        /// tudo que foi tocado — é assim que Geometry/Assembly (que a sonda estática não
-        /// alcançava) entram no mapa: basta selecionar uma Face/Edge/Ocorrência qualquer.
-        /// </summary>
-        private void InspecionarSelecao()
-        {
-            dynamic app = ElectrodeAddIn.Current?.App;
-            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
-            try
-            {
-                Log.Info("===== INSPECIONAR SELEÇÃO (SPY) =====");
-                dynamic doc = app.ActiveDocument;
-                if (doc == null) { MessageBox.Show("Nenhum documento ativo.", "AutoEDM"); return; }
-
-                dynamic ss = doc.SelectSet;
-                int n = 0; try { n = (int)ss.Count; } catch { }
-                if (n == 0)
-                {
-                    MessageBox.Show(
-                        "Nada selecionado. Selecione uma feature no SE (ex.: um furo, uma superfície copiada/offsetada) e clique de novo.\n\n" +
-                        "O dump vai para o log (%LOCALAPPDATA%\\AutoEDM\\logs).",
-                        "AutoEDM — Inspecionar", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    Log.Info("Inspecionar: nada selecionado.");
-                    return;
-                }
-
-                Log.Info($"Inspecionando {n} objeto(s) selecionado(s) — veja [SPY] no log.");
-                for (int i = 1; i <= n; i++)
-                {
-                    object item; try { item = ss.Item(i); } catch { continue; }
-                    ComDiagnostics.DumpObject($"Seleção[{i}]", item, 1);
-                }
-                MessageBox.Show(
-                    $"{n} objeto(s) inspecionado(s). Veja o dump [SPY] no log e o mapa acumulado da API:\n" +
-                    "%LOCALAPPDATA%\\AutoEDM\\logs  (AutoEDM_*.log = [SPY]; SE_API_dump_<versão>.txt = mapa completo)",
-                    "AutoEDM — Inspecionar", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Log.Info("===== FIM (INSPECIONAR SELEÇÃO) =====");
-            }
-            catch (Exception ex) { Fail("inspecionar a seleção", ex); }
-        }
-
-        /// <summary>
-        /// SONDA DA ROSCA M6 (diagnóstico): cria uma peça DESCARTÁVEL com um bloco e quatro
-        /// furos M6, um por receita de API, e loga tudo (HoleData completo, Status da feature,
-        /// CreatePhysicalThread, código de erro da rosca física e o Ø REAL medido de cada
-        /// cilindro). Roda numa peça própria de propósito — um Holes.AddSync que falha envenena
-        /// o proxy do documento e derrubaria a furação que já funciona no fluxo do eletrodo.
-        /// Também confere a opção GLOBAL de exibição de rosca do SE: com ela desligada, mesmo o
-        /// furo roscado certo desenha liso. Ver <see cref="AutoEDM.Electrode.ThreadProbe"/>.
-        /// </summary>
-        private void DiagnosticarRosca()
-        {
-            dynamic app = ElectrodeAddIn.Current?.App;
-            if (app == null) { MessageBox.Show("Add-in não inicializado.", "AutoEDM"); return; }
-
-            var confirm = MessageBox.Show(
-                "Isto vai CRIAR uma PEÇA NOVA (descartável, não salva) com um bloco 120×40×15 e quatro furos M6 — " +
-                "cada um por uma receita diferente da API de rosca.\n\n" +
-                "Depois: olhe a peça e me diga em qual X a rosca saiu CORTADA de verdade\n" +
-                "(1=-42  2=-14  3=+14  4=+42 mm) e me mande o log.\n\nContinuar?",
-                "AutoEDM — Sonda de rosca M6", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            if (confirm != DialogResult.Yes) { Log.Info("Sonda de rosca cancelada pelo usuário."); return; }
-
-            try
-            {
-                bool displayOff = ThreadProbe.ThreadedDisplayIsOff(app);
-                ThreadProbe.RunM6Matrix(app);
-
-                // A exibição de rosca é uma OPÇÃO DO APLICATIVO, não do documento: mexer nela
-                // muda o Solid Edge inteiro do usuário, então só com o "sim" dele.
-                if (displayOff)
-                {
-                    var liga = MessageBox.Show(
-                        "A opção GLOBAL do Solid Edge \"exibir roscas\" está DESLIGADA nesta instalação.\n\n" +
-                        "Com ela desligada, um furo roscado CORRETO aparece liso na tela — dá para confundir " +
-                        "com \"a rosca não foi criada\".\n\n" +
-                        "Ligar agora? (é uma opção do Solid Edge inteiro, não só desta peça)",
-                        "AutoEDM — exibição de rosca", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-                    if (liga == DialogResult.Yes) ThreadProbe.EnableThreadedDisplay(app);
-                    else Log.Info("Exibição de rosca deixada DESLIGADA a pedido do usuário.");
-                }
-
-                MessageBox.Show(
-                    "Sonda concluída. Na peça nova, os quatro furos M6 (X = -42, -14, +14, +42 mm):\n\n" +
-                    "1 (-42): base de furos + rosca só como anotação\n" +
-                    "2 (-14): base de furos + hélice pedida na CRIAÇÃO (AddSyncEx)\n" +
-                    "3 (+14): base de furos + hélice pedida DEPOIS do furo\n" +
-                    "4 (+42): valores na mão, sem a base de furos\n\n" +
-                    "O log traz o Ø REAL medido de cada furo — o esperado é 5,0 mm (broca de M6), não 6,0.\n\n" +
-                    "Diga qual saiu com a hélice CORTADA e mande o log (%LOCALAPPDATA%\\AutoEDM\\logs).",
-                    "AutoEDM — Sonda de rosca M6", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception ex) { Fail("rodar a sonda de rosca M6", ex); }
-        }
-
-        /// <summary>
         /// Alojamento de anel O'ring (ambiente de PEÇA). Abre a janela MODELESS — a única do
         /// add-in — porque o fluxo é "selecione uma face, depois uma aresta" e uma janela modal
         /// congelaria o Solid Edge justamente na hora de clicar no modelo.
@@ -1555,44 +1366,6 @@ namespace AutoEDM.AddIn
         }
 
         // ------------------------------------------------------------ Eng. Reversa
-
-        /// <summary>
-        /// SONDA DA MALHA (rodada 1). SÓ LEITURA: não cria feature, não altera a peça, não salva.
-        /// Existe porque a decisão de COMO reconstruir um sólido a partir de malha não deve ser
-        /// tomada por aposta. O dump da typelib já provou que a Solid Edge NÃO expõe por COM
-        /// nenhum ajuste de plano/cilindro/cone sobre região de malha — os comandos da aba nativa
-        /// de Eng. Reversa não estão no modelo de objetos. Então o ajuste terá de ser nosso, e
-        /// esta sonda mede, na malha REAL do Carlos, o que de fato responde:
-        /// leitura dos triângulos, remalhamento, cura/fechamento de furo e — o mais importante —
-        /// o seccionamento com reconhecimento de retas/arcos/círculos, que é a alavanca da rota
-        /// prismática. O resultado inteiro vai para o log.
-        /// </summary>
-        private void SondarMalha()
-        {
-            Run(CmdSondaMalha, (connector, doc, p) =>
-            {
-                const string title = "AutoEDM — Sonda de malha (Eng. Reversa)";
-
-                // O seccionamento é o teste que DECIDE a rota prismática, e é o único que precisa
-                // escrever (ele cria esboços). Perguntar aqui, e não no Core, mantém a sonda
-                // utilizável sem interface — e o padrão do projeto é conferir antes de criar.
-                var ask = MessageBox.Show(
-                    "A sonda lê a malha sem alterar nada: triângulos, corpos de facetas, e quais membros da API de " +
-                    "malha existem nesta versão da Solid Edge.\n\n" +
-                    "Há UM teste a mais, e é o que decide o rumo do botão de Eng. Reversa: o SECCIONAMENTO " +
-                    "(CreateSectionSketches), que corta o corpo em planos e devolve esboços com retas, arcos e " +
-                    "círculos já RECONHECIDOS. Se ele funcionar sobre malha, não precisamos escrever reconhecimento " +
-                    "de primitiva 2D — a reconstrução sai como feature editável.\n\n" +
-                    "Esse teste CRIA esboços na peça. A sonda tenta apagá-los depois e NUNCA salva o arquivo.\n\n" +
-                    "Incluir o teste de seccionamento?",
-                    title, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-                if (ask == DialogResult.Cancel) { Log.Info("Sonda de malha: cancelada pelo usuário."); return; }
-
-                MeshProbeResult res = MeshProbe.Run((object)doc, allowSectionTest: ask == DialogResult.Yes);
-                MessageBox.Show(res.Summary, title, MessageBoxButtons.OK,
-                    res.FoundMesh ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-            });
-        }
 
         /// <summary>
         /// MALHA → SÓLIDO, rota prismática (2,5D). Lê a malha, reconhece as superfícies, monta o
@@ -1878,18 +1651,6 @@ namespace AutoEDM.AddIn
                 // resto do WEDM (é onde as superfícies copiadas vivem) e onde o Carlos trabalha.
                 { CmdCurvasDasSuperficies, new CommandSpec("CURVAS DAS SUPERFÍCIES (extremidades XY)", DocKind.Part, ModelingEnv.Synchronous) },
 
-                // --- diagnóstico: só leem, ou criam documento próprio — servem em qualquer ambiente ---
-                { CmdInspecionar,         new CommandSpec("INSPECIONAR SELEÇÃO",   DocKind.Any, ModelingEnv.Any) },
-                { CmdIniciarLeitura,      new CommandSpec("INICIAR LEITURA",       DocKind.Any, ModelingEnv.Any) },
-                { CmdGravarLeitura,       new CommandSpec("GRAVAR LOG DA LEITURA", DocKind.Any, ModelingEnv.Any) },
-                { CmdDiagRosca,           new CommandSpec("SONDA DE ROSCA M6",     DocKind.Any, ModelingEnv.Any) },
-                // Sonda do inter-part: lê a montagem e trabalha em peça DESCARTÁVEL. Serve
-                // tanto com a montagem normal quanto com o usuário em edição em contexto —
-                // é justamente a diferença entre os dois estados que ela mede.
-                { CmdSondaInterPart,      new CommandSpec("SONDA INTER-PART",      DocKind.Assembly, ModelingEnv.Any) },
-                // Sonda da malha: só LÊ (triângulos, secções, diagnóstico). A malha importada vive
-                // numa PEÇA; o ambiente não importa porque nada é criado.
-                { CmdSondaMalha,          new CommandSpec("SONDA DE MALHA (ENG. REVERSA)", DocKind.Part, ModelingEnv.Any) },
                 // Lê a malha em qualquer ambiente; constrói numa peça NOVA, que ele mesmo põe em ordenado.
                 { CmdMalhaParaSolido,     new CommandSpec("MALHA → SÓLIDO (ENG. REVERSA)", DocKind.Part, ModelingEnv.Any) },
 

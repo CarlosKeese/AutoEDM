@@ -14,7 +14,9 @@ To put a button inside SE (vs an external EXE), build a COM add-in with the
 
 - Class `[ComVisible(true)] [Guid(...)] [ProgId(...)] MyAddIn : SolidEdgeCommunity.AddIn.SolidEdgeAddIn`.
 - `OnConnection(Application, SeConnectMode, AddIn)` → `base.OnConnection(...)`, then
-  `AddInEx.GuiVersion = 1` (**increment whenever you change the ribbon**, else it won't rebuild).
+  `AddInEx.GuiVersion = 1` (**increment whenever you change the ribbon**, else it won't rebuild). Symptom when forgotten (AutoEDM, 2026-11-09): a NEW button shows up
+  with no label and the generic icon — SE kept the cached ribbon. A button pointing at an `imageId`
+  missing from the Win32 `.res` shows the label only (no error).
 - `OnCreateRibbon(RibbonController controller, Guid environmentCategory, bool firstTime)`
   → `controller.Add<MyRibbon>(environmentCategory, firstTime)`.
 - `[ComRegisterFunction] static OnRegister(Type t)`: `new RegistrationSettings(t){Enabled=true}`,

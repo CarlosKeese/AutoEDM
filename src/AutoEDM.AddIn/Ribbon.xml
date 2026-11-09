@@ -7,7 +7,8 @@
 
   ÍCONE (imageId): o Solid Edge busca a imagem num recurso de BITMAP Win32
   embutido no DLL do add-in (SetAddInInfo(hInstance,...)); sem esse recurso o
-  botão aparece só com o rótulo (showLabel=true). A embutir depois.
+  botão aparece só com o rótulo (showLabel=true). Os bitmaps saem de tools/make_ribbon_res.ps1
+  (um por aplicação, 2026-11-09).
 -->
 <ribbon xmlns="http://github.com/SolidEdgeCommunity/SolidEdge/Ribbon">
   <tab name="AutoEDM">
@@ -15,7 +16,7 @@
       <button id="26" size="large" label="Nova peça"
               screentip="Peça nova do molde, codificada e posicionada pelas faces que você clicar"
               supertip="Na MONTAGEM do molde: clique aqui e depois nas faces de referência da peça nova, direto no modelo (clicar de novo numa face a retira). Escolha de que parte do molde a peça é — fixa (XXXXX.100 em diante), móvel (.200) ou extração (.300) — e o AutoEDM usa o próximo número livre da série na pasta da montagem. Escolha também qual eixo da montagem é a altura do molde e se a origem fica no ponto mais baixo ou mais alto das faces: a origem vai no centro delas nos outros dois eixos, e os eixos da peça são os da montagem. As escolhas ficam gravadas para o projeto. Não salva a montagem."
-              imageId="1" showLabel="true" />
+              imageId="13" showLabel="true" />
       <button id="34" size="large" label="Porta-molde"
               screentip="Porta-molde Polimold, MUD ou Babyplast dimensionado pelas peças da MONTAGEM — com colunas, buchas e pinos, e trocado sem reimportar"
               supertip="Na MONTAGEM do molde: escolha o tipo — Polimold (2 placas), MUD (a unidade 170 × 246 do quadro de troca rápida) ou Babyplast (metades 75 × 75). Lê as peças dispostas (postiços e produto), mede a caixa delas e escolhe no catálogo Polimold a menor série cuja área útil comporta as peças mais a margem da refrigeração, as espessuras de P1/P2 (sub-série) pelo fundo mínimo e o curso de extração pela altura do produto. Confere área, espessuras, curso, corredor para os canais de refrigeração entre as peças e os furos, e a flexão da placa suporte — e mostra tudo antes de criar. A janela desenha o porta-molde em corte e em planta. Cria a submontagem Porta Molde - &lt;montagem&gt;\Porta Molde.asm com uma peça ORDENADA por placa, toda guiada por VARIÁVEIS (Largura, Comprimento, Espessura, entre-centros e Ø dos furos), e colunas, buchas e pinos de retorno como peças com o código do catálogo (CG 24 046 046, BG 24 036, PR 14 x 132). Rodando de novo, troca de porta-molde nas mesmas peças: muda as variáveis, refaz só os furos que mudaram de forma e reempilha. Não salva a montagem ativa."
@@ -23,7 +24,7 @@
       <button id="27" size="large" label="Refrigeração"
               screentip="Canais de refrigeração a partir das linhas do esboço 3D (PEÇA, modelagem ORDENADA)"
               supertip="Na PEÇA (placa ou postiço) em modelagem ORDENADA: desenhe o traçado dos canais como linhas num esboço 3D, clique aqui e escolha as linhas (clicando nelas, ou todas do esboço). Escolha o Ø do canal (6, 8, 10 ou 12) e, para cada ponta livre, a terminação: cega (ponta de broca), passante, engate ou tampão — as roscas de tubo vêm da base de furos do Solid Edge. Linhas na mesma reta viram uma passada só; nos cruzamentos o furo passa do cruzamento (sobrefuro) e termina em ponta de broca. Cada canal sai como um recurso de FURO preso à linha do esboço, com o nome do canal; engate e tampão saem como furo roscado coaxial. O plano aparece na janela antes de criar."
-              imageId="1" showLabel="true" />
+              imageId="14" showLabel="true" />
       <button id="35" size="large" label="Alívio de extratores"
               screentip="Alívio nos furos de extrator que abrem na face clicada, deixando a guia na outra ponta (PEÇA, modelagem ORDENADA)"
               supertip="Na PEÇA (placa ou postiço) em modelagem ORDENADA: clique na face de TRÁS (lado da placa extratora). O AutoEDM acha os furos perpendiculares que abrem nela e deixa de fora os roscados, os com rebaixo de cabeça ou dois diâmetros (inclusive os já aliviados), os com chanfro, escareado ou raio, os cegos e os incompletos. Para cada um, a guia (faixa ajustada onde o extrator desliza) fica junto à moldagem, medida da ponta mais curta do furo: 2 × Ø, entre 10 e 20 mm; o resto é aliviado com Ø + 0,5 mm até Ø6 e Ø + 1,0 mm acima — tudo editável na janela. O modelo mostra em verde o que vai ser aliviado e em laranja o que ficou de fora; dá para desmarcar furo a furo. Cada alívio sai como um recurso de FURO de fundo reto com o nome do furo. Não salva a peça."
@@ -31,7 +32,7 @@
       <button id="14" size="large" label="Alojamento de O’ring"
               screentip="Canal de anel O’ring pela ISO 3601 (PEÇA, modelagem ORDENADA)"
               supertip="Exige a peça em modelagem ORDENADA — em síncrono o esboço do canal ficaria preso no ambiente ordenado, sem como você apagar. Abre uma janela para você capturar uma FACE (cilíndrica = eixo/furo, plana = vedação de face) e uma ARESTA circular. Com isso o AutoEDM mede o diâmetro, procura no catálogo o anel mais próximo, dimensiona o canal pelo tipo de vedação (estática / recíproca / rotativa) e pelo elastômero (NBR / FKM Viton) e corta o alojamento. Mostra esmagamento, estiramento e preenchimento antes de cortar, e avisa quando algum fica fora da norma — quem decide é você. A janela fica aberta enquanto você seleciona no modelo."
-              imageId="1" showLabel="true" />
+              imageId="15" showLabel="true" />
       <button id="31" size="large" label="Ordenar PathFinder"
               screentip="Peças da MONTAGEM em sequência pelo código no PathFinder (15335.100, 15335.101…)"
               supertip="Na MONTAGEM: reordena as ocorrências do 1º nível do PathFinder pelo nome do arquivo, com os números comparados pelo valor — 15335.100.par vem antes de 15335.101.par, 15335.99 antes de 15335.100, e as posições da mesma peça ficam juntas (:1, :2, :10). Mostra a ordem nova antes de mexer e confere a árvore lida de volta depois. Só a ORDEM muda: posição, relações e arquivos ficam como estão; submontagens não são abertas. Não salva a montagem."
@@ -41,7 +42,7 @@
       <button id="29" size="large" label="Limpar importação"
               screentip="Peças iguais vindas de outro CAD viram UMA só, sem sair do lugar (MONTAGEM)"
               supertip="Na MONTAGEM importada de outro CAD (STEP, Parasolid): quando cada posição da mesma peça chega como um arquivo separado — 48 pinos iguais como 48 arquivos — este botão acha as peças GEOMETRICAMENTE iguais e faz todas as posições apontarem para uma cópia só. A igualdade não é adivinhada por nome nem por medida: o AutoEDM mede o encaixe vértice a vértice entre os dois corpos e só unifica quando ele fecha dentro da tolerância, mostrando o pior desvio. Peça ESPELHADA (postiço de mão esquerda e de mão direita) tem volume, área e topologia idênticos e por isso aparece identificada no relatório, mas NÃO é unificada a não ser que você marque. A posição é preservada por construção e CONFERIDA: a pose é lida de volta depois de escrita e a troca é desfeita se não bater. Opcionalmente cria também as relações de montagem óbvias — contato entre faces encostadas e eixo de pino no furo — deduzidas da posição atual, portanto sem mover nada; a peça maior fica de referência e cada relação é medida e desfeita se mover a peça. Mostra o plano inteiro antes de qualquer escrita, não apaga arquivo nenhum do disco e não salva a montagem."
-              imageId="1" showLabel="true" />
+              imageId="16" showLabel="true" />
     </group>
     <group name="Eletrodos">
       <button id="3" size="large" label="Analisar (Z)"
@@ -55,27 +56,27 @@
       <button id="10" size="large" label="Criar eletrodo (manual)"
               screentip="Criar 1 eletrodo clicando nas faces do bolsão"
               supertip="Versão MANUAL do 'Criar eletrodos': clique aqui (sem precisar selecionar nada antes) e uma janela assume o mouse do Solid Edge — clique direto no modelo nas FACES do fundo do bolsão a erodir, uma por clique (clicar de novo na mesma face a retira). 'Criar eletrodo' cria e posiciona UMA peça no centro XY e no Z mais fundo das faces escolhidas, com essas faces COPIADAS para dentro dela — superfície 'Queima', na cor de origem, sem vínculo com a cavidade (sem precisar editar em contexto), peça em SÍNCRONO, pronta para fechar/costurar e o 'Criar Base'. A cópia lê o arquivo SALVO da cavidade. A janela continua aberta para o próximo. Faces que já estavam selecionadas entram na lista. Tenta identificar o Ra pela cor das faces e grava numa variável da peça (orienta o 'Aplicar GAP' depois). Não salva a montagem."
-              imageId="1" showLabel="true" />
+              imageId="17" showLabel="true" />
       <button id="33" size="large" label="Eletrodo de interpolação"
               screentip="Eletrodo redondo para erodir rebaixo percorrendo o perímetro"
               supertip="Clique e escolha no modelo as FACES da região negativa (rebaixo na parede), uma por clique, e informe o Ø do eletrodo. A superfície é copiada para uma peça nova (SÍNCRONO, sem vínculo); o perfil sai da seção dela no plano vertical da normal da face e é revolvido em torno de Z. A origem fica no eixo, na menor altura das faces, a Ø/2 do ponto mais fundo do perfil. Gera só o corpo de revolução: haste e base depois, pelo 'Criar Base' ou à mão. A cópia lê o arquivo SALVO da cavidade. Não salva a montagem."
-              imageId="1" showLabel="true" />
+              imageId="18" showLabel="true" />
       <button id="12" size="large" label="Duplicar eletrodo"
               screentip="Duplicar p/ o próximo Ra da tabela (desbaste/acabamento)"
               supertip="Selecione a ocorrência de UM eletrodo já com GAP aplicado (tem Ra gravado) e clique. Cria uma cópia da peça com o GAP no PRÓXIMO Ra da escada (mais grosso) e posiciona a cópia em TODAS as posições onde esse eletrodo aparece na montagem — 1 clique gera o par desbaste/acabamento em cada posição repetida. Não salva a montagem."
-              imageId="1" showLabel="true" />
+              imageId="19" showLabel="true" />
       <button id="5" size="large" label="Criar Base"
               screentip="Criar Base (PEÇA, modelagem SÍNCRONA)"
               supertip="Exige a peça em modelagem SÍNCRONA (o botão fica cinza em ordenado). Na PEÇA aberta: cria a BASE (bloco no material mais próximo) com a FAIXA de medição (chanfro X+ Y− p/ QUAD/RET, ou flat em Y− p/ REDONDO) e a FIXAÇÃO (M6 roscado + 2×Ø4, ou eixo). Janela com parâmetros e Preview. SEM gap/offset por cor aqui — a superfície copiada não carrega a cor original; isso e o trabalho de superfície entram no botão 'Unir superfícies'."
-              imageId="1" showLabel="true" />
+              imageId="20" showLabel="true" />
       <button id="7" size="large" label="Unir superfícies"
               screentip="Unir a queima ao bloco, SÓ a união (PEÇA, modelagem SÍNCRONA)"
               supertip="Exige a peça em modelagem SÍNCRONA — Limite/Costurar/Anexar/booleana não funcionam em ordenado (o botão fica cinza lá). ISOLADO: selecione as faces de queima na peça (que já tem o bloco) e clique — une a superfície de queima ao bloco num sólido único. SÓ une (sem GAP/cor) — se falhar, uma NA MÃO no SE e siga para 'Aplicar GAP'. Separado do bloco para não interferir na fixação."
-              imageId="1" showLabel="true" />
+              imageId="21" showLabel="true" />
       <button id="11" size="large" label="Aplicar GAP"
               screentip="GAP + cor + nome no corpo já unido (PEÇA, modelagem ORDENADA)"
               supertip="Exige a peça em modelagem ORDENADA — o GAP (Model.FaceOffsets, editável na árvore) não existe em síncrono, e o AutoEDM não troca o ambiente sozinho (a troca invalida as faces já selecionadas). Depois de unir (por 'Unir superfícies' ou na mão no SE): selecione as faces de queima no corpo já mesclado (ou deixe em branco logo após um 'Unir superfícies' bem-sucedido) e clique. Escolha o Ra numa lista (já pré-selecionada se a peça tiver Ra gravado) — aplica o offset de faísca (Model.FaceOffsets, editável), pinta a cor do Ra e nomeia a feature na árvore."
-              imageId="1" showLabel="true" />
+              imageId="22" showLabel="true" />
     </group>
     <group name="Desenho">
       <button id="30" size="large" label="Des. 2D (Torno)"
@@ -85,7 +86,7 @@
       <button id="32" size="large" label="Desenho de processo"
               screentip="Peças de processo CDU/CDT vinculadas à original, numa montagem em 02 - PROCESSO"
               supertip="Com a PEÇA aberta, ou com a peça selecionada na MONTAGEM do molde, clique e escolha a máquina: CDU (centro de usinagem) e/ou CDT (centro de torneamento). Na pasta &quot;02 - PROCESSO&quot; do molde (achada subindo a partir da pasta da peça), numa subpasta com o nome da peça, nasce uma peça nova para cada máquina (&lt;peça&gt;_CDU.par / &lt;peça&gt;_CDT.par) com Cópia de peça VINCULADA à original, em ordenado: alterou e salvou a original, elas recebem a mudança. A MONTAGEM &lt;peça&gt;_WP.asm junta a original e essas peças na mesma posição; se ela já existir, é aberta e recebe só o que falta. Nada é sobrescrito. A montagem fica aberta."
-              imageId="9" showLabel="true" />
+              imageId="23" showLabel="true" />
     </group>
     <group name="Relatórios">
       <button id="2" size="large" label="Coordenadas"
@@ -99,7 +100,7 @@
       <button id="25" size="large" label="Lista de modificações"
               screentip="Folha de revisões do molde: as peças com grupo &quot;Rev.N&quot; na árvore"
               supertip="Com a MONTAGEM do molde aberta, clique: o AutoEDM varre as peças do projeto, acha as que têm um grupo &quot;Rev.N&quot; na árvore ordenada e monta a folha de revisões. O modelo dá quais peças mudaram e quais operações estão no grupo; você escreve a descrição e as ações para a oficina, e marca as caixas de serviço. Gera a planilha .xlsx no layout da folha MD (para subir no Drive) e guarda o que você digitou num .json ao lado da montagem. Não altera nada no modelo."
-              imageId="2" showLabel="true" />
+              imageId="24" showLabel="true" />
       <button id="4" size="large" label="Ficha (spec-sheet)"
               screentip="Folha de dados dos eletrodos"
               supertip="Gera a ficha por eletrodo (Ra, pegada, blank, offset por Ra, fixação) em .txt e .csv. Não altera a montagem."
@@ -116,60 +117,32 @@
               imageId="7" showLabel="true" />
     </group>
     <group name="Eng. Reversa">
-      <button id="24" size="large" label="Sonda de malha"
-              screentip="Diagnóstico: o que a API de malha responde na SUA malha (SÓ LEITURA)"
-              supertip="Na PEÇA (.par) com a malha importada (STL/OBJ): mede o que a API do Solid Edge de fato entrega sobre ela — corpos de facetas, faces de malha, quantos triângulos leem por GetTrianglePoints/GetTriangleData, a caixa envolvente em mm, e quais membros da API de malha (DoRemesh, AddBodyByMeshFacets, HealAndOptimizeWithMeshOptions) existem nesta versão. Confere presença de membro por introspecção ANTES de chamar, e registra o erro exato do que falhar. Pergunta antes de incluir o teste de SECCIONAMENTO, que é o único que escreve (cria esboços, tenta apagá-los, nunca salva) e é o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Existe porque o dump da typelib já provou que a SE NÃO expõe por COM nenhum ajuste de plano/cilindro/cone sobre região de malha — esse ajuste terá de ser nosso, e esta sonda diz sobre qual base construí-lo. Todo o resultado vai para o log."
-              imageId="6" showLabel="true" />
       <button id="28" size="large" label="Malha → sólido"
               screentip="Converte a malha em SÓLIDO com features: furos, raios, chanfros e faces inclinadas exatos"
               supertip="Na PEÇA (.par) com a malha importada: escolha UM ou VÁRIOS corpos de malha (todos marcados de início); cada um vira uma peça nova, e com &quot;reunir numa montagem&quot; as peças são salvas numa pasta e montadas numa montagem nova, cada uma na posição original. Reconhece as superfícies — plano, cilindro, cone (chanfro, escareado, saída), toro (raio que contorna uma curva) e esfera — com medidas no centésimo, e mostra a IDENTIFICAÇÃO (furos, raios, chanfros, faces inclinadas) e o plano ANTES de construir. Se você confirmar, constrói numa PEÇA NOVA (ordenada, não salva): uma protrusão por faixa Z com o contorno exato, os furos como recorte, e uma correção por superfície que a extrusão reta não faz (chanfro/cone e toro por revolução, raio de eixo X/Y e face inclinada por extrusão). Termina com o volume e o DESVIO geométrico do sólido contra a malha nos dois sentidos, e só chama o resultado de exato se nenhum trecho foi copiado da malha. Esboços ocultos. A peça da malha não é alterada."
-              imageId="6" showLabel="true" />
+              imageId="25" showLabel="true" />
     </group>
     <group name="MCP">
       <button id="19" size="large" label="Ligar ponte"
               screentip="Deixa o Claude Code alcançar esta Solid Edge"
               supertip="Sobe a ponte (named pipe) que o servidor MCP do AutoEDM usa para falar com ESTA instância da Solid Edge. A ponte NÃO sobe sozinha de propósito: quem decide se um agente alcança o CAD é você. Ela nasce sempre em SOMENTE-LEITURA — o agente pode inspecionar a seleção, ler a árvore, medir, analisar a cavidade e ler o log, mas qualquer ferramenta que altere o modelo é recusada até você clicar em 'Liberar escrita'. Só uma instância da SE pode hospedar a ponte."
-              imageId="3" showLabel="true" />
+              imageId="26" showLabel="true" />
       <button id="21" size="large" label="Status da ponte"
               screentip="Em que pé está a ponte MCP"
               supertip="Mostra se a ponte está no ar, o nome do pipe e a versão do contrato, o modo (somente-leitura ou escrita liberada), quantos pedidos o agente já fez nesta sessão e qual foi a última ferramenta pedida — é assim que você confirma num piscar que o Claude Code chegou de verdade até a Solid Edge. Lista também todas as ferramentas do catálogo, marcando quais escrevem."
-              imageId="3" showLabel="true" />
+              imageId="27" showLabel="true" />
       <button id="22" size="large" label="Liberar escrita"
               screentip="Permite que o agente ALTERE o documento aberto"
               supertip="Passa a ponte para o modo ESCRITA: as ferramentas que criam curvas na peça e gravam arquivos param de ser recusadas. Pede confirmação antes, porque a partir daí o agente altera o documento sem perguntar a cada operação — salve o que estiver aberto primeiro. A liberação vale só até a ponte ser desligada ou a Solid Edge fechar; religar volta para somente-leitura. Nenhuma ferramenta MCP consegue ligar esta chave: só este botão."
-              imageId="1" showLabel="true" />
+              imageId="28" showLabel="true" />
       <button id="23" size="large" label="Somente leitura"
               screentip="Volta a ponte para somente-leitura"
               supertip="Revoga a liberação de escrita na hora: as ferramentas que alteram o modelo voltam a recusar, e as de leitura (inspecionar, árvore, medir, analisar, log) continuam funcionando."
-              imageId="3" showLabel="true" />
+              imageId="29" showLabel="true" />
       <button id="20" size="large" label="Desligar ponte"
               screentip="Nenhum agente alcança mais a Solid Edge"
               supertip="Derruba a ponte. O servidor MCP passa a responder que ninguém está hospedando, e explica ao agente que é você quem religa. Ao religar, a ponte volta em somente-leitura."
-              imageId="3" showLabel="true" />
-    </group>
-    <group name="Diagnóstico">
-      <!-- Botões PEQUENOS (size="normal"), três por coluna: o grupo é de uso raro e ocupava
-           cinco colunas largas da ribbon. Os dois do gravador ficam juntos, na ordem de uso. -->
-      <button id="6" size="normal" label="Inspecionar seleção"
-              screentip="SPY: dumpa o objeto COM selecionado"
-              supertip="Selecione uma feature no SE (ex.: um furo ou uma superfície que você criou na mão) e clique: o log mostra o TIPO, propriedades/valores, métodos e coleções expandidas do objeto COM — para descobrir a API real (furo síncrono, offset/stitch/unir) sem adivinhar. Cada clique também soma a type library do que foi selecionado ao mapa acumulado da API (SE_API_dump_&lt;versão&gt;.txt) — selecionar Faces/Edges/Ocorrências cobre partes do SDK que a sonda estática não alcançava."
-              imageId="3" showLabel="true" />
-      <button id="8" size="normal" label="Iniciar gravação"
-              screentip="Gravador: snapshot ANTES da sua ação manual"
-              supertip="Clique ANTES de fazer a ação à mão no SE. Tira uma foto das features/superfícies existentes. Depois de criar 'Limite'/costura/estender/mover, clique em 'Encerrar gravação' para o AutoEDM dumpar exatamente o que você criou."
-              imageId="3" showLabel="true" />
-      <button id="9" size="normal" label="Encerrar gravação"
-              screentip="Gravador: diff + dump das features novas"
-              supertip="Clique DEPOIS de fazer a ação manual. Compara com o snapshot inicial e grava no log (linhas [REC]/[SPY]) o tipo e as propriedades das features que você criou — para eu reproduzir por COM."
-              imageId="3" showLabel="true" />
-      <button id="15" size="normal" label="Sonda inter-part"
-              screentip="Sonda: rotas de cópia entre peças (SÓ LEITURA)"
-              supertip="Selecione a ocorrência da CAVIDADE na montagem e clique. Testa, numa rodada só, as rotas de cópia das faces de queima entre peças que ainda não foram experimentadas (cópia por ARQUIVO com as cores, faces do corpo da ocorrência, referência de topologia, corpo por tag) e grava o mapa dos comandos nativos do Solid Edge. Trabalha em peças DESCARTÁVEIS: não altera a cavidade e não salva a montagem. O resultado inteiro vai para o log. Para o teste decisivo, entre em edição em contexto à mão, deixe aberta e rode de novo."
-              imageId="6" showLabel="true" />
-      <button id="13" size="normal" label="Sonda de rosca"
-              screentip="Diagnóstico: por que o furo M6 sai sem rosca"
-              supertip="Cria uma PEÇA NOVA descartável (não salva) com um bloco e cinco furos M6 lado a lado, cada um por uma receita diferente da API de rosca do Solid Edge (tabela legada x base de furos nova; rosca física pedida na criação x depois; síncrono x ordenado). O log traz o HoleData completo, o Status da feature e o código de erro da rosca física. Olhe a peça, veja qual furo saiu com a hélice CORTADA e mande o log — é assim que a receita certa entra no 'Criar Base'."
-              imageId="3" showLabel="true" />
+              imageId="30" showLabel="true" />
     </group>
   </tab>
 </ribbon>

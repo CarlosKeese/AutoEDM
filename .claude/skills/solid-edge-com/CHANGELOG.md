@@ -1,5 +1,10 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-09 (2) — ribbon cache symptom
+
+`references/addin-ribbon.md`: a new button with no label/generic icon = `GuiVersion` not bumped; an `imageId`
+missing from the `.res` shows the label only.
+
 ## 2026-11-09 — several holes in ONE Hole feature; what crashes Solid Edge
 
 Measured live (AutoEDM "Alívio de extratores" + `tools/UndoProbe --multifuro`, throwaway parts).

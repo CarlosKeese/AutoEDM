@@ -642,7 +642,7 @@ namespace AutoEDM.Electrode
                     if (hd == null) return null; // sem HoleData de rosca não adianta furar: cai no fallback Ø5
                     holeData = (object)hd;
                 }
-                else holeData = doc.HoleDataCollection.Add(33, Units.MmToM(diaMm)); // 33 = igRegularHole
+                else holeData = PlainHoleData(doc, diaMm);
 
                 ps = doc.ProfileSets.Add();
                 dynamic prof = ps.Profiles.Add(plane);
@@ -677,8 +677,31 @@ namespace AutoEDM.Electrode
                     TryEnablePhysicalThread(hole);
             }
             catch (Exception e) { Log.Warn($"  Furo {label} @ ({cxMm:0.0}, {cyMm:0.0}) mm falhou: {e.GetBaseException().Message}"); }
-            finally { AutoEDM.Com.SketchScope.DeleteVerified(doc, (object)ps, $"Furo {label}"); }
+            finally
+            {
+                // Só no SÍNCRONO o furo não depende do esboço. No ORDENADO o esboço é do furo: apagá-lo
+                // apaga o furo junto (errors.md, cascata do esboço consumido) — fica, escondido pelo recurso.
+                int m = 1; try { m = (int)doc.ModelingMode; } catch { }
+                if (m != 2 || hole == null) AutoEDM.Com.SketchScope.DeleteVerified(doc, (object)ps, $"Furo {label}");
+            }
             return hole;
+        }
+
+        /// <summary>
+        /// Furo liso: <c>HoleDataCollection.Add</c> com os 21 parâmetros e <c>IgnoreSavedDefaultValues = true</c>
+        /// (último). O <c>Add(33, Ø)</c> curto deixava a SE misturar os padrões salvos do diálogo de furo do
+        /// usuário (rebaixo fantasma, Ø trocado — errors.md, "collection Add succeeds but…"); revisão dos
+        /// botões de furação, 2026-11-09.
+        /// </summary>
+        private static object PlainHoleData(dynamic doc, double diaMm)
+        {
+            object hdc = (object)doc.HoleDataCollection;
+            var a = new object[21];
+            for (int i = 0; i < a.Length; i++) a[i] = Type.Missing;
+            a[0] = 33;                        // igRegularHole
+            a[1] = Units.MmToM(diaMm);
+            a[20] = true;                     // IgnoreSavedDefaultValues
+            return hdc.GetType().InvokeMember("Add", System.Reflection.BindingFlags.InvokeMethod, null, hdc, a);
         }
 
         /// <summary>

@@ -171,7 +171,6 @@ orgânica, ainda diverge e é avisada.
 | Comando | Ambiente | O que faz |
 |---|---|---|
 | **Malha → sólido** | qualquer | Lista os corpos de malha com caixa de seleção (todos marcados): converte **um ou vários de uma vez**, cada um numa peça nova; com **"reunir numa montagem"**, salva as peças numa pasta (padrão: "&lt;peça&gt; - sólidos" ao lado da peça da malha, nada é sobrescrito) e monta todas numa montagem nova, cada uma na posição original. Para um corpo só, mostra a identificação e o plano — faixas, contornos, correções, volumes e avisos — e, confirmando, constrói o sólido numa **peça nova ordenada, não salva**, com os esboços ocultos. Termina com o volume e o **desvio geométrico** do sólido contra a malha, e diz se o resultado é exato. |
-| **Sonda de malha** | qualquer | Mede, na malha real: corpos de facetas, faces de malha, quantos triângulos leem e por qual método, a caixa envolvente em mm, e **quais membros da API de malha existem nesta versão** — presença conferida por introspecção **antes** de chamar, com o erro exato de tudo que falha. Pergunta antes de incluir o teste de **seccionamento**, o único que escreve (cria esboços, tenta apagá-los, nunca salva) e o que decide se a reconstrução pode sair como feature editável em vez de colcha de superfícies. Resultado completo no log. |
 
 ### MCP — qualquer documento (nem precisa de um)
 
@@ -226,15 +225,17 @@ validado, nunca deduzir pela normal. A mais valiosa é
 `se_inspecionar_selecao`: ela fecha o laço da regra de ouro deste projeto — descobrir a API COM
 real por introspecção ao vivo, em vez de um round-trip humano copiando log a cada assinatura.
 
-### Diagnóstico — qualquer documento
+### Diagnóstico — pela ponte MCP
 
-| Comando | O que faz |
+Os botões de diagnóstico saíram da ribbon em 2026-11-09: quem os usa é o Claude Code, pela ponte MCP (ligue a ponte e peça). Cada um continua existindo como ferramenta:
+
+| Ferramenta MCP | O que faz |
 |---|---|
-| **Inspecionar seleção** | SPY: dumpa tipo, propriedades, métodos e coleções do objeto COM selecionado — e soma a type library ao mapa acumulado `SE_API_dump_<versão>.txt`. |
-| **Iniciar leitura de ação manual** | Snapshot das features **antes** de você fazer a operação à mão no SE. |
-| **Gravar log da leitura** | Diff contra o snapshot: grava o tipo e as propriedades das features que você criou, para reproduzir por COM. |
-| **Sonda inter-part** | Mapeia as rotas de cópia inter-part (`CopySurfaces`, `CreateTopologyReference`, `AddBodyByTag`…) em peças descartáveis. Não encosta na cavidade. |
-| **Sonda de rosca (M6)** | Cria uma peça descartável com quatro furos M6, cada um por uma receita diferente da API de rosca. O log traz o `HoleData`, o `Status` da feature e o erro da rosca física — para descobrir qual receita produz a hélice cortada de verdade. |
+| `se_inspecionar_selecao` | SPY: tipo, propriedades, métodos e coleções do objeto COM selecionado — e soma a type library ao mapa `SE_API_dump_<versão>.txt`. |
+| `se_gravador_iniciar` / `se_gravador_gravar` | Foto das coleções antes da sua operação à mão e o diff depois: tipo e propriedades do que você criou, para reproduzir por COM. Foi assim que se descobriu o Furo de vários furos (um padrão). |
+| `se_sonda_malha` | Na malha real: corpos e faces de facetas, triângulos por rota, caixa em mm, membros da API presentes. |
+| `se_sonda_interpart` | Rotas de cópia inter-part em peças descartáveis; não encosta na cavidade. |
+| `se_sonda_rosca` | Peça descartável com quatro furos M6, uma receita da API de rosca por furo. |
 
 ---
 

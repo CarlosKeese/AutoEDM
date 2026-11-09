@@ -412,9 +412,9 @@ Cada botão virou uma ferramenta que chama **o mesmo método do Core**. Só a bo
 | `se_aplicar_gap` | Aplicar GAP | peça **ordenada** | sim | `ra` — omitido = o Ra gravado na peça |
 | `se_alojamento_oring` | Alojamento de O'ring | peça **ordenada** + a FACE selecionada | sim | `apenasPlanejar` (**padrão true**), `arestas`, `tipo`, `vedacao`, `elastomero`, `pressao`, `metricos`, `secaoMm`, `afastamentoMm`, `anel`, `aceitarForaDaNorma` |
 | `se_porta_molde_plano` / `se_porta_molde` | Porta-molde | montagem **salva** | só o segundo | `familia` (polimold/mud/babyplast/zamak), `guias`, `pinosRetorno`, `automatico`, `serie`, `p1Mm`, `p2Mm`, `curso`, `tipo`, `aco`, `montagem`, `colunamento`, `centro`, `particaoMm`, `ladoFixoNegativo`, `girar`, `margemMm`, `fundoMm`, `folgaCursoMm`, `alturaExtrairMm`, `canalMm`, `excluir[]`, `produtos[]` — o que não vier sai das escolhas gravadas do projeto e, com porta-molde existente, da configuração dele |
-| `se_sonda_malha` | Sonda de malha | peça | só com `seccionamento` | `seccionamento` — conferido contra a chave de escrita na hora |
-| `se_sonda_interpart` | Sonda inter-part | montagem | peças descartáveis | — |
-| `se_sonda_rosca` | Sonda de rosca (M6) | nada | peça descartável | `ligarExibicaoRosca` (opção global da SE) |
+| `se_sonda_malha` | — (só MCP) | peça | só com `seccionamento` | `seccionamento` — conferido contra a chave de escrita na hora |
+| `se_sonda_interpart` | — (só MCP) | montagem | peças descartáveis | — |
+| `se_sonda_rosca` | — (só MCP) | nada | peça descartável | `ligarExibicaoRosca` (opção global da SE) |
 | `se_gravador_iniciar` / `se_gravador_gravar` | Iniciar / Gravar leitura | documento | não | — (snapshot próprio, separado do da ribbon) |
 
 **O O'ring sem clique:** a janela coleta a aresta com um clique no modelo, e a ferramenta Selecionar da SE normalmente não deixa selecionar aresta. Por isso a entrada é **só a face**: as arestas circulares dela saem numeradas, e `arestas` escolhe quais viram alojamento.
@@ -505,15 +505,12 @@ A fonte canônica é dupla: `Ribbon.xml` define id, rótulo e grupo; a tabela `S
 | 14 | Alojamento de anel | Molde | peça | **ORDENADO** |
 | 18 | Curvas das superfícies | WEDM | peça | **SÍNCRONO** |
 | 17 | Exportar perfis (IGES) | WEDM | peça | **SÍNCRONO** |
-| 24 | Sonda de malha | Eng. Reversa | peça | qualquer |
 | 28 | Malha → sólido | Eng. Reversa | peça (com corpo de malha) | qualquer — cria peça nova **ordenada** |
 | 19 / 21 / 22 / 23 / 20 | Ligar ponte / Status / Liberar escrita / Somente leitura / Desligar | MCP | — | — |
-| 6 | Inspecionar seleção | Diagnóstico | qualquer | qualquer |
-| 8 / 9 | Iniciar leitura de ação manual / Gravar log da leitura | Diagnóstico | qualquer | qualquer |
-| 15 | Sonda inter-part | Diagnóstico | montagem | qualquer |
-| 13 | Sonda de rosca (M6) | Diagnóstico | qualquer | qualquer |
 
 Os cinco comandos MCP ficam **fora** da tabela `Specs` de propósito: a ponte precisa subir com a SE vazia.
+
+**Ids aposentados (2026-11-09):** 6 (Inspecionar seleção), 8/9 (gravador), 13 (Sonda de rosca), 15 (Sonda inter-part) e 24 (Sonda de malha) saíram da ribbon — continuam como ferramentas MCP (`se_inspecionar_selecao`, `se_gravador_*`, `se_sonda_rosca`, `se_sonda_interpart`, `se_sonda_malha`). Cada botão tem o seu ícone (`tools/make_ribbon_res.ps1`, ids de imagem 1–5 e 7–30); mudou a ribbon, sobe o `GuiVersion` (hoje 31).
 
 ## 4.2 Eletrodos
 
@@ -843,7 +840,7 @@ de plano/cilindro/cone sobre região de malha, nem segmentação, nem seleção 
 malha (`Body.GetFacetData`) e **reconstrói** corpo a partir dela, mas não a **entende** por você.
 Num corpo de facetas `Body.Faces` é inacessível: a segmentação sai da sopa de triângulos.
 
-**Sonda de malha (24)** — só-leitura: corpos e faces de malha, triângulos por rota, caixa
+**Sonda de malha** (só pela ferramenta MCP `se_sonda_malha`) — só-leitura: corpos e faces de malha, triângulos por rota, caixa
 envolvente e quais membros da API existem nesta versão. O teste de seccionamento (o único que
 escreve) é opcional e perguntado.
 
@@ -1012,14 +1009,19 @@ Responde, só por leitura do B-Rep, o que a ferramentaria **não** consegue prod
 - **Canto vivo:** não tem face curva para medir — é uma aresta entre dois planos, raio zero. Toda fresa deixa ali o próprio raio. É EDM por definição, e ferramenta mais longa não resolve. Só conta canto **vertical** (a aresta pode fugir de Z em até 20°, o que cobre saída de molde de 1 a 3° com folga).
 - **A concavidade é calibrada, não chutada:** o sinal do produto vetorial depende de uma convenção da SE que não está no dump, então as arestas verticais na borda da caixa envolvente — convexas por construção — servem de referência. Se elas não concordarem entre si, a análise **se recusa a classificar** e diz isso no log.
 
-## 4.9 Diagnóstico
+## 4.9 Diagnóstico (pela ponte MCP)
 
-| Comando | O que faz |
+Sem botões desde 2026-11-09; as mesmas rotinas do Core, chamadas pela ponte:
+
+| Ferramenta | O que faz |
 |---|---|
-| **Inspecionar seleção** (6) | SPY sobre o objeto COM selecionado; cada clique **engorda** o `SE_API_dump_<versão>.txt` |
-| **Gravador** (8 + 9) | snapshot das coleções → o usuário faz a operação à mão na SE → diff → dump `[REC]`/`[SPY]`. É como se descobriu a receita de costura das superfícies |
-| **Sonda inter-part** (15) | mapeia as rotas de cópia inter-part em peças descartáveis; não toca na cavidade |
-| **Sonda de rosca M6** (13) | peça descartável 120×40×15 com 4 furos M6, uma receita de API por furo. Ø real esperado **5,0 mm** (broca de M6), não 6,0. Detecta e oferece ligar a opção global "exibir roscas" — com ela desligada, um furo roscado correto desenha liso |
+| `se_inspecionar_selecao` | SPY sobre o objeto COM selecionado; cada chamada **engorda** o `SE_API_dump_<versão>.txt` |
+| `se_gravador_iniciar` + `se_gravador_gravar` | snapshot das coleções → o usuário faz a operação à mão na SE → diff → dump `[REC]`/`[SPY]`. É como se descobriu a receita de costura das superfícies e a do Furo de vários furos (`UserDefinedPattern` com um perfil por furo) |
+| `se_sonda_interpart` | mapeia as rotas de cópia inter-part em peças descartáveis; não toca na cavidade |
+| `se_sonda_rosca` | peça descartável 120×40×15 com 4 furos M6, uma receita de API por furo. Ø real esperado **5,0 mm** (broca de M6), não 6,0 |
+| `se_sonda_malha` | só leitura sobre a malha (ver 4.7) |
+
+Sondas fora da SE: `tools/UndoProbe` (`--multifuro controle|set|padrao-simples|padrao-manual|padrao-preso|botao` para furos agrupados), `tools/*Probe` — sempre em peça descartável.
 
 ## 4.10 Configuração e logs
 
