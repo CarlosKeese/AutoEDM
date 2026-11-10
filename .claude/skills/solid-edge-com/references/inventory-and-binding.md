@@ -228,19 +228,19 @@ you something** — typed SAFEARRAY elements, event delegates, and the enums tha
 
 ## Querying the inventory instead of loading it
 
-The full dump is ~45 MB of JSON. Never read it whole. `scripts/apiq.mjs`:
+The full dump is ~45 MB of JSON. Never read it whole. `scripts/apiq.py`:
 
 ```
-node scripts/apiq.mjs type   "^Face$"            types whose name matches
-node scripts/apiq.mjs members HoleData           all members, with signatures
-node scripts/apiq.mjs find   "GetRange"          members by name, any type
-node scripts/apiq.mjs sig    "Face.GetRange"     full signature + per-param flags
-node scripts/apiq.mjs enum   "FeatureStatus"     enum with values
-node scripts/apiq.mjs const  "igQuery"           constants by name
-node scripts/apiq.mjs value  1216476310          REVERSE lookup: which constant is this?
-node scripts/apiq.mjs events                     coclasses and their event interfaces
-node scripts/apiq.mjs outparams "^Face$"         members with [out]/[in,out]
-node scripts/apiq.mjs stats                      per-typelib totals
+python scripts/apiq.py type   "^Face$"            types whose name matches
+python scripts/apiq.py members HoleData           all members, with signatures
+python scripts/apiq.py find   "GetRange"          members by name, any type
+python scripts/apiq.py sig    "Face.GetRange"     full signature + per-param flags
+python scripts/apiq.py enum   "FeatureStatus"     enum with values
+python scripts/apiq.py const  "igQuery"           constants by name
+python scripts/apiq.py value  1216476310          REVERSE lookup: which constant is this?
+python scripts/apiq.py events                     coclasses and their event interfaces
+python scripts/apiq.py outparams "^Face$"         members with [out]/[in,out]
+python scripts/apiq.py stats                      per-typelib totals
 ```
 
 `value` is the one people forget and need most: a magic number in a log becomes a name.

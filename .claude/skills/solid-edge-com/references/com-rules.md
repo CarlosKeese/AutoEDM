@@ -63,7 +63,7 @@ face.GetType().InvokeMember("GetRange", BindingFlags.InvokeMethod,
 `Face.GetRange`, `Face.GetExactRange`, `Vertex.GetPointData`, `Application.GetGlobalParameter`
 are **`[in,out]`**: the array or VARIANT must arrive **allocated**. `ref null` fails.
 `Occurrence.GetTransform` and `Profile.Convert2DCoordinate` are `[out]` pure. The inventory
-tells you which: `node scripts/apiq.mjs sig "Face.GetRange"`.
+tells you which: `python scripts/apiq.py sig "Face.GetRange"`.
 
 There are **1 406** `[in,out]` parameters in the SE typelibs (878 in `Part.tlb` alone), so
 this is not an edge case.
@@ -145,8 +145,8 @@ It happened three times in one session, and all three times the *name* was wrong
 The right response is to query the inventory, not to try variations:
 
 ```
-node scripts/apiq.mjs members HoleData | grep -i diameter
-node scripts/apiq.mjs find "^StyleName$"
+python scripts/apiq.py members HoleData | grep -i diameter
+python scripts/apiq.py find "^StyleName$"
 ```
 
 The wrong response is concluding "SE does not support this".

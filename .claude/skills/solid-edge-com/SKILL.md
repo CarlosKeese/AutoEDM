@@ -159,13 +159,17 @@ Each line is a failure that has actually happened. Follow the pointer for the lo
    `[lcid]`), DISPIDs, vtable offsets, defaults and enum **values**. Direction is what
    predicts marshaling errors; a missing `[opt]` is what predicts `DISP_E_PARAMNOTOPTIONAL`.
    `scripts/ApiDump` does this. The result is tens of megabytes — **never load it whole**.
-2. **Query the inventory before proposing any call.** `scripts/apiq.mjs` answers by type,
+2. **Query the inventory before proposing any call.** `scripts/apiq.py` answers by type,
    member, exact signature, enum, reverse value lookup, events and out-params:
    ```
-   node scripts/apiq.mjs sig "Face.GetRange"
-   node scripts/apiq.mjs value 1216476310
-   node scripts/apiq.mjs members HoleData | grep -i diameter
+   python scripts/apiq.py sig "Face.GetRange"
+   python scripts/apiq.py value 1216476310
+   python scripts/apiq.py members HoleData | grep -i diameter
    ```
+   It runs with no setup: without an `api.json` it answers from the bundled `scripts/index/`
+   (existence, param count, DISPID, return type, out-param flag); per-parameter names and
+   direction need the `api.json` from ApiDump. The bundled index is **one build** (SE 2026) —
+   on another version treat it as a lead and confirm on the live object (step 4).
    The answer is usually already there. A member you "remember" that the inventory doesn't
    list does not exist.
 3. **Read the install's DATA tables for any string argument.** The typelib gives the *shape*
@@ -180,6 +184,9 @@ Each line is a failure that has actually happened. Follow the pointer for the lo
    zero arity divergence); on the **community NuGet** they do not — that package is the
    one that imports a `SurfaceByBoundaries.Add` argument as `out` where the typelib says
    `[in,out]`. Where sources differ, the live object wins.
+   In the AutoEDM repo, with the MCP bridge up, this step is ONE tool call and needs no human:
+   `se_com_ler` walks a path on the live object and returns values, the real COM type and method
+   signatures; `se_captura` shows the screen. → `references/discovery.md`
 5. **When the API is unclear, have the human do it by hand and watch.** Dump the selected
    feature (SPY) or diff collection snapshots around the manual action (recorder). One
    round instead of ten.

@@ -1,5 +1,25 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-10 — query tools in Python, index usable without api.json, OLD/ removed
+
+- `scripts/apiq.mjs` and `make-index.mjs` replaced by `apiq.py` and `make-index.py` (standard library only). The dev machine
+  has no Node, and `apiq` also needed a 45 MB `api.json` that the skill does not ship — so step 2 of the discovery loop could
+  not run at all. `apiq.py` now falls back to `scripts/index/` when there is no `api.json`.
+- `make-index.py` checked against a synthetic `api.json` only; not yet against a real ApiDump output.
+- `RefPlane.GetNormal` / `GetRootPoint` (`[out] double[3]`) read live on **SE 2023 (223.00.13.05)**, new part: plane 1 = +Z,
+  2 = +X, 3 = −Y. `GetNormalVector` belongs to `Plane` (face geometry); calling it on a RefPlane is `DISP_E_UNKNOWNNAME`.
+- `View.SaveAsImage` with a `.png` name writes nothing and raises nothing on SE 2023; `.jpg`/`.bmp` work (`references/errors.md`).
+- Live-confirmed on SE 2023 through generic late binding: `Occurrence.GetRangeBox` is `[in,out]` ×2 (allocated `double[3]`),
+  `Documents.Add("SolidEdge.PartDocument")`, `SolidEdgeDocument.Activate()`, `Close(SaveChanges)`, `SelectSet.Add/RemoveAll`.
+- `View.Fit()` sets `Document.Dirty = true` (measured on an assembly, SE 2023): opening, `SaveAsImage` and `SelectSet.Add` do not.
+  A "dirty" flag is therefore not proof the model changed. Scalar `[out] double*` params (`Occurrence.GetTransform`) need a
+  TYPED by-ref value under `InvokeMember`; an empty VARIANT by-ref is `DISP_E_TYPEMISMATCH`.
+- `references/discovery.md`: the AutoEDM bridge tools (`se_com_ler`, `se_com_chamar`, `se_captura`, `se_selecionar`) as the
+  first live-introspection route, plus two PowerShell marshaling traps. `references/addin-ribbon.md`: lazy add-in load
+  re-measured on SE 2023 (`AddIns.Connect = True` does not mean loaded).
+- `OLD/` (pre-2026-10-18 layouts and `.bak` bundles) removed from the tree; it is in the git history.
+- `solid-edge-com.skill` rebuilt from the whole folder (it held only `SKILL.md` and the changelog).
+
 ## 2026-11-09 (6) — both hole-group recipes confirmed live
 
 Ordered pattern (Alívio de extratores, real mold plate) and synchronous shared-HoleData group with drill point and chamfer

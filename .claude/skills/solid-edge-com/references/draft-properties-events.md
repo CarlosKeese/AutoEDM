@@ -300,7 +300,7 @@ parameters and will need their own marshaling care. Not tested.
 ## The 45 event coclasses
 
 44 in `SolidEdgeFramework` plus 1 in `SEPreviewLib`. Full list:
-`node scripts/apiq.mjs events`. The likely-useful ones:
+`python scripts/apiq.py events`. The likely-useful ones:
 
 `ApplicationEvents` ✅ · `DocumentEvents` · `FileUIEvents` · `BeforeFileSaveAsEvents` ·
 `Command` · `Mouse` · `AddInEvents` · `CommandBarButtonEvents` · `ViewEvents` ·
@@ -351,8 +351,8 @@ values), `WeldmentGlobalConstants` (7), `WeldmentSectionTypeConstants` (4),
 **`SolidEdgeAssembly`**, with `StructuralFrameEndConditionConstants` (12),
 `StructuralFrameExtendTrimPositionConstants` (2), `FrameShapeConstants` (2).
 
-Explore with `node scripts/apiq.mjs members StructuralFrame` and
-`node scripts/apiq.mjs enum WeldmentCommandConstants`.
+Explore with `python scripts/apiq.py members StructuralFrame` and
+`python scripts/apiq.py enum WeldmentCommandConstants`.
 
 ---
 

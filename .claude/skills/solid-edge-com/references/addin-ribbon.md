@@ -322,6 +322,13 @@ Creating a document then made a third-party add-in connect and write its log. So
 `OnConnection` can be deferred until an environment is activated. **An empty add-in log on
 a just-started SE does not prove the add-in is broken** — open a document first.
 
+Re-measured 2026-11-10 on **SE 2023 (223.00.13.05)**, started with no document: 90 s with no add-in
+log, although `Application.AddIns` already listed the add-in with `Connect = True` (that flag is the
+registry's `AutoConnect`, not "loaded"). `Documents.Open` of an assembly ran `OnConnection` at once.
+Consequence: anything the add-in starts by itself in `OnConnection` (a pipe, a server, a timer) does
+**not exist** until the first document opens — a script that restarts SE must also open a document
+before it expects that service to answer.
+
 ### .NET 10: `mscoree.dll` is not an option any more
 
 Both add-ins measured on this machine use the .NET Framework path:

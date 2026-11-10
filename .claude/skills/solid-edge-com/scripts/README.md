@@ -78,27 +78,31 @@ interfaces. It runs ~45 MB — **query it, never load it.**
 Then regenerate the indexes:
 
 ```bash
-node make-index.mjs --api api.json --out index
+python make-index.py --api api.json --out index
 ```
 
-## 3. `apiq.mjs` — query `api.json`
+## 3. `apiq.py` — query the inventory
 
-Needs `api.json` (from ApiDump). Point it with `--db` or `APIQ_DB`.
+Works out of the box: with no `api.json` it answers from `index/` (member exists? how many
+params, DISPID, return type, has out-params; enums and reverse value lookup). For the full
+record — name, type and direction of **each** parameter, defaults, event interfaces — give it
+the `api.json` from ApiDump with `--db` or `APIQ_DB` (or drop it at `../inventory/api.json`).
+`--index <dir>` forces a specific index folder.
 
 ```bash
-node apiq.mjs sig    "Face.GetRange"     # full signature + flags per parameter
-node apiq.mjs members HoleData           # every member of a type
-node apiq.mjs find   "GetRange"          # members by name, across all types
-node apiq.mjs type   "^Face$"            # types by name
-node apiq.mjs enum   "FeatureStatus"     # an enum with its values
-node apiq.mjs const  "igQuery"           # constants by name
-node apiq.mjs value  1216476310          # REVERSE lookup by value
-node apiq.mjs events                     # coclasses and their event interfaces
-node apiq.mjs outparams "^Face$"         # members with [out]/[in,out]
-node apiq.mjs stats                      # per-typelib totals
+python apiq.py sig    "Face.GetRange"     # full signature + flags per parameter
+python apiq.py members HoleData           # every member of a type
+python apiq.py find   "GetRange"          # members by name, across all types
+python apiq.py type   "^Face$"            # types by name
+python apiq.py enum   "FeatureStatus"     # an enum with its values
+python apiq.py const  "igQuery"           # constants by name
+python apiq.py value  1216476310          # REVERSE lookup by value
+python apiq.py events                     # coclasses and their event interfaces (api.json only)
+python apiq.py outparams "^Face$"         # members with [out]/[in,out]
+python apiq.py stats                      # per-typelib totals
 ```
 
-`sig` is the one to reach for before writing any call — it prints direction and
+`sig` is the one to reach for before writing any call — with `api.json` it prints direction and
 optionality per parameter, which is what predicts marshaling errors:
 
 ```
@@ -145,6 +149,6 @@ everything "works" where the user cannot see it. See `references/connecting.md`.
 
 - **.NET 10 SDK** (or adjust `TargetFramework`), building **x64** — SE 2026 is 64-bit only
   and a 32-bit build will not connect.
-- **Node 20+** for the `.mjs` tools.
+- **Python 3.8+** for `apiq.py` and `make-index.py` (standard library only).
 - `ApiDump`, `apiq` and `make-index` need **no Solid Edge license and no running SE**.
   `LiveProbe` needs SE open.

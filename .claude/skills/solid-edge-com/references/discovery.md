@@ -135,6 +135,27 @@ property). It no longer does:
   Don't touch the user's part for a write test: create a throwaway one (the MCP `se_modelar`
   with `novaPeca=true` makes a box, unsaved). In the AutoEDM repo the MCP bridge pipe
   (`AutoEDM.Bridge.v1`, one JSON line) is also reachable by hand when the MCP client is down.
+  Two PowerShell traps that look like COM errors: a `double[]` put into `@($a)` is FLATTENED into
+  three arguments ("number of parameters does not match") — wrap it as `[object[]]$args = ,$a`; and
+  a script block cast to `Func[object]` hands back a `PSObject`, so `InvokeMember` then looks for the
+  member on `PSObject` — hold the COM object in a static field of an `Add-Type` class instead.
+
+### With the AutoEDM bridge up: no script at all (added 2026-11-10)
+
+When the AutoEDM MCP bridge is running, the live object is one tool call away, and this is now the
+FIRST thing to reach for before writing a probe:
+
+| Question | Tool |
+|---|---|
+| Does this member exist on the LIVE object, and what does it return? | `se_com_ler` with a path: `doc.Models.Item(1).Body.Faces(1).Count`, `sel[1].Geometry.Radius`. Roots: `app`, `doc`, `sel`, `janela`, `docs`, `$N` (an object returned earlier). Property gets only (+ `Item`) — it cannot run `Delete`/`Save` by accident |
+| What are the real parameters of this method? | `se_com_ler` with `"assinaturas": ["GetTransform"]` → read from the live object's `ITypeInfo`, with `[out]` / `[in,out]` per parameter |
+| What does this object expose? | `se_com_ler` with `"profundidade": 0..2` (the SPY dump) |
+| Call it and see | `se_com_chamar` (write mode). Out-params must be TYPED: `{"out":"double"}` for a scalar `double*`, `{"out":"doubles","n":3}` for an `[in,out]` SAFEARRAY. An untyped by-ref VARIANT on a `double*` is `DISP_E_TYPEMISMATCH` (measured on `Occurrence.GetTransform`) |
+| Did it really do what I think? | `se_captura` returns a picture of the active window; `se_selecionar` puts any object in the `SelectSet` so it shows highlighted in that picture |
+
+The same `SeToolRunner` can be loaded in an external PowerShell 5.1 process (net472 build +
+`AssemblyResolve`, `GetActiveObject` as the app provider) to exercise a NEW tool against the live SE
+before any deploy — that is how these tools were validated.
 
 ## The install's DATA tables (free answers, no SE run)
 
