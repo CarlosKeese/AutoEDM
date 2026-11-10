@@ -284,6 +284,12 @@ namespace AutoEDM.Mold.MoldBase
         public List<string> ProductFiles { get; set; } = new List<string>();
         public List<string> NonProductFiles { get; set; } = new List<string>();
 
+        /// <summary>Versão da regra de produto com que <see cref="ProductFiles"/>/<see cref="NonProductFiles"/>
+        /// foram gravadas. 0 = arquivos antigos (listas com o palpite inteiro, ignoradas); 2 = só as mudanças
+        /// feitas à mão sobre <c>LooksLikeProduct</c>.</summary>
+        public int ProductRuleVersion { get; set; }
+        public const int CurrentProductRule = 2;
+
         public MoldBaseOptions Clone()
         {
             var c = (MoldBaseOptions)MemberwiseClone();

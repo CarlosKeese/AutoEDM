@@ -10,6 +10,65 @@ namespace AutoEDM.Core.Tests
     /// </summary>
     public class MoldBasePlannerTests
     {
+        [Theory]
+        // Nomes do molde 15428 (2026-11-10): só a carcaça é produto.
+        [InlineData("015007.01_CARCAÇA_FRONTAL_REV00_TESTE", true)]
+        [InlineData("15428.203", false)]          // peça do projeto
+        [InlineData("15428.203 - rev1", false)]
+        [InlineData("13337", false)]              // comprado / biblioteca: só o código
+        [InlineData("8937", false)]
+        [InlineData("15247_oa_0", false)]
+        [InlineData("10538_oa_2", false)]
+        [InlineData("TAMPA", true)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void LooksLikeProduct_IgnoresProjectAndLibraryCodes(string name, bool expected) =>
+            Assert.Equal(expected, MoldBaseBuilder.LooksLikeProduct(name));
+
+        private static MoldBaseScan ScanOf(params (string file, bool guess)[] items)
+        {
+            var scan = new MoldBaseScan();
+            foreach (var (file, guess) in items)
+                scan.Items.Add(new MoldBaseItem { Name = file + ":1", FileName = file, IsProduct = guess, GuessedProduct = guess });
+            return scan;
+        }
+
+        [Fact]
+        public void RememberedProducts_FromTheOldRule_AreIgnored()
+        {
+            // Projeto gravado pelo build antigo: a lista de "produtos" era o palpite inteiro, com os
+            // comprados dentro. Ela não pode passar por cima da regra nova.
+            var saved = new MoldBaseOptions { ProductFiles = { "13337.par", "CARCACA.par" } };   // versão 0
+            MoldBaseScan scan = ScanOf(("13337.par", false), ("CARCACA.par", true));
+
+            MoldBaseBuilder.InitialOptions(scan, saved);
+
+            Assert.False(scan.Items[0].IsProduct);
+            Assert.True(scan.Items[1].IsProduct);
+        }
+
+        [Fact]
+        public void RememberedProducts_KeepOnlyWhatTheUserChanged()
+        {
+            MoldBaseScan scan = ScanOf(("13337.par", false), ("CARCACA.par", true), ("8937.par", false));
+            scan.Items[0].IsProduct = true;    // o usuário marcou um comprado como produto
+            scan.Items[1].IsProduct = false;   // e desmarcou a peça que o nome sugeria
+
+            var o = new MoldBaseOptions();
+            MoldBaseBuilder.RememberItems(scan, o);
+
+            Assert.Equal(new[] { "13337.par" }, o.ProductFiles);
+            Assert.Equal(new[] { "CARCACA.par" }, o.NonProductFiles);
+            Assert.Equal(MoldBaseOptions.CurrentProductRule, o.ProductRuleVersion);
+
+            // E a rodada seguinte recomeça igual à escolha dele.
+            MoldBaseScan next = ScanOf(("13337.par", false), ("CARCACA.par", true), ("8937.par", false));
+            MoldBaseBuilder.InitialOptions(next, o);
+            Assert.True(next.Items[0].IsProduct);
+            Assert.False(next.Items[1].IsProduct);
+            Assert.False(next.Items[2].IsProduct);
+        }
+
         private static MoldBaseContent Box(double x, double y, double up, double down, double product = 0) => new MoldBaseContent
         {
             Min1 = -x / 2, Max1 = x / 2, Min2 = -y / 2, Max2 = y / 2, MinW = -down, MaxW = up, Count = 1, ProductHeight = product,

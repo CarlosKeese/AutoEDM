@@ -24,6 +24,9 @@ namespace AutoEDM.Mold.MoldBase
         public bool Include { get; set; } = true;
         /// <summary>É o PRODUTO (peça injetada): a altura dele é a altura a extrair.</summary>
         public bool IsProduct { get; set; }
+        /// <summary>O palpite pelo nome (<see cref="MoldBaseBuilder.LooksLikeProduct"/>), antes de qualquer
+        /// escolha gravada — é contra ele que se decide o que vale a pena lembrar.</summary>
+        public bool GuessedProduct { get; set; }
     }
 
     /// <summary>O porta-molde que o botão já criou nesta montagem, lido das variáveis da submontagem.</summary>
@@ -129,7 +132,8 @@ namespace AutoEDM.Mold.MoldBase
                     // Eletrodo e porta-molde/quadro já referenciado não são peças do molde: ficam de fora por padrão
                     // (a janela deixa marcar).
                     Include = visible && !standard && !Regex.IsMatch(name ?? "", @"(_EE\d|_EDM|^EE\d)", RegexOptions.IgnoreCase),
-                    IsProduct = !standard && !Regex.IsMatch(name ?? "", @"^\d+\.\d{3}($|[^\d])"),
+                    IsProduct = !standard && LooksLikeProduct(name),
+                    GuessedProduct = !standard && LooksLikeProduct(name),
                 });
             }
 
@@ -203,6 +207,10 @@ namespace AutoEDM.Mold.MoldBase
                     string f = Path.GetFileName(it.FileName ?? it.Name);
                     if (!scan.FromSelection && o.ExcludedFiles.Contains(f, StringComparer.OrdinalIgnoreCase)) it.Include = false;
                     else if (!scan.FromSelection && o.IncludedFiles.Contains(f, StringComparer.OrdinalIgnoreCase)) it.Include = true;
+                    // Listas gravadas pela regra ANTIGA traziam o palpite inteiro (80 comprados como
+                    // "produto" no 15428) e passariam por cima da regra nova; só valem as da regra atual,
+                    // que guardam apenas o que o usuário mudou à mão.
+                    if (o.ProductRuleVersion < MoldBaseOptions.CurrentProductRule) continue;
                     if (o.ProductFiles.Contains(f, StringComparer.OrdinalIgnoreCase)) it.IsProduct = true;
                     else if (o.NonProductFiles.Contains(f, StringComparer.OrdinalIgnoreCase)) it.IsProduct = false;
                 }
@@ -234,8 +242,28 @@ namespace AutoEDM.Mold.MoldBase
             Func<Func<MoldBaseItem, bool>, List<string>> files = f => scan.Items.Where(f).Select(i => Path.GetFileName(i.FileName ?? i.Name)).Distinct().ToList();
             o.ExcludedFiles = files(i => !i.Include);
             o.IncludedFiles = files(i => i.Include);
-            o.ProductFiles = files(i => i.IsProduct);
-            o.NonProductFiles = files(i => !i.IsProduct);
+            // Produto: só as DIVERGÊNCIAS do palpite pelo nome. Assim uma melhoria futura da regra vale
+            // para os projetos já gravados, e a marcação feita à mão continua lembrada.
+            o.ProductFiles = files(i => i.IsProduct && !i.GuessedProduct);
+            o.NonProductFiles = files(i => !i.IsProduct && i.GuessedProduct);
+            o.ProductRuleVersion = MoldBaseOptions.CurrentProductRule;
+        }
+
+        /// <summary>
+        /// Palpite inicial de "esta peça é o PRODUTO" pelo nome do arquivo (sem extensão); a janela e
+        /// o argumento 'produtos' corrigem. NÃO é produto: peça do projeto (<c>15428.203</c>,
+        /// <c>NNNNN.NNN</c>) nem item de biblioteca/comprado, cujo nome é só o código numérico
+        /// (<c>13337</c>, <c>8937</c>, <c>15247_oa_0</c>). Sem a 2ª regra, num molde real (15428,
+        /// 2026-11-10) 80 parafusos, pinos e submontagens entravam como produto e a "altura a
+        /// extrair" saía da caixa deles. O produto traz texto no nome (<c>015007.01_CARCAÇA_…</c>).
+        /// </summary>
+        public static bool LooksLikeProduct(string fileNameWithoutExtension)
+        {
+            string name = (fileNameWithoutExtension ?? "").Trim();
+            if (name.Length == 0) return false;
+            if (Regex.IsMatch(name, @"^\d+\.\d{3}($|[^\d])")) return false;      // peça do projeto
+            if (Regex.IsMatch(name, @"^\d+(_oa_\d+)?$", RegexOptions.IgnoreCase)) return false;   // biblioteca / comprado
+            return true;
         }
 
         public static MoldBasePlan Plan(MoldBaseScan scan, MoldBaseOptions opt)
