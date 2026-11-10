@@ -69,6 +69,14 @@ namespace AutoEDM.Mcp
 
         [JsonPropertyName("text")] public string Text { get; set; }
 
+        /// <summary>Imagem opcional (base64) que acompanha o texto — a captura de tela de
+        /// 'se_captura'. Campo novo e opcional: um servidor MCP antigo simplesmente o ignora,
+        /// por isso o contrato segue na v1.</summary>
+        [JsonPropertyName("image")] public string ImageBase64 { get; set; }
+
+        /// <summary>Tipo MIME de <see cref="ImageBase64"/> (ex.: image/jpeg).</summary>
+        [JsonPropertyName("mime")] public string ImageMime { get; set; }
+
         [JsonPropertyName("v")] public int Version { get; set; } = BridgeProtocol.Version;
 
         public static BridgeResponse Good(int id, string text) =>

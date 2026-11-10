@@ -45,10 +45,22 @@ namespace AutoEDM.Mcp
             int id = _nextId++;
             try
             {
+                // Conexão herdada de uma chamada anterior? Se a Solid Edge foi fechada e reaberta
+                // nesse meio-tempo, o pipe está morto mas IsConnected só descobre na escrita.
+                bool reused = Connected;
                 EnsureConnected();
 
-                var req = new BridgeRequest { Id = id, Tool = tool, ArgsJson = argsJson };
-                _writer.WriteLine(BridgeProtocol.Serialize(req));
+                string wire = BridgeProtocol.Serialize(new BridgeRequest { Id = id, Tool = tool, ArgsJson = argsJson });
+                try { _writer.WriteLine(wire); }
+                catch (IOException) when (reused)
+                {
+                    // A escrita falhou, então o pedido NÃO chegou à SE: reconectar e repetir UMA
+                    // vez é seguro (não há como executar a operação duas vezes). Sem isto, a
+                    // primeira chamada depois de reabrir a SE sempre falhava.
+                    Close();
+                    EnsureConnected();
+                    _writer.WriteLine(wire);
+                }
 
                 string line = _reader.ReadLine();
                 if (line == null)
@@ -65,7 +77,9 @@ namespace AutoEDM.Mcp
             catch (TimeoutException)
             {
                 Close();
-                return BridgeResponse.Bad(id, NotListening());
+                // Connect dá o MESMO timeout para "ninguém hospeda" e para "a única instância do
+                // pipe está com outro cliente" — e a instrução para cada caso é oposta.
+                return BridgeResponse.Bad(id, PipeIsBusy(_pipeName) ? Busy() : NotListening());
             }
             catch (IOException ex)
             {
@@ -84,7 +98,34 @@ namespace AutoEDM.Mcp
             "Ninguém está hospedando a ponte do AutoEDM. Para ligar:\n" +
             "  1. abra a Solid Edge (o add-in AutoEDM precisa estar instalado e ativo);\n" +
             "  2. na aba AutoEDM da ribbon, grupo MCP, clique em \"Ligar ponte\".\n\n" +
-            "A ponte NÃO sobe sozinha de propósito — quem decide se um agente alcança o CAD é o usuário.";
+            "Por padrão a ponte NÃO sobe sozinha — quem decide se um agente alcança o CAD é o usuário. " +
+            "(\"McpAutoStart\": true no config.json a liga ao abrir a SE, sempre em somente-leitura.)";
+
+        private static string Busy() =>
+            "A ponte do AutoEDM está NO AR, mas OCUPADA com outro cliente: ela atende um servidor MCP por vez.\n" +
+            "Duas causas: (1) outra sessão do Claude Code (outra janela do VS Code ou outro terminal) conectou " +
+            "primeiro — feche-a ou trabalhe por ela; (2) a Solid Edge ainda está terminando uma operação pedida por " +
+            "uma sessão que já fechou, ou está com uma caixa de diálogo aberta — espere terminar (ou feche o diálogo) " +
+            "e chame de novo. Não é preciso mexer na ribbon.";
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool WaitNamedPipe(string name, int timeoutMs);
+
+        /// <summary>
+        /// true quando o pipe EXISTE e todas as instâncias estão tomadas. <c>WaitNamedPipe</c>
+        /// distingue os dois casos sem abrir conexão: pipe inexistente falha na hora com
+        /// ERROR_FILE_NOT_FOUND (2); pipe ocupado espera e falha com ERROR_SEM_TIMEOUT (121).
+        /// </summary>
+        private static bool PipeIsBusy(string pipeName)
+        {
+            try
+            {
+                if (WaitNamedPipe(@"\\.\pipe\" + pipeName, 1)) return false;   // há instância livre: não é "ocupado"
+                return System.Runtime.InteropServices.Marshal.GetLastWin32Error() == 121;
+            }
+            catch { return false; }
+        }
 
         private void EnsureConnected()
         {

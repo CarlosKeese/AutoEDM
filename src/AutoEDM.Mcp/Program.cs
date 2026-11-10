@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AutoEDM.Mcp;
@@ -85,8 +86,13 @@ internal static class Program
         catch (Exception ex) { return Error(null, -32700, "JSON inválido: " + ex.Message); }
         if (msg is null) return Error(null, -32600, "Mensagem vazia.");
 
-        string method = msg["method"]?.GetValue<string>() ?? "";
-        JsonNode? id = msg["id"];
+        // Só objeto: um lote (array) ou um escalar levantaria exceção no indexador, FORA do
+        // try abaixo, e derrubaria o servidor inteiro por causa de uma mensagem malformada.
+        if (msg is not JsonObject obj)
+            return Error(null, -32600, "Pedido inválido: esperado um objeto JSON-RPC (lotes não são suportados).");
+
+        string method = obj["method"] is JsonValue mv && mv.TryGetValue(out string? m) && m is not null ? m : "";
+        JsonNode? id = obj["id"];
 
         // Sem "id" é NOTIFICAÇÃO: o protocolo proíbe responder.
         if (id is null)
@@ -95,6 +101,10 @@ internal static class Program
                 Console.Error.WriteLine("AutoEDM.Mcp: o cliente cancelou um pedido.");
             return null;
         }
+
+        // Com "id" e sem "method" é a RESPOSTA do cliente a um pedido nosso — não fazemos
+        // nenhum, mas responder a uma resposta seria erro de protocolo.
+        if (method.Length == 0 && (obj.ContainsKey("result") || obj.ContainsKey("error"))) return null;
 
         try
         {
@@ -128,7 +138,11 @@ internal static class Program
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = ServerName,
-                ["version"] = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"
+                // InformationalVersion (ex.: 0.0.0+ce26b79), a mesma da 1ª linha do log do add-in.
+                // A AssemblyVersion é fixa em 1.0.0.0 de propósito e não diz qual build está rodando.
+                ["version"] = typeof(Program).Assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                    ?? typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"
             },
             ["instructions"] =
                 "Dirige o Solid Edge através do add-in AutoEDM. Chame 'se_status' PRIMEIRO: ele diz se a ponte está " +
@@ -161,7 +175,10 @@ internal static class Program
             {
                 ["name"] = spec.Name,
                 ["description"] = description,
-                ["inputSchema"] = schema
+                ["inputSchema"] = schema,
+                // Dica para o cliente: leitura pode ser aprovada sem perguntar; escrita não.
+                // A trava de verdade continua sendo a chave de escrita, do lado da SE.
+                ["annotations"] = new JsonObject { ["readOnlyHint"] = !spec.Writes }
             });
         }
         return new JsonObject { ["tools"] = tools };
@@ -184,7 +201,17 @@ internal static class Program
         string argsJson = args?.ToJsonString() ?? "{}";
 
         BridgeResponse res = Bridge.Call(name, argsJson);
-        return TextResult(res.Text ?? "(a ponte respondeu sem texto)", isError: !res.Ok);
+        JsonObject result = TextResult(res.Text ?? "(a ponte respondeu sem texto)", isError: !res.Ok);
+
+        // 'se_captura' devolve a tela: vai como conteúdo de imagem, ao lado do texto.
+        if (!string.IsNullOrEmpty(res.ImageBase64))
+            result["content"]!.AsArray().Add(new JsonObject
+            {
+                ["type"] = "image",
+                ["data"] = res.ImageBase64,
+                ["mimeType"] = res.ImageMime ?? "image/jpeg"
+            });
+        return result;
     }
 
     private static JsonObject TextResult(string text, bool isError) => new()

@@ -192,7 +192,9 @@ o modelo são recusadas com explicação até o usuário clicar em *Liberar escr
 confirmação e não sobrevive a um desligamento. Nenhuma ferramenta MCP consegue ligar essa chave.
 
 **Ligação automática (opcional).** Com `"McpAutoStart": true` no `config.json`, a ponte sobe sozinha
-quando a Solid Edge carrega o add-in — sempre em somente-leitura; a escrita continua só pelo botão.
+quando a Solid Edge carrega o add-in — em somente-leitura; a escrita continua pelo botão, a menos que
+`"McpAutoWrite": true` também esteja no `config.json` (aí a ponte já nasce com a escrita liberada:
+decisão de quem aceita que o agente altere o que estiver aberto naquela máquina).
 O servidor MCP é instalado por `tools\deploy-dev.ps1 -IncludeMcp` em `%LOCALAPPDATA%\AutoEDM\mcp` e
 registrado no Claude Code no escopo do usuário, então aparece em qualquer pasta. O cliente reabre o
 pipe a cada chamada: se a SE fechar e voltar, a próxima ferramenta reconecta sem reiniciar o Claude Code.
@@ -218,10 +220,10 @@ de fora. A referência completa está em [docs/MANUAL.md](docs/MANUAL.md), seç�
 Protrusões sucessivas fundem, então primitivas que se tocam saem como um sólido único. É
 também a peça que faltava para a rota prismática da engenharia reversa: seccionar a malha
 produz exatamente essa lista. O índice do plano decide o EIXO da extrusão, e é `se_planos` que lista os
-planos disponíveis. **Corrigido em 2026-09-18, com a SE aberta:** `RefPlane.Normal` **não é
-legível** (os três planos base respondem `DISP_E_UNKNOWNNAME`), então `se_planos` entrega
-índice e nome, mas não o eixo — quem escolhe plano tem de medir ou usar um mapeamento já
-validado, nunca deduzir pela normal. A mais valiosa é
+planos disponíveis, com a normal e o ponto por onde cada um passa (`RefPlane.GetNormal` /
+`GetRootPoint`; até 2026-11-10 a ferramenta chamava um método que o RefPlane não tem e a normal
+vinha `DISP_E_UNKNOWNNAME`). O mapeamento índice → plano **não é fixo** — numa peça nova do
+SE 2023 saiu 1 = XY, 2 = YZ, 3 = XZ —, então leia-o com `se_planos` em vez de supor. A mais valiosa é
 `se_inspecionar_selecao`: ela fecha o laço da regra de ouro deste projeto — descobrir a API COM
 real por introspecção ao vivo, em vez de um round-trip humano copiando log a cada assinatura.
 
@@ -319,6 +321,7 @@ Na primeira execução o add-in grava `%LOCALAPPDATA%\AutoEDM\config.json` com o
 | `DetailGapMm` | Distância máxima entre faces para elas contarem como o **mesmo** detalhe na segmentação. |
 | `HolderHeightMm` / `HolderBaseClearanceMm` | Altura do bloco da base e a folga sob ele. |
 | `McpAutoStart` | `true` = a ponte MCP sobe sozinha ao abrir a SE, em somente-leitura. Padrão `false`. |
+| `McpAutoWrite` | Com `McpAutoStart`: `true` = a ponte já nasce com a **escrita liberada**, sem o clique. Padrão `false`. |
 | `RevisionPropertyNames` | Nomes da propriedade de arquivo que marca uma peça **nova** na Lista de modificações. O nome é casado **inteiro** (acento e maiúscula não importam) — nunca por pedaço, senão a propriedade padrão "Número da Revisão", que é contador de salvamentos, entra no lugar e o relatório inteiro sai errado. |
 | `RaOffsetBands` | Tabela `Ra máximo → offset (mm)`. `null` ou lista vazia = tabela de fábrica. |
 | `RaColorEntries` | Paleta `RGB → Ra alvo`. `null` ou lista vazia = paleta de fábrica. |
@@ -511,7 +514,7 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Duplicar eletrodo p/ o próximo Ra | 🚧 construído, aguardando validação no SE |
 | Copiar superfícies (Inter-Part Copy) | 🚧 só funciona em edição em contexto (in-place) |
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
-| Ponte MCP (Claude Code dirige a Solid Edge) | ✅ **validada no SE em 2026-09-18** — 1º run com o CAD aberto: leitura, planos, árvore e modelagem por primitivas sobre COM real |
+| Ponte MCP (Claude Code dirige a Solid Edge) | ✅ **validada no SE em 2026-09-18** — 1º run com o CAD aberto: leitura, planos, árvore e modelagem por primitivas sobre COM real. **2026-11-10:** ferramentas de autonomia (captura de tela, documentos, seleção, leitura e chamada livres da API COM) testadas contra o SE vivo; falta o 1º run pela ponte |
 | Eng. Reversa: malha → sólido | ✅ **5 de 6 malhas reais exatas (2026-10-10)** — plano, cilindro, cone, toro e esfera reconhecidos; faixas Z + correções por revolução/extrusão; conferido por desvio geométrico. 🚧 concordância orgânica (forma livre) ainda diverge |
 | Orquestrador completo ("gerar todos os eletrodos") | 📋 planejado |
 

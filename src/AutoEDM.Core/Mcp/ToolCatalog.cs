@@ -125,11 +125,15 @@ namespace AutoEDM.Mcp
             {
                 Name = "se_arvore",
                 Writes = false,
-                InputSchemaJson = NoArgs,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"detalhado\":{\"type\":\"boolean\",\"description\":\"Montagem: true = uma linha por ocorrência, com o nome dela. Padrão false = agrupado por arquivo, com a contagem e os índices.\"}}," +
+                    "\"additionalProperties\":false}",
                 Description =
                     "Estrutura do documento ATIVO. Em PEÇA: corpos (sólido ou de facetas/malha), features na ordem da árvore, " +
-                    "superfícies de construção e curvas de construção. Em MONTAGEM: as ocorrências com nome e arquivo. " +
-                    "Serve para saber o que existe no modelo antes de pedir qualquer operação. Não altera nada."
+                    "superfícies de construção e curvas de construção. Em MONTAGEM: as ocorrências do 1º nível agrupadas por " +
+                    "arquivo (\"13337.par ×12 (índices 25–36)\"); os índices são os de Occurrences.Item(n) e servem em " +
+                    "'se_selecionar'. Serve para saber o que existe no modelo antes de pedir qualquer operação. Não altera nada."
             },
             new ToolSpec
             {
@@ -627,6 +631,128 @@ namespace AutoEDM.Mcp
                     "Botão 'Encerrar gravação'. Compara com a foto do 'se_gravador_iniciar' e devolve o tipo e as " +
                     "propriedades das features que o usuário criou à mão — é assim que uma ação manual vira receita COM. " +
                     "Não altera nada."
+            },
+
+            // ------------------------------------------------- autonomia: ver, navegar, selecionar, COM
+            new ToolSpec
+            {
+                Name = "se_captura",
+                Writes = false,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"largura\":{\"type\":\"integer\",\"minimum\":320,\"maximum\":3840,\"description\":\"Largura em pixels. Padrão 1280.\"}," +
+                    "\"altura\":{\"type\":\"integer\",\"minimum\":240,\"maximum\":2160,\"description\":\"Altura em pixels. Padrão 800.\"}," +
+                    "\"ajustar\":{\"type\":\"boolean\",\"description\":\"true = enquadra o modelo inteiro antes (View.Fit) — MUDA o zoom que o usuário deixou e deixa o documento marcado como ALTERADO (Dirty). Padrão false.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "OLHOS: devolve uma IMAGEM da janela ativa da Solid Edge (peça ou montagem), como o usuário a está vendo — " +
+                    "cores, o que está oculto, o que está selecionado/realçado. Use para conferir o resultado de uma operação " +
+                    "em vez de confiar só no 'deu certo', e para entender um modelo antes de mexer. Não altera o modelo " +
+                    "(com 'ajustar' muda só o zoom). Desenho (.dft) ainda não é coberto."
+            },
+            new ToolSpec
+            {
+                Name = "se_documentos",
+                Writes = false,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Lista os documentos ABERTOS na Solid Edge: nome, tipo (peça/montagem/desenho), caminho, se tem alterações " +
+                    "não salvas e qual é o ativo. Inclui os abertos em contexto por uma montagem. É o ponto de partida para " +
+                    "'se_ativar_documento' e 'se_fechar_documento'. Não altera nada."
+            },
+            new ToolSpec
+            {
+                Name = "se_ativar_documento",
+                Writes = false,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"nome\":{\"type\":\"string\",\"description\":\"Nome do documento (ex.: 15428.asm), caminho completo ou o índice de 'se_documentos'.\"}}," +
+                    "\"required\":[\"nome\"],\"additionalProperties\":false}",
+                Description =
+                    "Torna ATIVO um documento que já está aberto (troca a janela em foco). Quase toda ferramenta age no " +
+                    "documento ativo e exige um tipo específico — esta é a forma de atender o pré-requisito sem pedir ao " +
+                    "usuário para clicar. Não altera o modelo; a seleção não acompanha a troca."
+            },
+            new ToolSpec
+            {
+                Name = "se_abrir_documento",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"arquivo\":{\"type\":\"string\",\"description\":\"Caminho completo do .par, .asm, .psm ou .dft.\"}}," +
+                    "\"required\":[\"arquivo\"],\"additionalProperties\":false}",
+                Description =
+                    "Abre um arquivo na Solid Edge e o deixa ativo (se já estiver aberto, só ativa). Os avisos da SE ficam " +
+                    "desligados durante a abertura, para uma caixa de diálogo não travar a chamada. CUIDADO: não abra à parte " +
+                    "uma peça que está sendo editada EM CONTEXTO numa montagem — abrir/fechar nessa situação já apagou o corpo " +
+                    "de um eletrodo."
+            },
+            new ToolSpec
+            {
+                Name = "se_fechar_documento",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"nome\":{\"type\":\"string\",\"description\":\"Nome, caminho completo ou índice de 'se_documentos'.\"}," +
+                    "\"salvar\":{\"type\":\"boolean\",\"description\":\"true = salva antes de fechar. Padrão false.\"}," +
+                    "\"descartar\":{\"type\":\"boolean\",\"description\":\"true = fecha JOGANDO FORA as alterações não salvas. Padrão false.\"}}," +
+                    "\"required\":[\"nome\"],\"additionalProperties\":false}",
+                Description =
+                    "Fecha um documento aberto. Documento com alterações não salvas só fecha com 'salvar' ou 'descartar' " +
+                    "explícito — sem um dos dois a ferramenta recusa, para nunca perder trabalho por omissão. Use para " +
+                    "limpar as peças de teste que você mesmo criou. Mesma cautela do 'se_abrir_documento' com peça em contexto."
+            },
+            new ToolSpec
+            {
+                Name = "se_selecionar",
+                Writes = false,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"ocorrencias\":{\"type\":\"array\",\"items\":{\"type\":[\"string\",\"integer\"]},\"description\":\"MONTAGEM: ocorrências do 1º nível, pelo nome (15428.203.par:2) ou pelo índice de 'se_arvore'.\"}," +
+                    "\"caminhos\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Qualquer objeto, por caminho COM (mesma sintaxe de 'se_com_ler'): face, aresta, feature, esboço... Ex.: doc.Models.Item(1).Body.Faces(1).Item(3).\"}," +
+                    "\"limpar\":{\"type\":\"boolean\",\"description\":\"Limpa a seleção anterior antes. Padrão true.\"}}," +
+                    "\"additionalProperties\":false}",
+                Description =
+                    "MÃOS: põe objetos no conjunto de seleção do documento ativo (SelectSet), como se o usuário tivesse clicado. " +
+                    "Várias ferramentas agem 'no que está selecionado' (se_medir_selecao, se_inspecionar_selecao, " +
+                    "se_coordenadas, se_criar_base, se_unir_superficies...) — com esta o agente monta a seleção sozinho. Sem " +
+                    "argumentos, só limpa. Não altera o modelo; o que foi selecionado aparece realçado em 'se_captura'."
+            },
+            new ToolSpec
+            {
+                Name = "se_com_ler",
+                Writes = false,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"caminho\":{\"type\":\"string\",\"description\":\"Caminho a partir de uma raiz: app (Application), doc (documento ativo), sel (SelectSet), janela (janela ativa), docs (Documents) ou $N (objeto devolvido antes). Passos separados por ponto; índice entre parênteses ou colchetes; texto entre aspas simples. Ex.: doc.Models.Item(1).Body.Faces(1).Count · docs[2].Name · sel[1].Geometry.Radius · doc.Occurrences.Item(5).OccurrenceFileName\"}," +
+                    "\"profundidade\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":2,\"description\":\"Se o resultado for um objeto: lista as propriedades com valor e os métodos (0 = só ele; 1–2 = expande as coleções filhas). Omitido = só diz o tipo.\"}," +
+                    "\"assinaturas\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Nomes de métodos cuja assinatura real (parâmetros, pela typelib do objeto vivo) deve ser devolvida.\"}}," +
+                    "\"required\":[\"caminho\"],\"additionalProperties\":false}",
+                Description =
+                    "LEITURA LIVRE da API COM da Solid Edge viva: anda por um caminho de propriedades e devolve o valor " +
+                    "(número, texto, lista) ou, se for um objeto, o tipo COM real e um identificador $N para reusar. É a " +
+                    "ferramenta para responder qualquer pergunta sobre o modelo que não tenha ferramenta própria, e para " +
+                    "descobrir a API de verdade (propriedades, métodos e assinaturas) em vez de supor. Só LÊ propriedade: " +
+                    "nenhum método é executado, exceto Item. Comprimentos vêm em METROS, coleções começam em 1. Não altera nada."
+            },
+            new ToolSpec
+            {
+                Name = "se_com_chamar",
+                Writes = true,
+                InputSchemaJson =
+                    "{\"type\":\"object\",\"properties\":{" +
+                    "\"caminho\":{\"type\":\"string\",\"description\":\"O OBJETO onde chamar, na sintaxe de 'se_com_ler' (ex.: doc, doc.Models.Item(1), $3).\"}," +
+                    "\"membro\":{\"type\":\"string\",\"description\":\"Nome do método (ou da propriedade, com 'definir').\"}," +
+                    "\"args\":{\"type\":\"array\",\"description\":\"Argumentos na ordem da assinatura. Inteiro vira int, decimal vira double, null = opcional omitido. Formas explícitas: {\\\"ref\\\":\\\"caminho\\\"} objeto COM · {\\\"double\\\":0} · {\\\"int\\\":1} · {\\\"doubles\\\":[..]} · {\\\"ints\\\":[..]} · {\\\"textos\\\":[..]} · {\\\"nulo\\\":true} · saída (o tipo tem de bater com o da assinatura): {\\\"out\\\":\\\"double\\\"} / int / bool / texto para escalar, {\\\"out\\\":\\\"doubles\\\",\\\"n\\\":3}, {\\\"out\\\":\\\"ints\\\",\\\"n\\\":2}, {\\\"out\\\":\\\"valor\\\"} para VARIANT/objeto.\"}," +
+                    "\"definir\":{\"type\":\"boolean\",\"description\":\"true = atribui a propriedade 'membro' com o único valor de 'args'. Padrão false = chama o método.\"}}," +
+                    "\"required\":[\"caminho\",\"membro\"],\"additionalProperties\":false}",
+                Description =
+                    "CHAMADA LIVRE na API COM: executa qualquer método ou define qualquer propriedade de um objeto da Solid " +
+                    "Edge. Devolve o retorno (objeto vira $N, utilizável no próximo caminho) e os parâmetros de saída. É o que " +
+                    "permite fazer o que nenhuma ferramenta dedicada cobre — e por isso NADA aqui é conferido: confira a " +
+                    "assinatura antes com 'se_com_ler' (assinaturas), lembre que comprimentos são em METROS, que parâmetro " +
+                    "[in,out] precisa do array já alocado ({\"out\":\"doubles\",\"n\":3}), e que um Add que não levanta erro " +
+                    "pode ter falhado (leia Status e meça depois). Não troque o ambiente de modelagem no meio de uma operação."
             }
         };
 

@@ -48,9 +48,11 @@ src\AutoEDM.Register\bin\x64\Release\net472\AutoEDM.Register.exe /u   # remove
 Feche o Solid Edge antes de rodar o registrador de novo — com o SE aberto os
 DLLs ficam travados.
 
-A ponte MCP está registrada em `.mcp.json` na raiz do repo, apontando para
-`src/AutoEDM.Mcp/bin/x64/Release/net8.0-windows/AutoEDM.Mcp.exe` — então `dotnet build`
-em Release já deixa o servidor pronto. Ele NÃO é empacotado pelo `pack.ps1`: a ponte é
+A ponte MCP está registrada em `.mcp.json` na raiz do repo, apontando (desde 2026-11-10)
+para o servidor INSTALADO, `${LOCALAPPDATA}/AutoEDM/mcp/AutoEDM.Mcp.exe` — o mesmo que o
+`deploy-dev.ps1 -IncludeMcp` copia e registra no escopo do usuário. Antes apontava para
+`src/AutoEDM.Mcp/bin/...`: o Claude Code aberto travava o exe (o `dotnet build` da solução
+falhava) e o servidor instalado nunca era usado neste repositório. Ele NÃO é empacotado pelo `pack.ps1`: a ponte é
 ferramenta de desenvolvimento, e o instalador do operador não precisa do binário. (A
 condição original era "enquanto a ponte não tiver o 1º run validado no SE" — o 1º run
 aconteceu em 2026-09-18, e a decisão de não empacotar ficou de pé por outro motivo.)
@@ -97,8 +99,9 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Reconhecimento de superfície sobre malha (`se_reconhecer_malha`) | ✅ **rodado nas 6 malhas reais (2026-10-09)** pelo Core, conferido contra a Eng. Reversa nativa (Ø7,00 e Ø14,00 iguais); plano + cilindro, medidas no centésimo; **2026-10-10: + cone, + toro/esfera, + identificação** (furos, raios, chanfros, faces inclinadas), cilindro falso de 3 pontos e fragmento de concordância recusados — ✅ instalado no add-in em 2026-10-10 |
 | **Malha → sólido** (botão + `se_malha_para_solido`) | ✅ **Core validado no SE (2026-10-09)**: malhas 4, 5 e 6 do Rack_Anghinoni viraram sólido com corpo = volume EXATO do plano (0 / 0 / −0,034 mm³); ✅ **instalado em 2026-10-09** (`bcb8cbd`, GuiVersion 17, add-in + servidor MCP); **2026-10-10: correções de fronteira (chanfro/cone por revolução, raio X/Y e face inclinada por extrusão) + desvio geométrico — 5 de 6 corpos saem EXATOS (≤ 0,04 mm nos dois sentidos, alça com toro inclusive)**, validado por console externo; ✅ **add-in instalado em 2026-10-10** (Release; depois da fusão com o grupo Molde o botão é o **id 28** e a ribbon `GuiVersion` 19); 🚧 servidor MCP ainda com o catálogo antigo (só as descrições mudaram); as pernas (corpo 3) ainda divergem |
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
+| Autonomia do agente (`se_captura`, `se_documentos`, `se_ativar/abrir/fechar_documento`, `se_selecionar`, `se_com_ler`, `se_com_chamar`) | ✅ **validada no SE pela ponte (2026-11-10)** — captura da tela, seleção realçada, leitura e chamada livres da API COM; `McpAutoStart` + `McpAutoWrite`; `tools/ciclo-se.ps1` fecha a SE, instala e reabre sozinho |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 645 passando, 0 falhas (2026-10-23) |
+| Testes de unidade | ✅ 727 passando, 0 falhas (2026-11-10) |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |
@@ -204,6 +207,14 @@ A ponte dirigiu a Solid Edge 226.00.08.04 pela primeira vez. Documento ativo `Pe
   então `se_planos` devolve índice e nome mas não o eixo. Quem escolhe plano tem de
   **medir ou usar o mapeamento já validado** (XY=1, XZ=2 numa peça nova padrão), nunca
   supor pela normal — ela simplesmente não vem.
+  **Corrigido em 2026-11-10:** o erro era da ferramenta, que chamava `GetNormalVector` (método
+  de `Plane`, geometria de face). O RefPlane tem `GetNormal`/`GetRootPoint` (`[out] double[3]`),
+  e a sonda no SE 223.00.13.05 leu os três planos de uma peça nova: **1 = +Z (XY), 2 = +X (YZ),
+  3 = −Y (XZ)** — diferente do "XZ = 2" acima, ou seja, o mapeamento NÃO é fixo e tem de ser
+  lido por `se_planos`. Validado pela ferramenta no mesmo dia, com o add-in reinstalado
+  (também: recusa de pré-requisito como erro, "(não salvo ainda)" no `se_status`, servidor
+  rodando de `%LOCALAPPDATA%\AutoEDM\mcp`). No molde 15428 o plano do porta-molde marcava 80
+  comprados como produto: `LooksLikeProduct` passou a ignorar nome que é só código numérico.
 
 ### Sonda de malha na malha real, e o reconhecedor que saiu dela (2026-09-18)
 

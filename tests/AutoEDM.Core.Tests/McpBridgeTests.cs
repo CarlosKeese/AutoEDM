@@ -109,9 +109,9 @@ namespace AutoEDM.Core.Tests
             Assert.Equal(
                 new[]
                 {
-                    "se_alojamento_oring", "se_aplicar_gap", "se_criar_base", "se_criar_eletrodo_manual",
+                    "se_abrir_documento", "se_alojamento_oring", "se_aplicar_gap", "se_com_chamar", "se_criar_base", "se_criar_eletrodo_manual",
                     "se_criar_eletrodos", "se_curvas_superficies", "se_desenho_2d", "se_duplicar_eletrodo", "se_exportar_perfis_wedm",
-                    "se_ficha", "se_modelar", "se_nova_peca", "se_ordenar_pathfinder", "se_porta_molde", "se_refrigeracao", "se_sonda_interpart", "se_sonda_rosca", "se_trocar_ambiente",
+                    "se_fechar_documento", "se_ficha", "se_modelar", "se_nova_peca", "se_ordenar_pathfinder", "se_porta_molde", "se_refrigeracao", "se_sonda_interpart", "se_sonda_rosca", "se_trocar_ambiente",
                     "se_unir_superficies"
                 },
                 writers.ToArray());
@@ -290,6 +290,68 @@ namespace AutoEDM.Core.Tests
             Assert.False(res.Ok);
             Assert.Contains("Ligar ponte", res.Text);
             Assert.Contains("Solid Edge", res.Text);
+        }
+
+        [Fact]
+        public void Client_SaysTheBridgeIsBusy_WhenAnotherClientHoldsIt()
+        {
+            // A ponte atende UM servidor MCP por vez. O segundo (outra janela do Claude Code)
+            // recebia "ninguém está hospedando" — instrução errada: mandava ligar o que já está ligado.
+            string pipe = FreshPipe();
+            var server = new BridgeServer(req => BridgeResponse.Good(req.Id, "ok"), pipe);
+            string error;
+            Assert.True(server.Start(out error), "a ponte não subiu: " + error);
+            try
+            {
+                using var first = new BridgeClient(5000, pipe);
+                Assert.True(first.Call("se_status", "{}").Ok);
+
+                using var second = new BridgeClient(connectTimeoutMs: 300, pipeName: pipe);
+                BridgeResponse res = second.Call("se_status", "{}");
+
+                Assert.False(res.Ok);
+                Assert.Contains("OCUPADA", res.Text);
+                Assert.DoesNotContain("Ligar ponte", res.Text);
+            }
+            finally { server.Dispose(); }
+        }
+
+        [Fact]
+        public void Client_ReconnectsAndRetries_WhenTheBridgeWasRestarted()
+        {
+            // A Solid Edge fecha e reabre com o MESMO servidor MCP vivo: a conexão guardada está
+            // morta, e a primeira chamada depois disso tem de reconectar sozinha, não falhar.
+            string pipe = FreshPipe();
+            string error;
+            using var client = new BridgeClient(5000, pipe);
+
+            var before = new BridgeServer(req => BridgeResponse.Good(req.Id, "antes"), pipe);
+            Assert.True(before.Start(out error), "a ponte não subiu: " + error);
+            Assert.Equal("antes", client.Call("se_status", "{}").Text);
+            before.Dispose();
+
+            var after = new BridgeServer(req => BridgeResponse.Good(req.Id, "depois"), pipe);
+            Assert.True(after.Start(out error), "a ponte não subiu de novo: " + error);
+            try
+            {
+                BridgeResponse res = client.Call("se_status", "{}");
+                Assert.True(res.Ok, res.Text);
+                Assert.Equal("depois", res.Text);
+            }
+            finally { after.Dispose(); }
+        }
+
+        [Fact]
+        public void PrerequisiteRefusal_ComesBackAsError()
+        {
+            // "Sem Application" e "RECUSADO: exige montagem" são recusas, não resultado: têm de
+            // chegar ao agente com isError, como a recusa da chave de escrita.
+            var runner = new SeToolRunner(() => null, () => BridgeMode.ReadOnly, () => null);
+
+            BridgeResponse res = runner.Execute(new BridgeRequest { Id = 1, Tool = "se_arvore", ArgsJson = "{}" });
+
+            Assert.False(res.Ok);
+            Assert.Contains("Add-in não inicializado", res.Text);
         }
 
         [Fact]

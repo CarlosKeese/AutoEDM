@@ -1254,8 +1254,10 @@ namespace AutoEDM.AddIn
             {
                 if (!Config.McpAutoStart) return;
                 string error;
-                if (Mcp.Start(out error)) Log.Info($"MCP: ponte ligada automaticamente (McpAutoStart), somente-leitura, pipe {BridgeProtocol.PipeName}.");
-                else Log.Warn("MCP: McpAutoStart não subiu a ponte — " + error);
+                if (!Mcp.Start(out error)) { Log.Warn("MCP: McpAutoStart não subiu a ponte — " + error); return; }
+                Log.Info($"MCP: ponte ligada automaticamente (McpAutoStart), pipe {BridgeProtocol.PipeName}.");
+                // McpAutoWrite: decisão do usuário no config.json desta máquina, não do agente.
+                if (Config.McpAutoWrite) Mcp.SetMode(BridgeMode.Write);
             }
             catch (Exception ex) { Log.Warn("MCP: McpAutoStart falhou — " + ex.GetBaseException().Message); }
         }

@@ -10,6 +10,7 @@ using AutoEDM.Diagnostics;
 using AutoEDM.Electrode;
 using AutoEDM.Modeling;
 using AutoEDM.Reverse;
+using AutoEDM.Sealing;
 using AutoEDM.Selection;
 using AutoEDM.Wedm;
 
@@ -128,10 +129,22 @@ namespace AutoEDM.Mcp
 
                 Log.OnMessage += sink;
                 string text;
+                _imageBytes = null;
                 try { text = Dispatch(spec, req.ArgsJson, captured); }
                 finally { Log.OnMessage -= sink; }
 
-                return BridgeResponse.Good(req.Id, text);
+                // Pré-requisito não atendido é ERRO para o agente (isError), igual à recusa da
+                // chave de escrita: voltando como sucesso, um "RECUSADO" passava por resultado.
+                if (IsRefusal(text)) return BridgeResponse.Bad(req.Id, text);
+
+                BridgeResponse good = BridgeResponse.Good(req.Id, text);
+                if (_imageBytes != null)
+                {
+                    good.ImageBase64 = Convert.ToBase64String(_imageBytes);
+                    good.ImageMime = _imageMime;
+                    _imageBytes = null;
+                }
+                return good;
             }
             catch (Exception ex)
             {
@@ -142,11 +155,23 @@ namespace AutoEDM.Mcp
             }
         }
 
+        private const string NoApplication =
+            "Add-in não inicializado (sem Application da Solid Edge). A SE está aberta com o AutoEDM carregado?";
+
+        private const string NoActiveDocument =
+            "Nenhum documento ativo na Solid Edge. Abra a peça ou a montagem e chame de novo.";
+
+        /// <summary>true quando o texto é uma recusa por pré-requisito (sem Application, sem
+        /// documento, documento ou ambiente errado) e não o resultado da ferramenta.</summary>
+        internal static bool IsRefusal(string text) =>
+            text != null &&
+            (text.StartsWith("RECUSADO", StringComparison.Ordinal) || text.StartsWith("FALHOU:", StringComparison.Ordinal) ||
+             text == NoApplication || text == NoActiveDocument);
+
         private string Dispatch(ToolSpec spec, string argsJson, List<string> captured)
         {
             dynamic app = _app();
-            if (app == null)
-                return "Add-in não inicializado (sem Application da Solid Edge). A SE está aberta com o AutoEDM carregado?";
+            if (app == null) return NoApplication;
 
             if (string.Equals(spec.Name, "se_status", StringComparison.OrdinalIgnoreCase)) return Status(app);
             if (string.Equals(spec.Name, "se_log", StringComparison.OrdinalIgnoreCase)) return TailLog(argsJson);
@@ -154,10 +179,15 @@ namespace AutoEDM.Mcp
             if (string.Equals(spec.Name, "se_modelar", StringComparison.OrdinalIgnoreCase)) return Model(app, argsJson);
             if (string.Equals(spec.Name, "se_sonda_rosca", StringComparison.OrdinalIgnoreCase)) return ThreadProbeTool(app, argsJson);
 
+            // Documentos, captura, seleção e COM genérico: resolvem o alvo por conta própria
+            // (a maioria funciona até sem documento ativo), então também vêm antes da guarda.
+            string autonomy = DispatchAutonomy(spec.Name, app, argsJson, captured);
+            if (autonomy != null) return autonomy;
+
             // Daqui para baixo tudo exige documento: confere o pré-requisito declarado.
             dynamic doc = null;
             try { doc = app.ActiveDocument; } catch { }
-            if (doc == null) return "Nenhum documento ativo na Solid Edge. Abra a peça ou a montagem e chame de novo.";
+            if (doc == null) return NoActiveDocument;
 
             string refusal = CheckRequirement(spec.Name, doc);
             if (refusal != null) return refusal;
@@ -166,7 +196,7 @@ namespace AutoEDM.Mcp
             {
                 case "se_planos": return Planes(doc);
                 case "se_inspecionar_selecao": return Inspect(doc, argsJson, captured);
-                case "se_arvore": return Tree(doc);
+                case "se_arvore": return Tree(doc, ReadBool(argsJson, "detalhado", false));
                 case "se_medir_selecao": return Measure(doc);
                 case "se_analisar_z": return AnalyzeZ(app, doc);
                 case "se_coordenadas": return Coordinates(app, doc);
@@ -236,7 +266,10 @@ namespace AutoEDM.Mcp
             int type = -1; try { type = (int)doc.Type; } catch { }
             string kind = type == 1 ? "PEÇA (.par)" : type == 3 ? "MONTAGEM (.asm)" : type == 2 ? "DESENHO (.dft)" : $"tipo {type}";
             sb.AppendLine($"  Documento ATIVO: {Str(() => (string)doc.Name, "(sem nome)")}  —  {kind}");
-            sb.AppendLine(Str(() => "  Caminho: " + (string)doc.FullName, "  Caminho: (não salvo ainda)"));
+            // Documento nunca salvo: FullName devolve só o nome ("Peça2"), sem pasta.
+            string fullName = Str(() => (string)doc.FullName, "");
+            bool saved = fullName.IndexOf('\\') >= 0 || fullName.IndexOf('/') >= 0;
+            sb.AppendLine("  Caminho: " + (saved ? fullName : "(não salvo ainda)"));
 
             ModelingEnv env = ModelingEnvironment.Read(doc);
             sb.AppendLine($"  Modelagem: {ModelingEnvironment.Name(env)}");
@@ -274,7 +307,36 @@ namespace AutoEDM.Mcp
             return $"{n} objeto(s) inspecionado(s), profundidade {depth}.\n\n" + Join(captured);
         }
 
-        private static string Tree(dynamic doc)
+        /// <summary>"13337.par ×12 (25–36)" em vez de doze linhas iguais: num molde real a lista
+        /// crua passava de 130 linhas, quase tudo parafuso repetido.</summary>
+        public static List<string> GroupOccurrences(IList<KeyValuePair<int, string>> indexAndFile)
+        {
+            var order = new List<string>();
+            var groups = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<int, string> p in indexAndFile)
+            {
+                if (!groups.TryGetValue(p.Value, out List<int> list)) { groups[p.Value] = list = new List<int>(); order.Add(p.Value); }
+                list.Add(p.Key);
+            }
+
+            var lines = new List<string>();
+            foreach (string file in order)
+            {
+                List<int> idx = groups[file];
+                // índices em faixas: 25–36, 100, 102–106
+                var ranges = new List<string>();
+                for (int i = 0; i < idx.Count; i++)
+                {
+                    int start = idx[i];
+                    while (i + 1 < idx.Count && idx[i + 1] == idx[i] + 1) i++;
+                    ranges.Add(start == idx[i] ? start.ToString(CultureInfo.InvariantCulture) : $"{start}–{idx[i]}");
+                }
+                lines.Add(idx.Count == 1 ? $"[{idx[0]}] {file}" : $"{file}  ×{idx.Count}  (índices {string.Join(", ", ranges)})");
+            }
+            return lines;
+        }
+
+        private static string Tree(dynamic doc, bool detailed)
         {
             int type = -1; try { type = (int)doc.Type; } catch { }
             var sb = new StringBuilder();
@@ -286,14 +348,24 @@ namespace AutoEDM.Mcp
                 sb.AppendLine("Ocorrências:");
                 int n = 0; try { n = (int)doc.Occurrences.Count; } catch { }
                 if (n == 0) sb.AppendLine("  (nenhuma)");
-                for (int i = 1; i <= n && i <= 500; i++)
+                var files = new List<KeyValuePair<int, string>>();
+                for (int i = 1; i <= n && i <= 2000; i++)
                 {
                     dynamic occ = null; try { occ = doc.Occurrences.Item(i); } catch { continue; }
                     string name = Str(() => (string)occ.Name, "?");
                     string file = Str(() => System.IO.Path.GetFileName((string)occ.OccurrenceFileName), "?");
-                    sb.AppendLine($"  [{i}] {name}   ({file})");
+                    if (detailed) sb.AppendLine($"  [{i}] {name}   ({file})");
+                    else files.Add(new KeyValuePair<int, string>(i, file));
                 }
-                if (n > 500) sb.AppendLine($"  ... e mais {n - 500} (cortado).");
+                if (!detailed)
+                {
+                    List<string> lines = GroupOccurrences(files);
+                    foreach (string line in lines) sb.AppendLine("  " + line);
+                    sb.AppendLine();
+                    sb.Append($"{n} ocorrência(s) no 1º nível, {lines.Count} arquivo(s) distinto(s). O índice é o de Occurrences.Item(n); " +
+                              "\"detalhado\": true lista uma por linha, com o nome da ocorrência.");
+                }
+                if (n > 2000) sb.AppendLine().Append($"  ... e mais {n - 2000} (cortado).");
                 return sb.ToString();
             }
 
@@ -480,23 +552,20 @@ namespace AutoEDM.Mcp
                 string name = Str(() => (string)plane.Name, "(sem nome)");
                 bool visible = true; try { visible = (bool)plane.Visible; } catch { }
 
-                double[] v; string err;
-                string normal = "não lida";
-                // O RefPlane pode expor a normal direto ou pela geometria — tenta as duas, na
-                // ordem, e diz qual respondeu em vez de esconder a falha.
-                if (FaceGeometry.TryOneArrayOut((object)plane, "GetNormalVector", out v, out err))
-                    normal = Describe(v) + "  (via RefPlane.GetNormalVector)";
-                else
-                {
-                    object geom = null; try { geom = plane.Geometry; } catch { }
-                    if (geom != null && FaceGeometry.TryOneArrayOut(geom, "GetNormalVector", out v, out err))
-                        normal = Describe(v) + "  (via Geometry.GetNormalVector)";
-                    else if (!string.IsNullOrEmpty(err))
-                        normal = "não lida (" + err + ")";
-                }
+                // RefPlane.GetNormal / GetRootPoint ([out] double[3] cada) — é o que a typelib
+                // declara e o que respondeu na sonda de 2026-11-10 (SE 223.00.13.05, peça nova:
+                // 1 = +Z, 2 = +X, 3 = −Y). 'GetNormalVector' é de Plane (geometria de FACE); o
+                // RefPlane não o tem nem expõe Geometry, e era por isso que a normal vinha
+                // DISP_E_UNKNOWNNAME. A falha, se houver, fica no log (ProfilePlaneFrame avisa).
+                ProfilePlaneFrame frame = ProfilePlaneFrame.OfRefPlane((object)plane);
+                string normal = frame == null
+                    ? "não lida (RefPlane.GetNormal/GetRootPoint falhou — detalhe no log)"
+                    : Describe(frame.Normal) + "  (via RefPlane.GetNormal)";
 
                 sb.AppendLine($"  [{i}] {name}{(visible ? "" : "  (oculto)")}");
                 sb.AppendLine($"       normal: {normal}");
+                if (frame != null)
+                    sb.AppendLine($"       passa por: ({F(frame.Origin[0])}, {F(frame.Origin[1])}, {F(frame.Origin[2])}) mm");
             }
 
             sb.AppendLine();

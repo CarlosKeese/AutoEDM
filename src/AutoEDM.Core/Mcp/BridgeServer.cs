@@ -32,6 +32,8 @@ namespace AutoEDM.Mcp
         /// de criar um novo — é o que fecha a janela de corrida na reserva do nome.</summary>
         private NamedPipeServerStream _pending;
         private volatile bool _stopping;
+        /// <summary>Acorda a pausa entre tentativas do laço quando a ponte é desligada.</summary>
+        private readonly ManualResetEventSlim _stopSignal = new ManualResetEventSlim(false);
 
         /// <summary>true entre o <see cref="Start"/> bem-sucedido e o <see cref="Stop"/>.</summary>
         public bool Running { get; private set; }
@@ -95,6 +97,7 @@ namespace AutoEDM.Mcp
                 }
 
                 _stopping = false;
+                _stopSignal.Reset();
                 _current = first;
                 _pending = first;
                 _thread = new Thread(AcceptLoop) { IsBackground = true, Name = "AutoEDM.Bridge" };
@@ -108,19 +111,38 @@ namespace AutoEDM.Mcp
         public void Stop()
         {
             Thread t;
+            NamedPipeServerStream busy;
             lock (_gate)
             {
                 if (!Running) return;
                 _stopping = true;
+                _stopSignal.Set();
                 Running = false;
                 t = _thread;
                 _thread = null;
-                // Desbloqueia um WaitForConnection pendente.
-                try { if (_current != null) _current.Dispose(); } catch { }
+                // Desbloqueia a thread, que está parada num WaitForConnection ou — com um cliente
+                // conectado e ocioso — num ReadLine. O Dispose sozinho NÃO interrompe uma leitura
+                // síncrona pendente: a thread seguia viva segurando o pipe, e religar a ponte com
+                // o Claude Code conectado dava "o pipe já está em uso". CancelIoEx aborta a E/S
+                // pendente de outra thread nesse handle; aí o Dispose libera o nome de fato.
+                // O cancelamento é REPETIDO fora do lock (abaixo): CancelIoEx só pega E/S que já está
+                // pendente no kernel, e a thread pode estar a um passo de entrar no ReadFile.
+                busy = _current;
                 _current = null;
                 // Se o Start reservou um pipe e a thread ainda não o consumiu, ele vaza sem isto.
-                try { if (_pending != null) _pending.Dispose(); } catch { }
+                // (na 1ª volta _pending É o _current: esse fica para o cancelamento abaixo.)
+                try { if (_pending != null && !ReferenceEquals(_pending, busy)) _pending.Dispose(); } catch { }
                 _pending = null;
+            }
+
+            if (busy != null)
+            {
+                for (int attempt = 0; attempt < 40; attempt++)
+                {
+                    try { CancelIoEx(busy.SafePipeHandle, IntPtr.Zero); } catch { break; }   // handle já fechado
+                    if (t == null || t == Thread.CurrentThread || t.Join(50)) break;
+                }
+                try { busy.Dispose(); } catch { }
             }
 
             // Cinto e suspensório: se o Dispose acima não desbloqueou (varia entre versões do
@@ -136,6 +158,10 @@ namespace AutoEDM.Mcp
             catch { }
             Log.Info("MCP: ponte encerrada.");
         }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool CancelIoEx(System.Runtime.InteropServices.SafeHandle handle, IntPtr overlapped);
 
         private NamedPipeServerStream CreatePipe()
         {
@@ -161,11 +187,17 @@ namespace AutoEDM.Mcp
 
         private void AcceptLoop()
         {
+            int failures = 0;
             while (!_stopping)
             {
                 NamedPipeServerStream pipe = null;
                 try
                 {
+                    // Depois de um tropeço, espera antes de tentar de novo (250 ms, dobrando até
+                    // 5 s). Sem a pausa, um CreatePipe que falha sempre — outro hospedeiro pegou o
+                    // nome enquanto o pipe era recriado — girava o laço a 100% de CPU e enchia o log.
+                    if (failures > 0 && _stopSignal.Wait(Math.Min(5000, 250 << Math.Min(failures - 1, 5)))) return;
+
                     lock (_gate)
                     {
                         // 1ª volta: usa o pipe que o Start já reservou. Dali em diante, cria.
@@ -181,6 +213,7 @@ namespace AutoEDM.Mcp
 
                     pipe.WaitForConnection();
                     if (_stopping) return;
+                    failures = 0;
                     Log.Info("MCP: servidor conectado à ponte.");
                     Serve(pipe);
                     Log.Info("MCP: servidor desconectado da ponte.");
@@ -188,7 +221,11 @@ namespace AutoEDM.Mcp
                 catch (Exception ex)
                 {
                     // Parada normal aparece aqui como ObjectDisposed/IO — não é erro.
-                    if (!_stopping) Log.Warn("MCP: laço da ponte tropeçou — " + ex.GetBaseException().Message);
+                    if (_stopping) continue;
+                    failures++;
+                    // Registra o 1º tropeço e depois um a cada 20, para a causa aparecer sem inundar o log.
+                    if (failures == 1 || failures % 20 == 0)
+                        Log.Warn($"MCP: laço da ponte tropeçou ({failures}x seguidas) — " + ex.GetBaseException().Message);
                 }
                 finally
                 {

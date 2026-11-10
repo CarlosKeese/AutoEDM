@@ -53,6 +53,15 @@ namespace AutoEDM.Config
         public bool McpAutoStart { get; set; }
 
         /// <summary>
+        /// Com <see cref="McpAutoStart"/>, a ponte já nasce com a ESCRITA LIBERADA, sem o clique em
+        /// "Liberar escrita" (Carlos, 2026-11-10: o agente opera a SE com autonomia). Desligado por
+        /// padrão — é uma decisão por máquina, tomada por quem aceita que um agente altere o que
+        /// estiver aberto. Sem McpAutoStart não faz nada: ligar a ponte pelo botão segue nascendo
+        /// em somente-leitura.
+        /// </summary>
+        public bool McpAutoWrite { get; set; }
+
+        /// <summary>
         /// Pasta dos templates da casa (PanFlight Part/Assembly/Draft) de onde nascem as peças,
         /// montagens e desenhos novos (Carlos, 2026-10-27). Vazia = cópia local e padrão da SE.
         /// </summary>

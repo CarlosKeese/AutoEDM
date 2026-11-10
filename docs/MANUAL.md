@@ -348,6 +348,8 @@ SeToolRunner.Execute                  thread STA da Solid Edge, COM ao vivo
 
 19 de leitura, 19 de escrita (a seção 2.3.1 traz as que espelham os botões da ribbon, mais a troca de ambiente). Fonte: `Mcp/ToolCatalog.cs` (schema) e `Mcp/SeToolRunner.cs` (implementação e guardas).
 
+> **Autonomia do agente (2026-11-10).** Oito ferramentas existem para o agente não depender de clique do usuário nem de uma ferramenta dedicada por pergunta: `se_captura` (ver), `se_documentos` / `se_ativar_documento` / `se_abrir_documento` / `se_fechar_documento` (trocar de documento), `se_selecionar` (montar a seleção) e `se_com_ler` / `se_com_chamar` (a API COM inteira por um caminho escrito). Raízes de caminho: `app`, `doc`, `sel`, `janela`, `docs` e `$N` (objeto devolvido por uma chamada anterior). Escrita: `se_abrir_documento`, `se_fechar_documento` (recusa documento alterado sem `salvar`/`descartar`) e `se_com_chamar` (método ou `definir` propriedade; `args` com `{"ref":caminho}`, `{"doubles":[…]}`, `{"out":"doubles","n":3}`…). Código em `Core/Mcp/SeToolRunner.Autonomy.cs` e `ComPath.cs`. Validadas contra o SE 2023 vivo por processo externo (mesmo `SeToolRunner`); falta o 1º run pela ponte.
+
 ### Leitura
 
 | Ferramenta | Exige | Parâmetros | Devolve |
@@ -358,7 +360,12 @@ SeToolRunner.Execute                  thread STA da Solid Edge, COM ao vivo
 | `se_medir_selecao` | documento | — | por objeto: tipo de geometria traduzido e `min`/`max`/`tamanho` **em mm**. Tenta `GetExactRange` primeiro |
 | `se_analisar_z` | **montagem** | — | eletrodos propostos por nível de Z, contagem de faces, laudo de detecção por cor e a seção de **usinabilidade** |
 | `se_coordenadas` | **montagem** | — | por eletrodo selecionado: X, Y, Z em mm, giro Z em graus, Ra e GAP gravados, área de queima em cm² |
-| `se_planos` | **peça** | — | os `RefPlanes` por índice, com nome e a normal quando legível |
+| `se_planos` | **peça** | — | os `RefPlanes` por índice, com nome, normal e ponto por onde passam |
+| `se_captura` | janela 3D | `largura` 320–3840 (**1280**), `altura` 240–2160 (**800**), `ajustar` (Fit; muda o zoom **e marca o documento como alterado**) | **imagem** (JPG) da janela ativa como o usuário a vê — cores, ocultos, seleção realçada. `View.SaveAsImage`; `.png` não grava no SE 2023 (falha silenciosa), por isso JPG. Desenho ainda não |
+| `se_documentos` | nada | — | documentos abertos: nome, tipo, caminho, alterado/não salvo, qual é o ativo |
+| `se_ativar_documento` | documento aberto | `nome` (nome, caminho ou índice) | troca o documento ativo (`Activate`) e confere se trocou |
+| `se_selecionar` | documento | `ocorrencias` (nome ou índice), `caminhos` (caminho COM), `limpar` (**true**) | monta o `SelectSet` sem clique do usuário; sem argumentos, limpa |
+| `se_com_ler` | nada | `caminho`, `profundidade` 0–2, `assinaturas` [nomes] | **leitura livre da API COM**: anda um caminho (`doc.Models.Item(1).Body.Faces(1).Count`) e devolve o valor, ou o tipo COM + identificador `$N`; com `profundidade`, propriedades e métodos; com `assinaturas`, os parâmetros reais do método. Só lê propriedade (e `Item`) — nenhum método é executado |
 | `se_log` | nada | `linhas` int 1–2000, **padrão 200** | as últimas N linhas do log desta sessão da SE, e o caminho do arquivo |
 | `se_reconhecer_malha` | **peça** | ver abaixo | abre pela **identificação** (furos/pinos, raios, chanfros/cones, faces inclinadas, agrupados pela medida) e lista planos, cilindros, cones, toros e esferas ajustados sobre os triângulos, cada um com o **RMS do próprio ajuste**; a área que sobra como "livre" |
 | `se_malha_para_solido` | **peça** com corpo de malha | `corpo`, `construir`, `arredondarMm` (0,01; 0 desliga), `toleranciaCilindroMm` (0,005 — suba para malha de scanner), `direcao` (`auto`/`X`/`Y`/`Z`); **lote:** `corpos` (lista) ou `todos`, `montagem` (com `construir`: salva as peças e monta), `pasta` | identificação + direção de extrusão escolhida + plano 2,5D (níveis, contornos, correções de fronteira, volumes, **previsão do erro de forma**, avisos). Com `construir: true` (**exige escrita liberada**) cria a peça nova e devolve volume e **desvio geométrico** nos dois sentidos, com o veredito "exato" ou não |
@@ -373,7 +380,7 @@ Parâmetros de `se_reconhecer_malha` — todos opcionais e **clampados** na faix
 | `distanciaPlanoMm` | mm | 0,05 | 0,0001…5,0 |
 | `anguloQuinaGraus` | graus | 35 | 1,0…89,0 |
 
-> **Limitação medida:** `RefPlane.Normal` **não é legível** — os três planos base respondem `DISP_E_UNKNOWNNAME`. Na prática `se_planos` entrega índice e nome, não o eixo. Mapeamento validado em peça nova padrão: **XY = 1, XZ = 2**.
+> **Normal dos planos (corrigido em 2026-11-10):** `se_planos` lê `RefPlane.GetNormal` e `GetRootPoint` (`[out] double[3]`, via `ProfilePlaneFrame.OfRefPlane`). Antes chamava `GetNormalVector`, que é de `Plane` (geometria de face) e não existe no RefPlane — daí o `DISP_E_UNKNOWNNAME` nos três planos base. Sonda no SE 223.00.13.05, peça nova: **1 = +Z (XY), 2 = +X (YZ), 3 = −Y (XZ)**; o registro anterior dizia "XY = 1, XZ = 2", então o mapeamento **não é fixo** (versão/modelo de peça) e deve ser lido, não suposto. **Validado no SE pela ferramenta em 2026-11-10** (peça nova criada por `se_modelar`): os três planos base com normal e ponto, mais os planos que a extrusão síncrona deixa ocultos (uma caixa deixou 3).
 
 ### Escrita (recusadas em modo somente-leitura)
 
@@ -461,7 +468,7 @@ O `description` do frontmatter é um gatilho: enumera as tarefas (ler faces, cor
 | `mesh-reverse.md` (238 l.) | malha: ler facetas, o que a SE ajusta e o que não, seccionar (nunca na altura de um vértice), escrever reconhecedor (plano, cilindro, cone, toro, raio de concordância por hipótese), malha → sólido por faixas + correções, lote numa montagem, conferir por desvio |
 | `errors.md` (76 l.) | um HRESULT específico, erro do binder, ou "funcionou e nada aconteceu" |
 
-> `SKILL.md` referencia os apoios como `references/<arquivo>.md`. No repositório eles estão na **raiz** da pasta da skill; a subpasta `references/` só existe dentro do pacote `solid-edge-com.skill`. `OLD/` guarda a versão monolítica anterior (756 linhas num arquivo só).
+> `SKILL.md` referencia os apoios como `references/<arquivo>.md`, que é onde eles estão no repositório. `solid-edge-com.skill` é o pacote (zip) da pasta inteira. As versões antigas (`OLD/`) saíram em 2026-11-10; ficam no histórico do git.
 
 ## 3.3 O que a skill impõe ao agente
 
@@ -1068,7 +1075,7 @@ O ZIP traz `instalar.cmd`, que roda o `AutoEDM.Register`: ele copia tudo para `%
 
 Se `AutoEDM.AddIn.dll` estiver em uso, o registrador **falha com exit 1** em vez de registrar a versão velha — decisão explícita, porque "instalou com sucesso" e rodar o código antigo é pior que não instalar.
 
-> `pack.ps1` **não** empacota o servidor MCP. Quem usa a ponte compila o `AutoEDM.Mcp` em Release x64 e aponta o `.mcp.json` para ele.
+> `pack.ps1` **não** empacota o servidor MCP. Quem usa a ponte roda `tools\deploy-dev.ps1 -Configuration Release -IncludeMcp`, que instala o servidor em `%LOCALAPPDATA%\AutoEDM\mcp` — é para lá que o `.mcp.json` do repositório aponta (não para `bin/`: o Claude Code aberto travaria o exe e o build da solução falharia).
 
 ## 5.2 O ciclo de desenvolvimento com a SE
 
@@ -1076,6 +1083,10 @@ Se `AutoEDM.AddIn.dll` estiver em uso, o registrador **falha com exit 1** em vez
 powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1                                 # SE fechada
 powershell -ExecutionPolicy Bypass -File tools\deploy-dev.ps1 -Configuration Release -IncludeMcp   # + Claude Code fechado
 ```
+
+**Ciclo sem clique (2026-11-10):** `powershell -ExecutionPolicy Bypass -File tools\ciclo-se.ps1` fecha a SE por `Application.Quit()` (recusa se houver documento marcado como alterado; `-Descartar` fecha sem salvar — um `View.Fit` já marca o documento, então o aviso nem sempre é trabalho de verdade), roda o `deploy-dev.ps1`, reabre a SE e os documentos que estavam abertos. `-SemDeploy` só reinicia. Não instala o servidor MCP (isso exige o Claude Code fechado).
+
+> **A SE só carrega o add-in quando o primeiro documento abre** (medido em 2026-11-10: SE iniciada sem documento ficou 90 s sem log do add-in; ao abrir uma montagem o `OnConnection` rodou na hora). Com `McpAutoStart`, portanto, a ponte só sobe depois de haver um documento aberto.
 
 Quatro coisas que custaram rodada de teste:
 
@@ -1091,7 +1102,7 @@ Quatro coisas que custaram rodada de teste:
 1. Solid Edge aberta com o add-in ativo.
 2. Aba AutoEDM ▸ grupo MCP ▸ **"Ligar ponte"**.
 3. Opcional: **"Liberar escrita"** (confirma com Sim/Não). Vale só até a ponte cair ou a SE fechar.
-4. O Claude Code, na raiz do repositório, sobe o `AutoEDM.Mcp.exe` pelo `.mcp.json`.
+4. O Claude Code sobe o `AutoEDM.Mcp.exe` instalado (`%LOCALAPPDATA%\AutoEDM\mcp`) — pelo `.mcp.json` na raiz do repositório ou pelo registro de usuário feito pelo `-IncludeMcp`. A ponte atende **um** servidor por vez: uma segunda sessão do Claude Code recebe "ponte OCUPADA".
 5. Conferência: **"Status da ponte"**.
 
 ## 5.4 Quando algo der errado
