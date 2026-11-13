@@ -57,6 +57,7 @@ namespace AutoEDM.Mcp
                 case "se_ficha": return SpecSheet(app, doc);
                 case "se_desenho_2d_plano": return TurnedDrawing(app, doc, argsJson, create: false);
                 case "se_desenho_2d": return TurnedDrawing(app, doc, argsJson, create: true);
+                case "se_desenho_dobra": return SheetMetalDrawing(app, doc);
                 case "se_ordenar_pathfinder_plano": return SortPathFinder(doc, apply: false);
                 case "se_ordenar_pathfinder": return SortPathFinder(doc, apply: true);
                 case "se_criar_base": return CreateBase(app, doc, argsJson);
@@ -436,6 +437,17 @@ namespace AutoEDM.Mcp
             TurnedDrawingResult res = TurnedDrawingBuilder.Create((object)app, (object)doc, profile, plan,
                 new TurnedDrawingOptions { ZeroFaceId = zero?.Id });
             return res.Summary + "\nO desenho ficou aberto SEM salvar.\n\n" + text;
+        }
+
+        /// <summary>"Des. 2D" › Chaparia: desenho da chapa dobrada ativa, aberto e SEM salvar.</summary>
+        private static string SheetMetalDrawing(dynamic app, dynamic doc)
+        {
+            string path = null;
+            try { path = (string)doc.FullName; } catch { }
+            if (string.IsNullOrEmpty(path))
+                return "A chapa ainda não foi salva — o desenho precisa do arquivo .psm para o vínculo. Salve e chame de novo.";
+            SheetMetalDrawingResult res = SheetMetalDrawingBuilder.Create((object)app, (object)doc);
+            return res.Summary + (res.Ok ? "\nO desenho ficou aberto SEM salvar." : "");
         }
 
         private static string SawCutList(dynamic app, dynamic doc)

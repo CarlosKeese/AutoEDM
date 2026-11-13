@@ -387,3 +387,66 @@ TITULO = part `Título`; Nº Des. = part `ProjectInformation.Document Number`; R
 "Erro: Sem referência"** even after `UpdatePropertyTextCacheAndDisplay` and after computing and
 saving the part's mass — it shows in the empty template too; not solved. "SCALE: 1:2" is fixed
 background text (see the scale-text recipe above).
+
+# Sheet-metal and welded-assembly drawings (SE 2023 v223, 2026-11-12)
+
+Measured building bend drawings (502.02, 501.02, 502.01) and welded-assembly drawings (201.00, 301.00…)
+for the SaltSpray machine, PanFlight template. Every value was checked against the model.
+
+**Flat pattern and bend drawing**
+- A `.psm` without a flat pattern: `FlatPatternModels.Add(Models.Item(1))` → `fpm.FlatPatterns.Add(edge, face,
+  vertex, 0)` (largest planar face, its longest straight edge, that edge's `StartVertex`) → `fpm.Update()`.
+  `fpm.Body.GetRange` matched the DXF extents exactly (30 × 192.43). Save the part.
+- `DrawingViews.AddSheetMetalView(link, 1, scale, x, y, 2 = seSheetMetalFlatView)`; lay it horizontal with
+  `SetRotationAngle(π/2)` + `Update()` + `SetOrigin`.
+- In the flat view, bend centre lines are `DVLine2d` with **`EdgeType = 6`** and `BendAngle` (±π/2, sign =
+  up/down) / `BendRadius` filled; outline lines are `EdgeType = 1`.
+- `DraftDocument.DraftBendTables.Add(flatView, "", 1, 1)` → table with bend tags on the view. Columns:
+  `Columns.Item(i).Header` (English) → set `HeaderRowValue` (pt-BR) or `Show = false`; then `Update()`,
+  `SetOrigin(x, y)` (top-left).
+- Folded main view = the standard orientation (4/1/2) whose view has the most `DVArcs2d` (bends seen edge-on).
+- `RetrieveDimensions()` brought nothing from a synchronous psm (0 dims).
+
+**Dimensions between view lines — what actually decides the value**
+- `AddDistanceBetweenObjects` picks the measuring AXIS from the click points: give two vertical lines the SAME y,
+  two horizontal lines the SAME x (middle of their overlap). With the line midpoints some pairs measured a
+  constant wrong value (25 mm for two of four bend lines). Fallback that works: line ↔ END POINT of the other
+  (`keyPoint = true`). Never point ↔ point (it gives an inclined dim). Accept only |value − expected| ≤ 0.02 mm.
+- Horizontal lines that do NOT overlap in x (flange tops vs. U bottom) cannot be dimensioned vertically —
+  `MeasurementAxis` toggling changed nothing; dimension the height in the side view instead.
+- After placing with `TrackDistance` (from k1, absolute sheet axes) check k4/k5 are on the target AND aligned
+  (k4.y = k5.y for a horizontal dim), else the dim was drawn on the wrong axis — delete and try the next pair.
+- Read a view's `DVLines2d` again after the other views/annotations are added (`view.Update()` + `DoIdle`):
+  right after `AddAssemblyView` long outline lines were missing.
+
+**Welded assembly: parts list, joints, weld symbols**
+- `PartsLists.Add(isoView, "", 1, 1)` = auto-balloons on the iso + list. Columns use property text
+  `%{Autor|G}`, `%{Quantidade|G}`…; `PropertyText = "%{Título|G}"` shows the part title; `Width`,
+  `HeaderRowValue`, `Update()`, `SetOrigin`.
+- Joints from occurrence ranges (`Occurrence.Range`, assembly coordinates): two boxes touching (overlap ≈ 0 in
+  one axis, ≥ 5 mm in another) = one joint along the largest overlap. `view.ModelToView(x,y,z)` + `ViewToSheet`
+  projects it correctly in assembly views.
+- **Weld symbol recipe (copied from symbols the user placed by hand):**
+  `sheet.WeldSymbols.Style = <DimensionStyle "ISO (mm)">` BEFORE creating →
+  `w = sheet.WeldSymbols.AddByTerminator(dvLine.Reference, xSheet, ySheet, 0, false)` →
+  `w.BottomType = 22` (igDimWeldBottomFillet, arrow side) · `w.BottomNote1 = "2"` (size) ·
+  optional `w.Tail = 1; w.TailNote = "2x"` → `w.AddVertex(kneeX, kneeY, 0)` →
+  `w.BreakLine = true; w.BreakLineDistance = 0.0045` (`BreakLineDirection = true` puts the body left).
+  Without the ISO style (template default / PAN-H) the body is drawn stuck at the sheet ORIGIN and nothing moves
+  it (`SetFreeSpacePoint`, `SetKeyPoint`, `SetVertex`, `Move` all ineffective). `WeldSymbols.Add(x,y,z)` →
+  E_FAIL; `AddByTerminator(null, …)` → TYPEMISMATCH. k4 = (0,0) and `GetFreeSpacePoint` = (0,0) are normal
+  (the hand-made ones have them too).
+
+**PDF of the working sheet only**: `SaveCopyAs(pdf)` prints the background sheets too (5 pages). Set
+`Application.SetGlobalParameter(172 = seApplicationGlobalDraftSaveAsPDFSheetOptions, 0 = ActiveSheet)`
+around the export and restore the user's value (`GetGlobalParameter(172, ref old)`).
+
+**PowerShell pitfalls met here**: `[math]::Max(0, [math]::Min(1, t))` picks the INTEGER overload and rounds
+`t` to 0/1 — write `0.0`/`1.0`; variables are case-insensitive (`$h` overwrote the sheet height `$H`); `SP`
+is an alias of `Set-ItemProperty`; Windows PowerShell 5.1 reads a script without BOM as ANSI (paths with
+"ç/õ" break) — save scripts as UTF-8 **with** BOM.
+
+**Material by API (2026-11-13):** `Application.GetMaterialTable().GetMaterialList(...)` → *not implemented* on SE 223;
+`ApplyMaterial(doc, name)` raises "value out of range" when the name is not in the ACTIVE library (the PanFlight
+library has INOX 304/310/420, no 316). Writing `Properties("MechanicalModeling").Item("Material").Value` as text works
+(`Properties.Save()` + `doc.Save()`), but the density stays the old material's.

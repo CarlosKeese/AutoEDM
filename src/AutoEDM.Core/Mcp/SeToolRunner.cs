@@ -71,6 +71,7 @@ namespace AutoEDM.Mcp
                 { "se_ficha",                 new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_desenho_2d_plano",      new Requirement(DocKind.Part,     ModelingEnv.Any) },
                 { "se_desenho_2d",            new Requirement(DocKind.Part,     ModelingEnv.Any) },
+                { "se_desenho_dobra",         new Requirement(DocKind.SheetMetal, ModelingEnv.Any) },
                 { "se_criar_base",            new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_unir_superficies",      new Requirement(DocKind.Part,     ModelingEnv.Synchronous) },
                 { "se_aplicar_gap",           new Requirement(DocKind.Part,     ModelingEnv.Ordered) },
@@ -85,7 +86,7 @@ namespace AutoEDM.Mcp
                 // documento primeiro e só então aplica a MESMA regra (peça + síncrono), lá dentro.
             };
 
-        private enum DocKind { None = 0, Any = -1, Part = 1, Assembly = 3 }
+        private enum DocKind { None = 0, Any = -1, Part = 1, Assembly = 3, SheetMetal = 4 } // igSheetMetalDocument (o síncrono, 9, também vale)
 
         private sealed class Requirement
         {
@@ -223,10 +224,11 @@ namespace AutoEDM.Mcp
             if (req.Kind != DocKind.Any && req.Kind != DocKind.None)
             {
                 int type = -1; try { type = (int)doc.Type; } catch { }
-                if (type != (int)req.Kind)
+                bool ok = type == (int)req.Kind || (req.Kind == DocKind.SheetMetal && type == 9);   // 9 = igSyncSheetMetalDocument
+                if (!ok)
                 {
-                    string wanted = req.Kind == DocKind.Assembly ? "uma MONTAGEM (.asm)" : "uma PEÇA (.par)";
-                    string got = type == 1 ? "uma peça" : type == 3 ? "uma montagem" : type == 2 ? "um desenho" : $"tipo {type}";
+                    string wanted = req.Kind == DocKind.Assembly ? "uma MONTAGEM (.asm)" : req.Kind == DocKind.SheetMetal ? "uma CHAPA (.psm)" : "uma PEÇA (.par)";
+                    string got = type == 1 ? "uma peça" : type == 3 ? "uma montagem" : type == 2 ? "um desenho" : type == 4 || type == 9 ? "uma chapa" : $"tipo {type}";
                     return $"RECUSADO: '{tool}' exige {wanted} ativa, e o documento ativo é {got}. " +
                            "Troque a janela em foco no Solid Edge e chame de novo.";
                 }

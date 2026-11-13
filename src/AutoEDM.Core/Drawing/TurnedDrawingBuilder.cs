@@ -201,7 +201,7 @@ namespace AutoEDM.Drawing
         /// "SCALE: 1:2" no carimbo é TEXTO FIXO do fundo da folha no template PanFlight — o Carlos
         /// corrige à mão para a escala real. Aqui ele sai certo: só o texto deste documento muda.
         /// </summary>
-        private static void SetScaleText(object sheet, double scale)
+        internal static void SetScaleText(object sheet, double scale)
         {
             try
             {

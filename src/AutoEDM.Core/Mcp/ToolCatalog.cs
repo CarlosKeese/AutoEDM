@@ -491,6 +491,18 @@ namespace AutoEDM.Mcp
             },
             new ToolSpec
             {
+                Name = "se_desenho_dobra",
+                Writes = true,
+                InputSchemaJson = NoArgs,
+                Description =
+                    "Botão 'Des. 2D' › Chaparia (dobra). CHAPA (.psm) ativa e salva: cria um DESENHO NOVO (.dft, sem salvar) no template " +
+                    "PanFlight — planificada deitada com comprimento, largura e a posição de cada dobra a partir da ponta, tabela de dobras " +
+                    "(sequência, raio, ângulo, sentido Up/Down), peça dobrada na vista que mostra as dobras de perfil e na lateral com as " +
+                    "medidas gerais, isométrica e carimbo com a escala. Sem padrão plano, cria um (a peça fica ALTERADA, sem salvar). " +
+                    "Toda cota é conferida contra o 3D; a que não bate é apagada e relatada."
+            },
+            new ToolSpec
+            {
                 Name = "se_ficha",
                 Writes = true,
                 InputSchemaJson = NoArgs,

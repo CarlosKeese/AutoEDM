@@ -48,7 +48,7 @@ namespace AutoEDM.AddIn
         private const int CmdRefrigeracao = 27;     // MOLDE: canais de refrigeração a partir das linhas do esboço 3D (PEÇA ordenada)
         private const int CmdMalhaParaSolido = 28;  // ENG. REVERSA: malha → sólido pela rota prismática (cria PEÇA NOVA) — era 26 até a fusão com o grupo Molde
         private const int CmdLimparImportacao = 29; // IMPORTAÇÃO: peças geometricamente iguais -> uma cópia só, e relações óbvias
-        private const int CmdDesenho2D = 30;        // DESENHO: .dft novo da peça torneada, cotado pelas cores das faces
+        private const int CmdDesenho2D = 30;        // DESENHO: .dft novo — torno (peça torneada, pelas cores) ou chaparia (chapa dobrada)
         private const int CmdOrdenarPathFinder = 31; // MOLDE: ocorrências do 1º nível em sequência pelo código (15335.100, .101…)
         private const int CmdDesenhoProcesso = 32;   // DESENHO: cópia da peça sobre a original numa montagem nova em 02 - PROCESSO
         private const int CmdEletrodoInterpolacao = 33; // Eletrodo redondo: perfil da superfície revolvido em Z, Ø informado
@@ -652,54 +652,94 @@ namespace AutoEDM.AddIn
         }
 
         /// <summary>
-        /// Botão "Des. 2D (Torno)" (ambiente de PEÇA, Carlos, 2026-10-19; face zero em 2026-10-29):
-        /// desenho 2D automático da peça torneada, cotado pelas cores das faces (tabela da ferramentaria).
-        /// A janela pede a face ZERO — as cotas de comprimento partem dela e ela fica virada para a
-        /// direita, como no torno — e mostra o plano de cotas, que o Carlos confere antes de gastar o
-        /// tempo de montar as vistas. O desenho fica aberto e SEM salvar: o nome e a pasta são dele, e
-        /// nenhum .dft que já exista ao lado da peça corre o risco de ser sobrescrito.
+        /// Botão "Des. 2D" (Carlos, 2026-10-19; opções Torno / Chaparia em 2026-11-12): a janela pergunta
+        /// que desenho criar, com a opção do tipo do documento já marcada (.par → torno, .psm → chaparia).
+        /// Nos dois casos o desenho fica aberto e SEM salvar: o nome e a pasta são do Carlos, e nenhum .dft
+        /// que já exista ao lado da peça corre o risco de ser sobrescrito.
         /// </summary>
         private void Desenho2D()
         {
-            const string title = "AutoEDM — Des. 2D (Torno)";
             Run(CmdDesenho2D, (connector, doc, p) =>
             {
-                string partPath = null;
-                try { partPath = (string)doc.FullName; } catch { }
-                if (string.IsNullOrEmpty(partPath))
-                {
-                    MessageBox.Show("Salve a peça primeiro — o desenho se liga ao arquivo .par.", title,
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-
-                AutoEDM.Drawing.TurnedProfile profile =
-                    AutoEDM.Drawing.TurnedProfileReader.Read((object)doc, new AutoEDM.Drawing.FinishCatalog(Config.BuildColorMap()));
-                if (!profile.IsTurned)
-                {
-                    MessageBox.Show(
-                        "Esta peça não é torneada — por enquanto o Des. 2D (Torno) só cota peças de revolução (um eixo só)." +
-                        Environment.NewLine + Environment.NewLine +
-                        string.Join(Environment.NewLine, System.Linq.Enumerable.Take(profile.Rejected, 8)),
-                        title, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-
-                AutoEDM.Drawing.TurnedDimensionPlan plan = AutoEDM.Drawing.TurnedDimensionPlan.Build(profile);
-                AutoEDM.Drawing.RevolvedFace zero;
-                using (var form = new TurnedZeroFaceForm((object)doc, profile, plan))
+                int type = -1; try { type = (int)doc.Type; } catch { }
+                string name = null; try { name = (string)doc.Name; } catch { }
+                Drawing2DKind kind;
+                using (var form = new Drawing2DKindForm(name, type == 1, IsSheetMetalType(type)))
                 {
                     if (form.ShowDialog() != DialogResult.OK) return;
-                    zero = form.Zero;
+                    kind = form.Kind;
                 }
-
-                AutoEDM.Drawing.TurnedDrawingResult res = AutoEDM.Drawing.TurnedDrawingBuilder.Create(
-                    (object)ElectrodeAddIn.Current.App, (object)doc, profile, plan,
-                    new AutoEDM.Drawing.TurnedDrawingOptions { ZeroFaceId = zero?.Id });
-
-                MessageBox.Show(res.Summary + Environment.NewLine + "O desenho está aberto e AINDA NÃO FOI SALVO.", title,
-                    MessageBoxButtons.OK, res.Failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                if (kind == Drawing2DKind.SheetMetal) Desenho2DChaparia(doc);
+                else Desenho2DTorno(doc);
             });
+        }
+
+        /// <summary>
+        /// Des. 2D › Torno (2026-10-19; face zero em 2026-10-29): desenho automático da peça torneada, cotado
+        /// pelas cores das faces (tabela da ferramentaria). A janela pede a face ZERO — as cotas de
+        /// comprimento partem dela e ela fica virada para a direita, como no torno — e mostra o plano de
+        /// cotas, que o Carlos confere antes de gastar o tempo de montar as vistas.
+        /// </summary>
+        private void Desenho2DTorno(dynamic doc)
+        {
+            const string title = "AutoEDM — Des. 2D (Torno)";
+            string partPath = null;
+            try { partPath = (string)doc.FullName; } catch { }
+            if (string.IsNullOrEmpty(partPath))
+            {
+                MessageBox.Show("Salve a peça primeiro — o desenho se liga ao arquivo .par.", title,
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            AutoEDM.Drawing.TurnedProfile profile =
+                AutoEDM.Drawing.TurnedProfileReader.Read((object)doc, new AutoEDM.Drawing.FinishCatalog(Config.BuildColorMap()));
+            if (!profile.IsTurned)
+            {
+                MessageBox.Show(
+                    "Esta peça não é torneada — o Des. 2D (Torno) só cota peças de revolução (um eixo só)." +
+                    Environment.NewLine + Environment.NewLine +
+                    string.Join(Environment.NewLine, System.Linq.Enumerable.Take(profile.Rejected, 8)),
+                    title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            AutoEDM.Drawing.TurnedDimensionPlan plan = AutoEDM.Drawing.TurnedDimensionPlan.Build(profile);
+            AutoEDM.Drawing.RevolvedFace zero;
+            using (var form = new TurnedZeroFaceForm((object)doc, profile, plan))
+            {
+                if (form.ShowDialog() != DialogResult.OK) return;
+                zero = form.Zero;
+            }
+
+            AutoEDM.Drawing.TurnedDrawingResult res = AutoEDM.Drawing.TurnedDrawingBuilder.Create(
+                (object)ElectrodeAddIn.Current.App, (object)doc, profile, plan,
+                new AutoEDM.Drawing.TurnedDrawingOptions { ZeroFaceId = zero?.Id });
+
+            MessageBox.Show(res.Summary + Environment.NewLine + "O desenho está aberto e AINDA NÃO FOI SALVO.", title,
+                MessageBoxButtons.OK, res.Failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
+        /// Des. 2D › Chaparia (dobra) (Carlos, 2026-11-12): planificada cotada com a posição das dobras,
+        /// tabela de dobras, vistas dobradas e isométrica — <see cref="AutoEDM.Drawing.SheetMetalDrawingBuilder"/>.
+        /// Sem padrão plano, ele é criado e a chapa fica alterada, sem salvar.
+        /// </summary>
+        private void Desenho2DChaparia(dynamic doc)
+        {
+            const string title = "AutoEDM — Des. 2D (Chaparia)";
+            string path = null;
+            try { path = (string)doc.FullName; } catch { }
+            if (string.IsNullOrEmpty(path))
+            {
+                MessageBox.Show("Salve a chapa primeiro — o desenho se liga ao arquivo .psm.", title,
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            AutoEDM.Drawing.SheetMetalDrawingResult res = AutoEDM.Drawing.SheetMetalDrawingBuilder.Create(
+                (object)ElectrodeAddIn.Current.App, (object)doc);
+            MessageBox.Show(res.Summary + (res.Ok ? Environment.NewLine + "O desenho está aberto e AINDA NÃO FOI SALVO." : ""), title,
+                MessageBoxButtons.OK, res.Ok && res.Failed.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }
 
         /// <summary>
@@ -1573,7 +1613,7 @@ namespace AutoEDM.AddIn
         // -------------------------------------------------------------- infra
 
         /// <summary>Tipo de documento exigido por um comando (= SolidEdgeFramework.DocumentTypeConstants).</summary>
-        private enum DocKind { Any = 0, Part = 1, Assembly = 3 } // igPartDocument / igAssemblyDocument
+        private enum DocKind { Any = 0, Part = 1, Assembly = 3, PartOrSheetMetal = -2 } // igPartDocument / igAssemblyDocument; chapa = 4 (ou 9, síncrona)
 
         /// <summary>O que um comando exige do documento ativo para PODER rodar.</summary>
         private sealed class CommandSpec
@@ -1646,7 +1686,7 @@ namespace AutoEDM.AddIn
                 { CmdAlivioExtratores,    new CommandSpec("ALÍVIO DE EXTRATORES", DocKind.Part, ModelingEnv.Ordered) },
                 // Desenho 2D: só LÊ a peça e cria um DOCUMENTO NOVO (.dft). Não cria recurso na peça,
                 // então qualquer ambiente serve.
-                { CmdDesenho2D,           new CommandSpec("DES. 2D (TORNO)",DocKind.Part, ModelingEnv.Any) },
+                { CmdDesenho2D,           new CommandSpec("DES. 2D",DocKind.PartOrSheetMetal, ModelingEnv.Any) },
                 // WEDM: só LÊ as curvas e grava .igs. Síncrono porque é onde o Carlos prepara os perfis.
                 { CmdExportarPerfisWedm,  new CommandSpec("EXPORTAR PERFIS WEDM (IGES por Z)", DocKind.Part, ModelingEnv.Synchronous) },
                 // Cria curva derivada a partir das arestas das superfícies: mesmo ambiente do
@@ -1669,6 +1709,9 @@ namespace AutoEDM.AddIn
         /// <paramref name="explain"/>, também diz ao usuário o que falta — o clique explica, o
         /// relógio de estado não (senão abriria caixas de diálogo sozinho).
         /// </summary>
+        /// <summary>igSheetMetalDocument (4) ou igSyncSheetMetalDocument (9).</summary>
+        private static bool IsSheetMetalType(int type) => type == 4 || type == 9;
+
         private static bool AllowedHere(int commandId, bool explain)
         {
             CommandSpec spec;
@@ -1692,12 +1735,15 @@ namespace AutoEDM.AddIn
             if (spec.Kind != DocKind.Any)
             {
                 int type = -1; try { type = (int)doc.Type; } catch { }
-                if (type != (int)spec.Kind)
+                bool kindOk = spec.Kind == DocKind.PartOrSheetMetal ? (type == 1 || IsSheetMetalType(type)) : type == (int)spec.Kind;
+                if (!kindOk)
                 {
                     if (explain)
                         MessageBox.Show(spec.Kind == DocKind.Assembly
                             ? "Abra uma MONTAGEM (.asm) ativa (a cavidade no zero-máquina) para usar esta ferramenta."
-                            : "Abra uma PEÇA (.par) ativa, com as faces de queima já copiadas nela, para usar esta ferramenta.",
+                            : spec.Kind == DocKind.PartOrSheetMetal
+                                ? "Abra uma PEÇA (.par) ou uma CHAPA (.psm) ativa para usar esta ferramenta."
+                                : "Abra uma PEÇA (.par) ativa, com as faces de queima já copiadas nela, para usar esta ferramenta.",
                             "AutoEDM", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }

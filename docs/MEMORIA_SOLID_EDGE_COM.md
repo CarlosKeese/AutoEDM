@@ -323,3 +323,20 @@ ITypeInfo, ao vivo.
 
 > **Ao divergir:** esta memória (§3/§4) vence os docs mais antigos, porque reflete os logs
 > 18–27. Se corrigir algo aqui, deixe o doc antigo apontar para cá em vez de repetir.
+
+## Desenho: chapa dobrada, conjunto soldado, símbolo de solda (SE 2023 v223, 2026-11-12)
+
+| Operação | Status | Evidência |
+|---|---|---|
+| Criar padrão plano por API: `FlatPatternModels.Add(Models.Item(1))` → `FlatPatterns.Add(aresta, face, vértice, 0)` → `Update()` | ✅ | corpo plano = DXF (502.01, 502.02) |
+| Vista planificada `AddSheetMetalView(link, 1, esc, x, y, 2)`; linha de dobra = `DVLine2d.EdgeType 6` com `BendAngle` | ✅ | 502.02, 501.02 |
+| Tabela de dobras `DraftBendTables.Add(vista, "", 1, 1)`; `Columns.Item(i).HeaderRowValue` / `Show` | ✅ | idem |
+| `AddDistanceBetweenObjects`: o EIXO sai da posição dos cliques; par errado mede valor constante (25 mm) | ⚠️ contornado | regra em `SheetMetalDrawingRules.PickOrder` |
+| `RetrieveDimensions()` numa chapa síncrona | ❌ 0 cotas | 502.02 |
+| `WeldSymbols.Add(x,y,z)` | ❌ E_FAIL | Desenho de teste 201.00 |
+| `WeldSymbols.AddByTerminator(ref, x, y, 0, false)` + `BottomType = 22` + `AddVertex` + `BreakLine` com `WeldSymbols.Style = "ISO (mm)"` antes | ✅ | copiado dos símbolos feitos à mão pelo Carlos (Desenho30) |
+| Sem o estilo ISO o corpo do símbolo fica na origem da folha; `SetFreeSpacePoint`/`SetKeyPoint`/`SetVertex`/`Move` não o tiram de lá | ❌ | idem |
+| PDF só da folha de trabalho: `SetGlobalParameter(172, 0)` em volta do `SaveCopyAs` | ✅ | 8 desenhos do SaltSpray |
+| `ApplyMaterial(doc, "INOX 316")` | ❌ fora do intervalo — a biblioteca Panflight não tem INOX 316; gravar `MechanicalModeling.Material` como texto funciona | 301.01 (2026-11-13) |
+
+Detalhes e receitas: skill `solid-edge-com`, `references/draft-properties-events.md` (seção *Sheet-metal and welded-assembly drawings*).

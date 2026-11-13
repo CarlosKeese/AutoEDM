@@ -110,7 +110,7 @@ namespace AutoEDM.Core.Tests
                 new[]
                 {
                     "se_abrir_documento", "se_alojamento_oring", "se_aplicar_gap", "se_com_chamar", "se_criar_base", "se_criar_eletrodo_manual",
-                    "se_criar_eletrodos", "se_curvas_superficies", "se_desenho_2d", "se_duplicar_eletrodo", "se_exportar_perfis_wedm",
+                    "se_criar_eletrodos", "se_curvas_superficies", "se_desenho_2d", "se_desenho_dobra", "se_duplicar_eletrodo", "se_exportar_perfis_wedm",
                     "se_fechar_documento", "se_ficha", "se_modelar", "se_nova_peca", "se_ordenar_pathfinder", "se_porta_molde", "se_refrigeracao", "se_sonda_interpart", "se_sonda_rosca", "se_trocar_ambiente",
                     "se_unir_superficies"
                 },

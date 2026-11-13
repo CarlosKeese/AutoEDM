@@ -414,6 +414,7 @@ Cada botão virou uma ferramenta que chama **o mesmo método do Core**. Só a bo
 | `se_lista_corte` | Lista de corte | montagem + ocorrências | não | — (texto; a impressão fica na janela) |
 | `se_lista_modificacoes` | Lista de modificações | montagem | não | — (só a varredura; o .xlsx fica na janela) |
 | `se_ficha` | Ficha (spec-sheet) | montagem | arquivos | — |
+| `se_desenho_dobra` | Des. 2D › Chaparia | chapa (`.psm`) salva | sim (desenho novo; padrão plano se faltar) | — |
 | `se_criar_base` | Criar Base | peça **síncrona** | sim | `apenasPlanejar`, `material`, `blank` (nº da lista), `afastamentoMm`, `alturaMm`, `fixacao`, `faixa` |
 | `se_unir_superficies` | Unir superfícies | peça **síncrona** | sim | — |
 | `se_aplicar_gap` | Aplicar GAP | peça **ordenada** | sim | `ra` — omitido = o Ra gravado na peça |
@@ -807,6 +808,24 @@ A montagem ativa **não é salva**; a pasta `Porta Molde` e os arquivos dela sã
 **Não modelado (ainda):** parafusos como peças no Polimold (os furos estão no Ø nominal); guias da extratora como peças; encostos; rasgo de fixação do Tipo 2; anel de centragem e bucha de injeção (o catálogo Polimold não os tabela); porta-molde de 3 placas; na gaveta, os furos laterais dos parafusos das guias e dos puxadores e os do batente (os parafusos não são postos); engates e bujões da refrigeração.
 
 **A confirmar com o Carlos:** para que servem os 4 M6 em 28,2 × 28,2 nas costas das metades do Babyplast; as roscas dos 6 M8 do cavalete móvel do Zamak nos paralelos (o padrão não tem); se a furação 1 mm fora de centro das extratoras do Zamak é proposital; o canto da anti-inversão (+A, −C) nos outros Polimold; se `MINI MOLDES` vira tipo.
+
+## 4.5e Des. 2D — id 30 (peça ou chapa)
+
+O botão abre a escolha **Torno / Chaparia (dobra)** com a opção do documento já marcada (`.par` → torno, `.psm` → chaparia; tipos 4 e 9 contam como chapa). A outra fica desabilitada com o motivo. Nos dois o desenho nasce do template da casa e fica **aberto, sem salvar**.
+
+**Chaparia** — `Drawing/SheetMetalDrawingBuilder.cs` (regras puras em `SheetMetalDrawingRules`, cobertas por `SheetMetalDrawingRulesTests`):
+
+| Passo | Regra / valor | Onde |
+|---|---|---|
+| Padrão plano ausente | `FlatPatternModels.Add` + `FlatPatterns.Add(aresta, face, vértice, 0)` pela maior face plana e a aresta reta mais longa; a chapa fica alterada, sem salvar | `CreateFlatPattern` |
+| Escala | a maior de 5, 2, 1, 1:2, 1:4, 1:5, 1:10 em que a planificada cabe em 50% × 22% da folha e a dobrada em 28% × 30% | `ChooseScale` |
+| Planificada | `AddSheetMetalView(…, 2)`, deitada (`SetRotationAngle(π/2)`) quando sai em pé; dobra = `DVLine2d.EdgeType 6` | `Create` |
+| Cotas da planificada | comprimento e largura pelas linhas de borda; cada dobra medida da ponta esquerda (ou da borda de baixo), em escada de 7 mm | `Create` |
+| Tabela de dobras | `DraftBendTables.Add`; cabeçalhos SEQ. / RAIO / ÂNGULO / SENTIDO, colunas Feature e Included Angle escondidas; canto sup. direito | `Create` |
+| Dobrada | entre as vistas 4, 1 e 2, a de mais arcos; comprimento embaixo; altura na própria vista se topo e base se sobrepõem em X, senão na lateral; largura na lateral | `Create` |
+| Conferência | cliques alinhados (mesma altura / mesma abscissa), depois linha ↔ ponto final; aceita só \|valor − esperado\| ≤ 0,02 mm **e** a linha de cota no alvo e no eixo certo | `PickOrder`, `DimWriter` |
+
+Chapa dobrada modelada como peça comum (`.par`, sem recurso de chapa) não planifica — refazer como `.psm`.
 
 ## 4.6 Alojamento de anel de vedação — id 14 (peça, **ordenada**)
 

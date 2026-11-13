@@ -1,5 +1,13 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-12 — bend drawings, welded-assembly drawings, weld symbols
+
+`references/draft-properties-events.md`: flat pattern created by API (`FlatPatternModels.Add` + `FlatPatterns.Add`);
+flat view, bend lines (`EdgeType = 6`), bend table with pt-BR headers; dimension axis decided by the click points and
+the line↔end-point fallback; parts list with `%{Título|G}`; joints from occurrence ranges; the **weld symbol recipe**
+(ISO (mm) style before `AddByTerminator`, `BottomType = 22`, vertex, `BreakLine`) learned from hand-made symbols;
+PDF of the active sheet only (global 172); PowerShell pitfalls (integer `Math.Min` overload, BOM).
+
 ## 2026-11-10 — query tools in Python, index usable without api.json, OLD/ removed
 
 - `scripts/apiq.mjs` and `make-index.mjs` replaced by `apiq.py` and `make-index.py` (standard library only). The dev machine

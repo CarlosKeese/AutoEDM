@@ -121,6 +121,13 @@ A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cad
 | **Porta-molde** | qualquer | Porta-molde **Polimold de 2 placas, MUD (tipo gaveta), Babyplast ou Zamak** (padrões da casa em `Padrões\Moldes`), com colunas, buchas e pinos de retorno (Polimold; pinos no Zamak) ou as peças de biblioteca do padrão (quadro 7160, guias, puxadores, engate), dimensionado pelas peças dispostas na montagem: escolhe a série pela área útil (com margem para a refrigeração, testando a planta girada), as espessuras de P1/P2 pelo fundo mínimo e o curso pela altura do produto; confere área, espessuras, curso, corredor dos canais de refrigeração e flexão da placa suporte, e mostra o plano desenhado (corte e planta) com o código de pedido (ex.: `3035 4 15 1 2 5B`) antes de criar. Cria `Porta Molde - <montagem>\Porta Molde.asm` com uma peça **ordenada guiada por variáveis** por placa. Rodando de novo, **troca de porta-molde nas mesmas peças**, sem reimportar. Não salva a montagem. |
 | **Nova peça** | qualquer | Peça vazia do molde codificada na série .100/.200/.300 e posicionada pelas faces clicadas. |
 
+### Desenho — documento de peça ou de chapa
+
+| Comando | Ambiente | O que faz |
+|---|---|---|
+| **Des. 2D** | qualquer | Pergunta que desenho criar, já marcando o do documento ativo. **Torno** (PEÇA torneada): vista lateral como no torno, cotas pela cor das faces, tolerâncias e GD&T. **Chaparia (dobra)** (CHAPA `.psm`): planificada deitada com comprimento, largura e a posição de cada dobra a partir da ponta, tabela de dobras (sequência, raio, ângulo, sentido Up/Down), peça dobrada na vista que mostra as dobras de perfil e na lateral, isométrica e a escala no carimbo; sem padrão plano, ele é criado. Toda cota é conferida contra o 3D. O desenho fica aberto, sem salvar. |
+| **Desenho de processo** | qualquer | Peças `_CDU`/`_CDT` vinculadas à original numa montagem em `02 - PROCESSO`. |
+
 ### WEDM — documento de peça
 
 Corte a fio: preparar os perfis na peça e entregá-los ao programa da máquina (Pitágoras). Os dois botões são a mesma sequência em dois cliques — primeiro as curvas, depois os arquivos.
@@ -516,6 +523,8 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 | Rosca física no furo M6 | 🚧 sonda de diagnóstico pronta; receita definitiva em aberto |
 | Ponte MCP (Claude Code dirige a Solid Edge) | ✅ **validada no SE em 2026-09-18** — 1º run com o CAD aberto: leitura, planos, árvore e modelagem por primitivas sobre COM real. **2026-11-10:** ferramentas de autonomia (captura de tela, documentos, seleção, leitura e chamada livres da API COM) testadas contra o SE vivo; falta o 1º run pela ponte |
 | Eng. Reversa: malha → sólido | ✅ **5 de 6 malhas reais exatas (2026-10-10)** — plano, cilindro, cone, toro e esfera reconhecidos; faixas Z + correções por revolução/extrusão; conferido por desvio geométrico. 🚧 concordância orgânica (forma livre) ainda diverge |
+| Des. 2D › Torno (peça torneada pelas cores) | 🚧 construído, validado pela sonda externa; falta o botão real |
+| Des. 2D › Chaparia (planificada, posição das dobras, tabela de dobras) | 🚧 construído (2026-11-12); a receita foi validada no SE por script em três chapas reais do SaltSpray (502.02, 501.02, 502.01) — falta o botão real |
 | Orquestrador completo ("gerar todos os eletrodos") | 📋 planejado |
 
 Legenda: ✅ funcionando · 🚧 em andamento · 📋 planejado.
