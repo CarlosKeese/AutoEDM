@@ -266,6 +266,7 @@ namespace AutoEDM.Drawing
             // --- carimbo
             try { draft.UpdatePropertyTextCacheAndDisplay(); } catch { }
             TurnedDrawingBuilder.SetScaleText((object)sheet, scale);
+            TurnedDrawingBuilder.FitWindow((object)seApp);
 
             r.Ok = true;
             r.Summary = Summarize(r, bestOrient);

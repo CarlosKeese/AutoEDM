@@ -190,6 +190,7 @@ namespace AutoEDM.Drawing
             // Carimbo: os campos ligados às propriedades da peça só resolvem depois do vínculo.
             try { draft.UpdatePropertyTextCacheAndDisplay(); } catch { }
             SetScaleText((object)sheet, scale);
+            FitWindow((object)seApp);
 
             result.Ok = true;
             result.Summary = Summarize(result, plan);
@@ -201,6 +202,17 @@ namespace AutoEDM.Drawing
         /// "SCALE: 1:2" no carimbo é TEXTO FIXO do fundo da folha no template PanFlight — o Carlos
         /// corrige à mão para a escala real. Aqui ele sai certo: só o texto deste documento muda.
         /// </summary>
+        /// <summary>
+        /// Enquadra a folha na janela do desenho novo. Sem isso a janela pode abrir com zoom
+        /// absurdo (0,00016 no 15335.105-CDT, em 16/11/2026): a folha vira um ponto e o
+        /// desenho parece em branco. Com <c>SheetWindow.Fit()</c> o zoom foi a 78,9 e tudo apareceu.
+        /// </summary>
+        internal static void FitWindow(object app)
+        {
+            try { ((dynamic)app).ActiveWindow.Fit(); }
+            catch (Exception ex) { Log.Warn("Janela do desenho não enquadrada: " + Msg(ex)); }
+        }
+
         internal static void SetScaleText(object sheet, double scale)
         {
             try
