@@ -241,7 +241,9 @@ namespace AutoEDM.Drawing
             foreach (int o in new[] { ViewFront, ViewTop, ViewRight })
             {
                 dynamic v = views.AddSheetMetalView(link, o, scale, 0.22 * W, my, DesignedView);
-                int arcs = 0; try { arcs = (int)v.DVArcs2d.Count; } catch { }
+                // só arcos de RAIO DE DOBRA (≤ 3 mm): recortes ondulados (R5/R15 no 701.03) enganavam a escolha
+                int arcs = 0;
+                try { dynamic dva = v.DVArcs2d; for (int q = 1; q <= (int)dva.Count; q++) { try { if ((double)dva.Item(q).Radius <= 0.003) arcs++; } catch { } } } catch { }
                 if (arcs > bestArcs) { if (main != null) main.Delete(); main = v; bestArcs = arcs; bestOrient = o; }
                 else v.Delete();
             }
