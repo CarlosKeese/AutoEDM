@@ -437,6 +437,14 @@ for the SaltSpray machine, PanFlight template. Every value was checked against t
   E_FAIL; `AddByTerminator(null, …)` → TYPEMISMATCH. k4 = (0,0) and `GetFreeSpacePoint` = (0,0) are normal
   (the hand-made ones have them too).
 
+**Placing one weld symbol per joint (heuristics that held on 7 SaltSpray assemblies):** symbol on the front or
+side view where the joint projects as a SEGMENT; joints that coincide in projection with the SAME length
+(front/back edges) share one symbol with `Tail = 1; TailNote = "2x"`; a joint whose segment falls ON another,
+different joint's segment in that view goes to the other view (801: strip and channel both along X looked
+like one bead in the front view). Contact band 5–30 mm wide (the two legs of a channel) = 2 beads ("2x");
+wider (the foot of a box) = `WeldAllAround = true`. Re-read `DVLines2d` after `view.Update()` + `DoIdle()` —
+right after `AddAssemblyView` long outline lines were missing and the nearest-edge test failed.
+
 **PDF of the working sheet only**: `SaveCopyAs(pdf)` prints the background sheets too (5 pages). Set
 `Application.SetGlobalParameter(172 = seApplicationGlobalDraftSaveAsPDFSheetOptions, 0 = ActiveSheet)`
 around the export and restore the user's value (`GetGlobalParameter(172, ref old)`).

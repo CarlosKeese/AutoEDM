@@ -1,5 +1,54 @@
 # CHANGELOG — solid-edge-com
 
+## 2026-11-16 — sharp concave corners, neck with holes, message filter (T5)
+
+`references/modeling-recipes.md`: `Edge.GetFaces` needs a typed `Face[0]` placeholder; concavity by outward normals
+and face sides; a neck profile with holes fills them, several faces need one extrusion each; RPC_E_CALL_REJECTED
+out of process.
+
+## 2026-11-16 — batch laser DXF edge cases, replace-with-copy, in-context open dialog
+
+`references/modeling-recipes.md`: disc outlines (no vertex → write the DXF from `Circle.GetCircleData`),
+thickness by volume/face, `.par` that is sheet metal (`Type 4`), bent plain parts can't flatten, never drop
+`OUTER_LOOP` circles. `references/assembly-relations.md`: rename by File.Copy + `Occurrence.Replace(new, true)`
+keeps relations; `Close(false)` after Replace discards it; `SubOccurrence` names. `references/errors.md`:
+`Documents.Open` of a part designed in context blocks on a modal question. `references/draft-properties-events.md`:
+weld-symbol placement heuristics.
+
+## 2026-11-13 — DeleteBlends works in ordered; GAP still blocked (T3c 5–6)
+
+`references/modeling-recipes.md`: removing the convex radii ≤ GAP with `DeleteBlends.Add` in ordered (12/14); the
+offset of the burn set still fails without them.
+
+## 2026-11-13 — GAP face-by-face map (T3c)
+
+`references/modeling-recipes.md`: per-face FaceOffsets results by surface type, smallest convex radius, distance
+threshold (fails even at 0.001 mm), tangent-group chaining.
+
+## 2026-11-13 — GAP: stage probe and alternatives (T3b)
+
+`references/modeling-recipes.md`: FaceOffsets fails already on the bare tip (every stage); FaceMoves fails too; on
+the steel copy one face offsets, the whole burn set does not; faces die after deleting a feature in ordered.
+
+## 2026-11-13 — GAP inside the electrode flow (FaceOffsets after a code switch to ordered)
+
+`references/modeling-recipes.md`: `FaceOffsets.AddEx` refused in synchronous (E_POINTER / DISP_E_TYPEMISMATCH);
+after the switch it fails on most electrodes (even 1 face, 0.001 mm), works on some (volume = area × GAP), and can
+report OK while slicing the whole body — guard by volume.
+
+## 2026-11-13 — cove removal by extruded cutout (synchronous)
+
+`references/modeling-recipes.md`: `ExtrudedCutouts.AddFiniteMulti` symmetric removes the fillet cove in a synchronous
+part (volume = theory); RPC_E_SERVERFAULT with the feature applied; strip E_FAIL until the cove is gone; prism short of
+the tangent wall → E_NOINTERFACE.
+
+## 2026-11-13 — electrode split: radii from the part, refused deletions, boolean degeneracies, hole depth
+
+`references/modeling-recipes.md`: the part's convex radii predict the electrode's concave ones (26/26); torus wall at
+`Rm − r` for the inner quarter; `prism − steel` keeps the cove on a cut; `DeleteFaces`/`DeleteBlends` E_FAIL (face and
+`Body.CreateCollection`, design and construction body); `BooleanFeatures.Add` E_NOINTERFACE on tangent/coplanar contact;
+`Hole.Depth` writable in synchronous, `Hole.Faces` E_FAIL, hole break-out read from the cone area.
+
 ## 2026-11-12 — bend drawings, welded-assembly drawings, weld symbols
 
 `references/draft-properties-events.md`: flat pattern created by API (`FlatPatternModels.Add` + `FlatPatterns.Add`);
@@ -7,6 +56,17 @@ flat view, bend lines (`EdgeType = 6`), bend table with pt-BR headers; dimension
 the line↔end-point fallback; parts list with `%{Título|G}`; joints from occurrence ranges; the **weld symbol recipe**
 (ISO (mm) style before `AddByTerminator`, `BottomType = 22`, vertex, `BreakLine`) learned from hand-made symbols;
 PDF of the active sheet only (global 172); PowerShell pitfalls (integer `Math.Min` overload, BOM).
+
+## 2026-11-12 — straight electrode neck, exact parting Z
+
+`references/modeling-recipes.md`: the neck is now the tip's top face extruded (`Profile.IncludeEdge` of its edges +
+`AddFiniteExtrudedProtrusion`; `End(1) = −103` and the extrusion is still exact); the shifted-cavity neck is superseded;
+`Body.GetRange` sits 0.024 mm above the steel — take the parting Z from `Plane.GetRootPoint` of the top face.
+
+## 2026-11-12 — electrode from booleans, concave/convex test
+
+`references/modeling-recipes.md`: the two-boolean electrode (neck + tip) confirmed live, with the coordinate system on the copy and
+the copy deleted afterwards; concave/convex test for cylinder and torus faces; the real `igPlane` / `igCylinder` values.
 
 ## 2026-11-10 — query tools in Python, index usable without api.json, OLD/ removed
 
@@ -25,6 +85,9 @@ PDF of the active sheet only (global 172); PowerShell pitfalls (integer `Math.Mi
 - `references/discovery.md`: the AutoEDM bridge tools (`se_com_ler`, `se_com_chamar`, `se_captura`, `se_selecionar`) as the
   first live-introspection route, plus two PowerShell marshaling traps. `references/addin-ribbon.md`: lazy add-in load
   re-measured on SE 2023 (`AddIns.Connect = True` does not mean loaded).
+- `references/modeling-recipes.md`: boolean with a copied part body — `BooleanFeatures.Add` accepts a construction solid only as
+  `SolidEdgeGeometry.Body[]` (ConstructionModel.Body); six other routes measured and listed. `CreateReference` to select a part
+  face through the assembly.
 - `OLD/` (pre-2026-10-18 layouts and `.bak` bundles) removed from the tree; it is in the git history.
 - `solid-edge-com.skill` rebuilt from the whole folder (it held only `SKILL.md` and the changelog).
 

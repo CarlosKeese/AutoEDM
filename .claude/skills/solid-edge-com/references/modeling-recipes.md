@@ -621,6 +621,27 @@ with NO solid yet, AutoEDM "Eletrodo de interpolação", tools/InterpolationProb
   it writes a valid DXF with **zero entities**, no exception. `partDoc.Activate()` first, and
   verify the file has entities.
 
+**Batch laser DXF of an assembly's plates (SaltSpray, 39 plates, SE 223, 2026-11-12/13):**
+- Face = the LARGEST planar face (a chamfered/countersunk side has less area, so the clean side wins and
+  the DXF shows the real hole); edge = its longest straight edge (`Edge.Geometry.Type == igLine 167551109`);
+  vertex = that edge's `StartVertex`. A `.psm` flattens by the same call (bend lines come out on layers
+  `UP_CENTERLINES` / `DOWN_CENTERLINES`); formed features of a part (embosses) come out on `DOWN_FEATURES`.
+- **A disc (outline and holes all circles) cannot go through `SaveAsFlatDXFEx`:** the face and the whole body
+  have NO vertex, and a null vertex is refused — PowerShell `$null` / `DBNull` don't convert, the AutoEDM
+  bridge's `{"nulo":true}` gives `DISP_E_TYPEMISMATCH`. Workaround that worked: write the DXF yourself —
+  for each edge of the face `Circle.GetCircleData(ref center[3], ref axis[3], out radius)`, project the
+  centres on the face plane (axis of the outer circle = normal), `CIRCLE` on `OUTER_LOOP` (largest) and
+  `INTERIOR_LOOPS`, mm, origin at the outer centre.
+- Thickness for the file name/title: the envelope's smallest side fails on a plate with an emboss (105.par:
+  6.2 for a 1.2 sheet). Use `Body.Volume / largest planar face area`, and keep the envelope value when the
+  two differ by < 0.5 mm (a 6 mm disc with chamfered edges gives 5.8 by volume).
+- **The extension does not tell the document type:** `CHAPA MESA.par` read `Type = 4` (sheet metal).
+- **A sheet bent and modelled as a plain part (`.par`, no sheet-metal features) cannot be flattened** — no
+  flat pattern exists. Spot it by mean thickness `2 × Volume / total face area` (≈ 1.13 mm) far below the
+  smallest envelope side (20 mm): profiles 701.03 / 801.02, the box 701.01. Report it; don't export.
+- Post-processing the DXF to drop chamfer circles (the larger of two concentric circles): never touch
+  `OUTER_LOOP` — a disc with a centred hole lost its Ø200 outline to that rule.
+
 **Revolve with an INCLINED axis needs the profile corners tied (CONFIRMED LIVE 2026-10-29, SE 223,
 ordered part, BOM_Manager Check Mold submarine tunnel).** A cone whose axis is parallel to a sketch
 axis revolves fine with four `Lines2d.AddBy2Points` sharing endpoint values (`End` = −103 and the body
@@ -629,3 +650,179 @@ throws nothing, and creates NO body (`Models.Count` unchanged) — with `End(1)`
 Tying every joint with `profile.Relations2d.AddKeypoint(line[i], 1, line[i+1], 0)` → `End` = 0 and the
 exact volume (73.30 mm³). Extrusions tolerate the untied profile; revolves of inclined sections do not.
 Tie the corners always — it costs nothing — and keep checking `Models.Count` + volume after the call.
+
+## Subtracting a copied part body from a design body (the "electrode = block − cavity" boolean)
+
+**CONFIRMED LIVE 2026-11-10, SE 2023 (223.00.13.05), synchronous part.** The tool of a boolean can be a
+*construction* solid, but only when handed over as its **`Body`** in a typed array:
+
+```csharp
+// design body = a prism over the region; cavity brought in as a construction body
+object cc = Invoke(part.Constructions.CopyConstructions, "Add", cavityFile, 1.0, 1.0, 1.0,
+                   Type.Missing, Type.Missing, coordinateSystemOrMissing,
+                   true, false, false, false, Type.Missing, Type.Missing, true);
+object toolBody = part.Constructions.Item(1).Body;                 // ConstructionModel.Body
+var tools = new SolidEdgeGeometry.Body[] { (SolidEdgeGeometry.Body)toolBody };
+object f = Invoke(model.BooleanFeatures, "Add", tools.Length, tools, 2 /* seBooleanSubtract */, Type.Missing);
+// f.Status == igFeatureOK; volume 4000 -> 2222.6 mm3 = the exact negative of the cavity inside the prism
+```
+
+What does NOT work for the same goal (same session):
+
+| Call | Result |
+|---|---|
+| `BooleanFeatures.Add` with `CopyConstruction[]`, `object[]` or `DispatchWrapper[]` of the feature | `E_NOINTERFACE` |
+| `BooleanFeatures.Add` with `ConstructionModel[]` / `DispatchWrapper[]` of the ConstructionModel | `E_FAIL` |
+| `Model.Subtracts.Add(1, {Model}, 1, {CopyConstruction}, {dir}, opt, 0)` | `E_INVALIDARG` / `E_FAIL` |
+| `Models.AddByConstruction(CopyConstruction)` | `E_NOINTERFACE` |
+| `Models.AddCopiedPart(file)` | no error, but the copy is UNITED into the active design body (Models.Count stays 1) — useless as a tool |
+| `Models.AddBody(igPartType, name)` in a synchronous part | no error, no second body |
+
+`CopyConstruction` has no `.Body`; the body lives on `Constructions.Item(n)` (a `ConstructionModel`,
+`BodyType = igConstructionPartType`). Not yet measured: the same with a coordinate system on the copy,
+and deleting the `CopyConstruction` after the boolean.
+
+To select faces of a part *through the assembly* without a click:
+`AssemblyDocument.CreateReference(occurrence, face)` returns a `Reference` that `SelectSet.Add` accepts
+(a raw part `Face` is not selectable in the assembly's SelectSet).
+
+### The electrode built from that boolean (CONFIRMED LIVE 2026-11-12, AutoEDM `ElectrodeTipBuilder`)
+
+With a coordinate system on the copy (`CoordinateSystems.AddByMatrix(M)` passed as the 7th argument of
+`CopyConstructions.Add`) the boolean works the same, and **deleting the `CopyConstruction` and the
+coordinate system afterwards keeps the result** (synchronous: the cut is baked into the body).
+
+Above the parting plane there is no steel, so `prism − cavity` leaves the full footprint there — a
+flange sitting on the parting face. **Superseded 2026-11-12:** the first version made the 1 mm neck as a
+second prism minus the cavity copy shifted 1 mm up; that copies the first millimetre of the steel
+(edge breaks, shallow steps, drafts) upwards and left notches. What works (CONFIRMED LIVE 2026-11-12,
+SE 2023, synchronous, AutoEDM `ElectrodeTipBuilder.RaiseNeck`):
+
+1. **Tip**: prism from the deepest burn Z up to the parting plane **exactly**, minus the cavity copy at its
+   true pose. It ends in a planar face at the parting Z whose outline is the pocket mouth.
+2. **Straight neck**: a sketch on a plane at that Z (`RefPlanes.AddParallelByDistance`) with **every edge of
+   that top face** brought in by `Profile.IncludeEdge(edge, [out] null)` (39 edges: lines, arcs, elliptical
+   arcs — all accepted), then `Models.AddFiniteExtrudedProtrusion(1, Profile[], 2, 0.001)`.
+   `Profile.End(1)` returns **−103** (the included edges are not tied by relations) and the extrusion
+   STILL comes out right: `Status` OK on the last `ExtrudedProtrusions` item, one body, volume = face area ×
+   1 mm to −0.001 % (2538.442 vs 2538.464 mm³), every side face vertical. Judge by volume/body count, not by
+   `End`. (`AddFiniteExtrudedProtrusion` returns an object without `Status`; read it from the collection.)
+
+**The parting Z must be exact.** `Body.GetRange` is loose: on the cavity plate it gave the top 0.024 mm
+above the steel (`GetExactRange` was still +0.0001 mm off). A prism that tall left a 0.024 mm slab covering
+the whole footprint on top of the tip (one 4-edge top face instead of the 39-edge mouth). Take the Z from the
+geometry of the top planar face — `Face.Geometry` (`Plane`, Type −1909484335) → `GetRootPoint([in,out]
+double[3])` / `GetNormalVector` — mapped through the occurrence pose.
+
+Then band + block + holes go on top of the neck. Measured: one body, 14 302.3 mm³ (11 features, all OK).
+
+### Concave or convex? (it decides whether a small radius limits the cutter)
+
+`GNTTypePropertyConstants`: **igPlane = −1909484335, igCylinder = −114972029**, igTorus = −114972025,
+igCone = −114972031, igSphere = −114972027 (look them up; guessing swapped plane and cylinder once).
+
+A cylindrical or toroidal face is **concave** (internal corner, hole) when the outward normal at the
+middle of the face points TOWARDS the axis / the tube centre:
+
+```csharp
+// p, n: Face.GetPointAtParam / Face.GetNormal at the middle of Face.GetParamRange  ([in,out] arrays)
+// a, c: Geometry.GetAxisVector and Geometry.GetBasePoint (cylinder) or GetCenterPoint (torus)
+radial = (p - c) - ((p - c)·a) a;                       // cylinder
+outward = cylinder ? radial : p - (c + MajorRadius * unit(radial));
+concave = n · outward < 0;
+```
+
+A machinability check that ignores this flags every external rounded corner: the negative of a cavity
+(an electrode) came out with 84 "unmillable radii", 26 after the filter.
+
+### Splitting an electrode: what the steel predicts, what the booleans refuse (SE 2023, 2026-11-13)
+
+- **The electrode's internal radii can be read from the PART, before building anything.** The CONVEX
+  cylinders/tori of the steel (`IsConcave == false`) below the smallest cutter radius, inside the footprint and
+  below the parting plane, matched the electrode's concave radii one for one on the 15428.100: 26 predicted,
+  26 measured, same radius and same box.
+- **Torus: the wall is where the face turns vertical, at `Rm ± r` — not always outside.** `Torus.MajorRadius`
+  is the tube-centre radius. The fillet on the rim of a recess corner (concave in plan) is the INNER quarter:
+  the face spans `[Rm − r, Rm]` and the wall is at `Rm − r` (measured: Rm 1.297, r 0.302, wall 0.995 from the
+  axis, same plane as the straight fillets' walls). Pick the extreme the face box actually reaches.
+- **`prism − steel` keeps the steel's rounding.** A vertical cut on the wall that a small fillet blends into
+  leaves the whole fillet (the electrode's concave cove) in one piece, tangent to the cut face. No vertical cut
+  removes it; the piece is still not millable. Removing the cove needs a face deletion, and:
+- **`Model.DeleteFaces.Add`, `.AddNoHeal` and `DeleteBlends.Add` return E_FAIL** in synchronous, with a single
+  `Face` and with `Body.CreateCollection(1 /*seFaceCollection*/, 1, object[]{face})`, on a design body (a
+  concave R0.302 of the electrode) and on the CONSTRUCTION copy of the steel (`ConstructionModel.DeleteBlends`/
+  `DeleteFaces` on a convex R0.302). Passing `object[]` from PowerShell does not even marshal. Unsolved.
+- **`BooleanFeatures.Add` (subtract the steel copy) answers E_NOINTERFACE on degenerate contact**, not only on a
+  wrong argument type: (a) the prism side EXACTLY on the wall plane that an R0.1 fillet is tangent to — moving the
+  side 0.0005 mm towards the wall makes it pass, 0.002 mm towards the fillet makes it fail; (b) the prism bottom
+  coplanar with the deepest floor when that floor crosses the prism side (bottom 0.05 mm lower passes). The same
+  call with the whole-electrode footprint is fine.
+- **Holes in synchronous:** `Hole.Faces(n)` → E_FAIL; `Hole.Depth` is WRITABLE and reshapes the hole (volume
+  changed by π r² × Δ exactly). A tapped M6 reports `HoleData.HoleDiameter` = 6 (nominal), the bore is Ø5.
+  To tell whether a blind hole broke out, read the body: the drill-tip cone (`Faces(7 /*igQueryCone*/)`, axis
+  through the hole, `Cone.HalfAngle` in RADIANS ≈ 59°) must have the area π r² / sin α, and each wall cylinder
+  2π r (zmax − zmin). Measured: M6 forced to 16 mm → cone 5.06 of 22.907 mm², shortened in 0.5 mm steps to 14.5.
+- **Removing the cove (filler) works with an extruded CUTOUT in synchronous** (2026-11-13, 15428.100, 8 and 15
+  pieces). Rectangle on a `RefPlanes.AddParallelByDistance` plane at the box mid-height (corners via
+  `Profile.Convert3DCoordinate`), `Model.ExtrudedCutouts.AddFiniteMulti(1, Profile[], 3 /*igSymmetric*/, height)`
+  → `Status = igFeatureOK` and the body loses exactly the cove: (1 − π/4)·r²·L (R0.302 × 23.66 mm: 0.455 measured,
+  0.463 theory). The box is the fillet face's EXACT range (`GetExactRange`; `GetRange` is loose), FLUSH on the
+  faces that stay, and 1 mm past the piece on the divisa side. Flush contact (box face coplanar with the floor that
+  stays, edge on the tangent line) did NOT fail. Traps measured on the way:
+  - the same cutout on the END of an inner torus (rim fillet going round a recess corner) throws
+    **RPC_E_SERVERFAULT (0x80010105) although the feature IS applied** (body −0.0067 mm³, still 1 body): judge by the
+    body volume, not by the exception;
+  - a 1 mm strip that trims a 0.001 mm overlap lamina along the divisa (face 0.001 inside the piece, cutting an
+    R0.1 fillet at a shallow angle) → **E_FAIL** while the cove is there; the same strip AFTER the cove cutout passes;
+  - the prism side 0.001 mm SHORT of the tangent wall (inside the cove) → `BooleanFeatures.Add` E_NOINTERFACE in 2 of
+    8 pieces. Keep the +0.001 overlap and trim the lamina with the strip instead.
+- **GAP (`Model.FaceOffsets.AddEx`) on a freshly built electrode, switched sync → ordered by code** (2026-11-13,
+  15428.100, same 13-arg call as "Aplicar GAP": type 1, blends 194, along 20, −distance, `DispatchWrapper(null)`):
+  - in SYNCHRONOUS the call throws **E_POINTER** (empty typed LiveRules arrays) / **DISP_E_TYPEMISMATCH** (null) and
+    creates nothing — there is no synchronous face offset through this collection; `ModelingMode = 2` takes 0.1–0.2 s;
+  - faces re-found after the switch by type + `GetExactRange` (tolerance 0.2 µm) all match (179/179);
+  - on the whole electrode and on 4 of 8 pieces the feature is born **igFeatureFailed** with every variant
+    (type 1/2 × blends 194/193), even with ONE planar floor face and 0.001 mm; `GetStatusEx` gives no description;
+  - on 2 pieces it works exactly: removed volume = Σ face area × GAP (15.63 vs 15.36; 1.022 vs 1.026 mm³), floor rises
+    0.104 mm, concave radii grow by the GAP (R0.2 → 0.3); the divisa planes stay put;
+  - on 2 other pieces it returns **igFeatureOK while slicing the WHOLE body by a plane** (block and shank cut:
+    −1,409.8 mm³ for a 186 mm³ tip). Never trust Status alone: compare the removed volume with area × GAP.
+- **Where the electrode GAP breaks (T3b, 2026-11-13, whole 15428.100 electrode):** copies saved with
+  `PartDocument.SaveCopyAs` after each stage, switched to ordered, `FaceOffsets.AddEx` −0.10 mm on (a) the deepest
+  floor face and (b) every face below the closing plane: **igFeatureFailed at EVERY stage** — tip only (straight after
+  the `prism − steel` boolean), + neck, + band/block (holes deleted in the copy), + holes. So it is not the neck nor
+  the block: the tip body itself refuses it (yet 2 small split pieces of the same part accepted it in T3).
+  Alternatives, one probe each: `Model.FaceMoves.Add` (14 args, `igFaceMoveAlongFaceNormal`, own face as the normal,
+  0.10 mm, both senses) on the same floor → igFeatureFailed; on a COPY of the steel part (sync → ordered),
+  `FaceOffsets.AddEx` +0.10 mm on ONE pink face → OK (+5.873 mm³, area × 0.10 = 3.658), on all 105 pink faces →
+  igFeatureFailed. Trap: after `feature.Delete()` in ordered, Face objects read before are dead (Area reads 0 and the
+  next AddEx creates nothing) — re-enumerate.
+- **Face-by-face GAP map (T3c, 2026-11-13, whole 15428.100 electrode, ordered copy, −0.10 mm, blends 194):**
+  182 faces below the closing plane; ONE face at a time → 32 OK (29 planes, 3 cylinders) and 150 igFeatureFailed
+  (37/66 planes, 68/71 cylinders, ALL 29 tori, 9 cones, 5 spheres, 2 B-splines); 139 of the 150 failures are a small
+  blend (cylinder/torus R ≤ 0.5) or touch one through an edge. Smallest CONVEX radius of the electrode in the set:
+  R0.1 (4 faces; R0.1 convex cylinders fail alone). The WHOLE set fails at 0.001, 0.01, 0.05 and 0.10 mm and with
+  blends 193 at 0.001 — so it is not only the R ≤ GAP collapse. Chaining faces by "neighbour is a blend R ≤ 0.5"
+  gives one group of 154 faces (fails) + 28 single faces; several singles return OK but remove 2–25× area × GAP.
+  Neighbours were found by shared `Edge.ID` (`Face.Edges`), radii by `Cylinder.Radius` / `Torus.MinorRadius`.
+- **Removing the radii the GAP would erase (T3c items 5–6, 2026-11-13, whole electrode copy in ORDERED):** 14 convex
+  electrode radii with r ≤ GAP + 0.005 (4× R0.1 cylinders, 6× R0.101 cylinders, 4× R0.101 tori).
+  `Model.DeleteBlends.Add(face)` (one IDispatch, dump signature) **works in ordered**: 12 of 14 removed in 2 passes
+  (R0.1: +0.002 mm³ each = sharp edge restored; a torus deletes its whole tangent chain, so the chained cylinders are
+  gone on the next read). The T2 E_FAIL was in SYNCHRONOUS. Two R0.101 cylinders (short, between a torus and a wall)
+  refuse both `DeleteBlends.Add` and `DeleteFaces.Add` (igFeatureFailed) in every pass. After the removals the whole
+  set (165 faces) still fails at 0.10 mm, and so does the set WITHOUT the 24 faces within 1 mm of the 2 leftovers
+  (141 faces): the erased radii are not the only blocker.
+- **Sharp concave corners and region split (T5, 2026-11-16, 15428.100):**
+  - `SharpCornerProbe` read NO edge as "between two planes": `Edge.GetFaces(ref 0, ref object[0])` = SAFEARRAY(VARIANT)
+    placeholder → DISP_E_TYPEMISMATCH swallowed. With `new SolidEdgeGeometry.Face[0]` it reads them (28 candidates),
+    but its sign calibration (outer-box edges) still DIVERGES (11 +, 3 −) on an electrode tip, because
+    `Plane.GetNormalVector` is the surface normal, not the face's. Concavity that worked: outward normals from
+    `Face.GetNormal` at mid-parameter, and "the other face lies on the OUTER side of this face's plane" (a face that
+    straddles the plane, e.g. a long wall at a T-junction, does not decide).
+  - Neck from the closing section with HOLES (regions cut out): `Profile.IncludeEdge` of all loops + one
+    `AddFiniteExtrudedProtrusion` FILLS the holes (+461 mm³); `Profile.End(1|8192)` (allow nested) did not change
+    that. When the section is SEVERAL separate faces, one profile with all loops extruded only 51 of 1,568 mm³ —
+    extrude face by face (re-read the faces after each extrusion) and cut the holes again in the neck layer.
+  - Out-of-process (script), right after a part is closed, calls come back RPC_E_CALL_REJECTED and the next
+    occurrence pose reads fail: register an OLE message filter in the script.

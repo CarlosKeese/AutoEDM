@@ -303,6 +303,24 @@ out of place call `Reorder(want, previousPlaced, After)` (position 0: `Reorder(w
 currentFirst, Before)`). 151 shuffled occurrences took 1.8 s. AutoEDM:
 `AutoEDM.Core/Assembly/PathFinderOrder.cs`, sonda `tools/PathFinderProbe`.
 
+## "Replace with copy" (rename a part without breaking relations) ✅ measured (SE 2023 v223, 2026-11-12)
+
+To give a part a new file name and keep every relation: `File.Copy(old, new)` (byte copy, so face IDs are
+identical) → in the assembly that OWNS the occurrence (`Documents.Open(sub.asm)` for a subassembly,
+`Activate()`) find the occurrence by `OccurrenceFileName` → `occ.Replace(newPath, true)` (ReplaceAll =
+every occurrence of that file in this assembly) → `Save()` that assembly. Measured: the subassembly's
+`GetMatrix` was identical before/after (tower 600.asm), 13 plates in 4 assemblies kept position, and the
+old file stays usable by other assemblies that still reference it.
+- **`Close(false)` on the owning subassembly right after `Replace` DISCARDS the replace** (the in-memory
+  parent went back to the old file). Save it, or don't close it.
+- Reusing a freed name (501.02 given to another part): first replace and save the old user away
+  (501.02 → 502.02), make sure nothing else references the old file, move it to a backup folder, then copy
+  the new source onto the name. Check by geometry afterwards (the new 501.02 measured 62 × 70 × 86, the
+  tube it came from, not the old bracket).
+- `Occurrence.Visible` filters "what is shown on screen"; under a visible subassembly use
+  `SubOccurrence.Visible` / `SubOccurrenceFileName` / `SubOccurrenceDocument` (there is no
+  `OccurrenceFileName` on a `SubOccurrence`).
+
 ## Navigation path
 
 ```

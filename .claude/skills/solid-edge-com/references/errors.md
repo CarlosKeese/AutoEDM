@@ -132,6 +132,19 @@ Rule: never copy, open or close documents while the user has a part in in-place 
 Experiment only on throwaway documents you created yourself. When you need to test a fix on the
 user's real geometry, ask first, and do it on the document itself, with their consent.
 
+## `Documents.Open` of a part DESIGNED IN CONTEXT blocks on a modal question (SE 2023, 2026-11-13)
+
+Opening `701.00.par` alone (an external script, `Documents.Open`) raised a modal box titled "Solid Edge
+2023": *"O componente solicitado em 701.00 foi projetado no contexto da montagem em SALTSPRAY. Deseja abrir
+esta montagem?"* [Sim] [Não]. The COM call does not return until someone answers — a batch looks hung and the
+main-window capture shows nothing (the box is a separate top-level window of `Edge.exe`). Find it with
+`EnumWindows` on the SE process and read its child `Static`; answering **Não** (`BM_CLICK` on the "&Não"
+button) opens only the part and nothing was modified. A watcher that clicks "Não" only on boxes containing
+"projetado no contexto" kept the batch going. Not yet tried: `Application.DisplayAlerts = false` around the
+`Open` (the AutoEDM bridge's `se_abrir_documento` turns alerts off; untested on this dialog). Remember
+[the in-context rule above](#never-savecopyas--documentsopen-a-part-that-is-being-edited-in-context--destructive-se-2023-2026-10-19):
+this was a part designed in context, not one in in-place edit.
+
 ## Ctrl+Z does nothing after a command; `UndoTransactionCount()` reads 0 (SE 2023, 2026-10-29)
 
 **Cause:** the command deleted a sketch that no feature consumed (`ProfileSet.Delete()` of a probe
