@@ -91,7 +91,7 @@ A aba **AutoEDM** tem sete grupos. A coluna **Ambiente** é levada a sério: cad
 | Comando | Ambiente | O que faz |
 |---|---|---|
 | **Analisar (Z)** | qualquer | Lê a peça **sem alterar nada** e propõe quantos eletrodos existem, por nível de profundidade, com a posição de cada um. Junto, faz a [análise de usinabilidade](#análise-de-usinabilidade): o que a sua ferramentaria não consegue produzir e por isso exige erosão. **Selecione a peça a analisar** antes de clicar — sem seleção ele mira pela cor de queima, e o eletrodo também tem faces pintadas. |
-| **Criar eletrodos** | qualquer | Cria uma peça por eletrodo com o bloco da base (holder) modelado e posicionado na montagem. Não salva a montagem. |
+| **Criar eletrodos** | qualquer | Em PEÇA cria a montagem de erosão `<código>_EDM.asm` (origem na face de fechamento e no centro da peça). Acha a queima — rosa "17 - EROS. CAVIDADES" (Ra 1,6) e cores de Ra; o roxo "16" é usinado —, separa por faces vizinhas, une o que cabe num perfil de cobre e mostra o plano; confirmado, constrói cada eletrodo INTEIRO como sólido (negativo da peça dentro da pegada) com faixa, bloco e fixação, e lista o que a fresa não faz (com o GAP), com a posição na montagem. Com faces selecionadas, faz um eletrodo só com elas. Não salva a montagem. |
 | **Criar eletrodo (manual)** | qualquer | Um clique por eletrodo: selecione a(s) face(s) do fundo do bolsão a erodir e ele cria **um** eletrodo, centrado em XY e no Z mais fundo das faces, **já com essas faces copiadas para dentro** (superfície "Queima", na cor de origem, sem vínculo com a cavidade, sem editar em contexto). Identifica o Ra pela cor e grava numa variável da peça. |
 | **Duplicar eletrodo** | qualquer | Selecione um eletrodo que já tem GAP aplicado: gera a cópia de desbaste no **próximo Ra da escada** e a posiciona em todas as ocorrências daquele eletrodo na montagem. |
 
@@ -503,7 +503,7 @@ Assinatura Authenticode só se algum antivírus corporativo passar a barrar o `R
 |---|---|
 | Relatório de coordenadas de queima | ✅ construído |
 | Spec-sheet de eletrodos (Ra/pegada/blank/fixação) | ✅ construído |
-| Criar eletrodos c/ blank (`CreateElectrodesWithBlank`) | ✅ validado no SE |
+| Criar eletrodos inteligente (`CreateSmart`) | 🚧 rodado no SE pelo ensaio de fora em 2026-11-17 (peça real `15428.100`): só rosa, eletrodo inteiro por região, juiz com GAP listando os achados na montagem, modo semiautomático pelas faces selecionadas. Divisão automática (quina/guilhotina) experimental; falta o GAP no modelo e validar pelo botão |
 | Criar Base (bloco + faixa de medição + fixação) | ✅ validado no SE |
 | Criar eletrodo (manual) a partir da seleção | ✅ validado no SE |
 | Unir superfícies (anexar a queima ao bloco) | ✅ validado no SE |

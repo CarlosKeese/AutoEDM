@@ -200,6 +200,25 @@ namespace AutoEDM.Electrode
                 if (bmin[1] < box.MinY) box.MinY = bmin[1]; if (bmax[1] > box.MaxY) box.MaxY = bmax[1];
                 if (bmin[2] < box.MinZ) box.MinZ = bmin[2]; if (bmax[2] > box.MaxZ) box.MaxZ = bmax[2];
             }
+            FillPlanFromBox(plan, box, opt);
+            return plan;
+        }
+
+        /// <summary>
+        /// Dimensiona a base para uma PEGADA informada (caixa em mm, no referencial da peça), sem
+        /// depender de superfícies copiadas: é a entrada do "Criar Eletrodos" automático, em que a
+        /// ponta do eletrodo já é um sólido e a caixa vem do plano. MaxZ = onde a faixa começa.
+        /// </summary>
+        public BlockOverSurfacesPlan PlanForFootprint(BoundingBox box, BlockOverSurfacesOptions opt, string source = "pegada informada")
+        {
+            opt = opt ?? new BlockOverSurfacesOptions();
+            var plan = new BlockOverSurfacesPlan { SurfaceSource = source, SurfacesFound = true };
+            FillPlanFromBox(plan, box, opt);
+            return plan;
+        }
+
+        private void FillPlanFromBox(BlockOverSurfacesPlan plan, BoundingBox box, BlockOverSurfacesOptions opt)
+        {
             plan.Footprint = box;
             plan.FootprintXmm = box.SizeX;
             plan.FootprintYmm = box.SizeY;
@@ -268,8 +287,6 @@ namespace AutoEDM.Electrode
             plan.HasBand = opt.AddMeasurementBand;
             plan.BandBaseZmm = box.MaxZ + opt.GapMm;
             plan.BlockBaseZmm = plan.BandBaseZmm + (plan.HasBand ? opt.BandHeightMm : 0.0);
-
-            return plan;
         }
 
         // ================================================================ BUILD
@@ -291,6 +308,18 @@ namespace AutoEDM.Electrode
             result.Plan = plan;
             foreach (var w in plan.Warnings) { Log.Warn(w); result.Warnings.Add(w); }
             if (!plan.SurfacesFound) return result;
+            return BuildOnPlan(partDoc, opt, plan, preview, result);
+        }
+
+        /// <summary>
+        /// Modela bloco + faixa + fixação para um plano já pronto (de <see cref="Plan"/> ou de
+        /// <see cref="PlanForFootprint"/>). Com <paramref name="preview"/> a peça fica em síncrono.
+        /// </summary>
+        public BlockOverSurfacesResult BuildOnPlan(dynamic partDoc, BlockOverSurfacesOptions opt, BlockOverSurfacesPlan plan,
+            bool preview, BlockOverSurfacesResult result = null)
+        {
+            opt = opt ?? new BlockOverSurfacesOptions();
+            result = result ?? new BlockOverSurfacesResult { Plan = plan };
 
             Log.Info($"Criar Base: pegada {plan.FootprintXmm:0.0}×{plan.FootprintYmm:0.0} mm, centro da pegada " +
                      $"({plan.FootprintCenterXmm:0.0},{plan.FootprintCenterYmm:0.0}), topo Z={plan.SurfacesTopZmm:0.0}; " +
@@ -1164,7 +1193,8 @@ namespace AutoEDM.Electrode
         /// TIPADO de tamanho 0) antes do array vazio; se as duas falharem, loga o TIPO .NET de cada
         /// argumento p/ o próximo round não precisar adivinhar de novo.
         /// </summary>
-        private static object TryApplyGapOffset(List<object> burnFaces, RaGapPresets.Choice choice, dynamic blockModel)
+        internal static object TryApplyGapOffset(List<object> burnFaces, RaGapPresets.Choice choice, dynamic blockModel,
+            int faceOffsetType = 1, int blendRecreation = 194)
         {
             double gapMm = choice.GapMm;
             System.Array farr = ToTypedFaceArray(burnFaces);
@@ -1192,9 +1222,9 @@ namespace AutoEDM.Electrode
                 object[] args =
                 {
                     farr.Length, farr,
-                    1,                          // FaceOffsetType = igFaceOffsetBySynchronousOffset
+                    faceOffsetType,             // FaceOffsetType: 1 = igFaceOffsetBySynchronousOffset (padrão), 2 = igFaceOffsetByOffset
                     0, liveRules[0], liveRules[1], // NumOfLiveRules=0, sem regras ativas
-                    194,                        // BlendRecreation = igIgnoreBlends
+                    blendRecreation,            // BlendRecreation: 194 = igIgnoreBlends (padrão), 193 = igRecreateBlends
                     20,                         // AlongOrReverseVector = igNormal
                     offsetM,                    // offsetDistance (m) — negativo encolhe
                     noRef, noRef,               // ToReferenceEntity, ToKeyPoint — sem referência

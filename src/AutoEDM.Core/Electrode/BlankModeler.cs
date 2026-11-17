@@ -432,6 +432,29 @@ namespace AutoEDM.Electrode
         }
 
         /// <summary>
+        /// Onde ficam os 2 pinos em relação ao centro do bloco: ao longo do MAIOR lado se couber (borda ≥ 2 mm);
+        /// senão (bloco pequeno, ex. QUAD 19) na DIAGONAL a 45°, que aproveita mais espaço até a borda (regra do
+        /// Carlos: "blocos 19×19 -> furos a 45°"). Lógica pura.
+        /// </summary>
+        public static double[][] DowelOffsets(double blockXmm, double blockYmm, FixationPattern fix, out string layout)
+        {
+            double half = fix.DowelCenterDistance / 2.0;
+            double fixEdge = 2.0; // folga mínima do furo até a borda do bloco (mm)
+            double longDim = Math.Max(blockXmm, blockYmm), shortDim = Math.Min(blockXmm, blockYmm);
+            bool axisFits = longDim >= fix.DowelCenterDistance + fix.DowelDiameter + 2 * fixEdge
+                         && shortDim >= fix.DowelDiameter + 2 * fixEdge;
+            if (axisFits)
+            {
+                bool alongX = blockXmm >= blockYmm;
+                layout = "eixo " + (alongX ? "X" : "Y");
+                return alongX ? new[] { new[] { -half, 0.0 }, new[] { half, 0.0 } } : new[] { new[] { 0.0, -half }, new[] { 0.0, half } };
+            }
+            double c = half / Math.Sqrt(2.0); // projeção do meio-vão na diagonal
+            layout = "diagonal 45°";
+            return new[] { new[] { -c, -c }, new[] { c, c } };
+        }
+
+        /// <summary>
         /// Fura a fixação no TOPO da base, cega: M6 central (Ø5×8) + 2×Ø4×9 a 15 mm,
         /// alinhados ao MAIOR lado do blank (quadrado => X). Os perfis são desenhados num
         /// PLANO OFFSET no topo (AddParallelByDistance, aridade 6) — desenhar direto na
@@ -474,25 +497,8 @@ namespace AutoEDM.Electrode
                 // Orientação dos 2×Ø4: ao longo do MAIOR lado SE couber (borda >= fixEdge);
                 // senão (bloco pequeno, ex. QUAD 19) na DIAGONAL a 45°, que aproveita mais
                 // espaço até a borda (regra do Carlos: "blocos 19×19 -> furos a 45°").
-                double half = fix.DowelCenterDistance / 2.0;
-                double fixEdge = 2.0; // folga mínima do furo até a borda do bloco (mm)
-                double longDim = Math.Max(blockXmm, blockYmm), shortDim = Math.Min(blockXmm, blockYmm);
-                bool axisFits = longDim  >= fix.DowelCenterDistance + fix.DowelDiameter + 2 * fixEdge
-                             && shortDim >= fix.DowelDiameter + 2 * fixEdge;
-                double d1x, d1y, d2x, d2y; string layout;
-                if (axisFits)
-                {
-                    bool alongX = blockXmm >= blockYmm;
-                    d1x = alongX ? -half : 0.0; d1y = alongX ? 0.0 : -half;
-                    d2x = alongX ? half : 0.0;  d2y = alongX ? 0.0 : half;
-                    layout = "eixo " + (alongX ? "X" : "Y");
-                }
-                else
-                {
-                    double c = half / Math.Sqrt(2.0); // projeção do meio-vão na diagonal
-                    d1x = -c; d1y = -c; d2x = c; d2y = c;
-                    layout = "diagonal 45°";
-                }
+                double[][] at = DowelOffsets(blockXmm, blockYmm, fix, out string layout);
+                double d1x = at[0][0], d1y = at[0][1], d2x = at[1][0], d2y = at[1][1];
                 Log.Info($"Furos (ModelingMode={mode}): {fix.CenterThread} ROSCADO — broca Ø{fix.CenterTapDrillDiameter:0.#}, " +
                          $"furo {fix.CenterHoleDepth:0.#} (até o ombro, ponta {fix.CenterBottomAngle:0.#}°), " +
                          $"rosca {fix.CenterThreadDepth:0.#}, chanfro {fix.CenterChamferSetback:0.##}×{fix.CenterChamferAngle:0.#}° + " +

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using AutoEDM.Assembly;
 using AutoEDM.Model;
 
@@ -73,6 +74,16 @@ namespace AutoEDM.Electrode
         /// automáticos nunca colidem de nome, mesmo entre sessões do SE (o contador não é um
         /// campo estático). <paramref name="namePrefix"/> já vem pronto (ver
         /// <see cref="ElectrodeNamePrefix"/>), sem sufixo — só concatena o índice.</summary>
+        /// <summary>T9: como <see cref="NextElectrodeIndex(AssemblyContext,string)"/>, mas olhando também os arquivos já gravados
+        /// em <paramref name="folder"/> — rodar de novo (com a _EDM reaberta sem eles) nunca sobrescreve um EE anterior.</summary>
+        public static int NextElectrodeIndex(AssemblyContext ctx, string namePrefix, string folder)
+        {
+            var names = ctx.GetOccurrences().Select(o => o.Name ?? "").ToList();
+            try { if (!string.IsNullOrEmpty(folder) && System.IO.Directory.Exists(folder)) names.AddRange(System.IO.Directory.GetFiles(folder, "*.par").Select(System.IO.Path.GetFileNameWithoutExtension)); }
+            catch { }
+            return ElectrodeNamingLogic.NextIndex(names, namePrefix);
+        }
+
         public static int NextElectrodeIndex(AssemblyContext ctx, string namePrefix)
         {
             int max = 0;

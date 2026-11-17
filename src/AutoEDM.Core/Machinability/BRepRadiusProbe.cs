@@ -36,6 +36,22 @@ namespace AutoEDM.Machinability
         /// <summary>A fresa que o raio aceitaria, quando o problema é só de alcance. Null nos demais casos.</summary>
         public MillingTool RadiusWouldAccept { get; set; }
 
+        /// <summary>Eixo do cilindro/toro (vetor unitário, referencial do corpo). Null se ilegível.</summary>
+        public double[] AxisDir { get; set; }
+
+        /// <summary>Ponto do eixo (mm, referencial do corpo): base do cilindro ou centro do toro. Null se ilegível.</summary>
+        public double[] AxisPointMm { get; set; }
+
+        /// <summary>Raio MAIOR do toro (mm); 0 no cilindro.</summary>
+        public double MajorRadiusMm { get; set; }
+
+        /// <summary>Caixa da face (mm, referencial do corpo). Null se ilegível.</summary>
+        public double[] FaceMinMm { get; set; }
+        public double[] FaceMaxMm { get; set; }
+
+        /// <summary>A face é côncava (material por fora do raio)? Null quando não deu para decidir.</summary>
+        public bool? Concave { get; set; }
+
         /// <summary>Linha pronta para o usuário (pt-BR, vírgula decimal e unidade explícita).</summary>
         public string Describe()
         {
@@ -158,10 +174,19 @@ namespace AutoEDM.Machinability
                 }
                 measured++;
 
+                // Só curvatura CÔNCAVA limita a fresa (canto interno, furo, raio de fundo). Um raio
+                // CONVEXO — quina externa arredondada, pino — é feito pelo flanco da ferramenta, com
+                // qualquer diâmetro. Sem este filtro o NEGATIVO de uma cavidade (o eletrodo) saía
+                // reprovado em todos os cantos que na cavidade eram internos e nele são externos
+                // (medido em 2026-11-11: 84 "raios" reprovados num eletrodo do 15428.100).
+                bool? concave = IsConcave(face, torus);
+                if (concave == false) continue;
+
                 // Profundidade: do topo do corpo até o ponto mais fundo da face. Sem range,
                 // julga só o raio (profundidade 0 nunca reprova por alcance).
                 double minZ = 0, maxZ = 0, depth = 0;
-                if (FaceGeometry.TryGetRangeMm(face, out double[] mn, out double[] mx))
+                bool hasRange = FaceGeometry.TryGetRangeMm(face, out double[] mn, out double[] mx);
+                if (hasRange)
                 {
                     minZ = mn[2]; maxZ = mx[2];
                     if (hasTop) depth = Math.Max(0.0, topZmm - minZ);
@@ -190,7 +215,7 @@ namespace AutoEDM.Machinability
                     verdict = MachinabilityVerdict.HoleBeyondMillReach;
                 }
 
-                into.Add(new SmallRadiusHit
+                var hit = new SmallRadiusHit
                 {
                     FaceId = TryFaceId(face),
                     Kind = torus ? kind : (fullTurn ? "furo/pino" : "canto"),
@@ -202,10 +227,76 @@ namespace AutoEDM.Machinability
                     Verdict = verdict,
                     RadiusWouldAccept = verdict == MachinabilityVerdict.BeyondReach
                         ? ladder.BestFor(radiusMm, 0)
-                        : null
-                });
+                        : null,
+                    Concave = concave,
+                    FaceMinMm = hasRange ? mn : null,
+                    FaceMaxMm = hasRange ? mx : null
+                };
+                FillAxis(face, torus, hit);
+                into.Add(hit);
             }
             return measured;
+        }
+
+        /// <summary>
+        /// As faces de cilindro/toro CONVEXAS (material por dentro do raio: quina externa arredondada) com raio
+        /// abaixo de <paramref name="belowRadiusMm"/>. Na PEÇA a erodir, são exatamente as que viram raio INTERNO
+        /// no eletrodo (o negativo dela): servem para prever, antes de construir, onde o eletrodo não é fresável.
+        /// Furo/pino de volta completa fica de fora (na peça, pino convexo não vira canto do eletrodo: vira furo).
+        /// SOMENTE LEITURA; nunca lança.
+        /// </summary>
+        public static IReadOnlyList<SmallRadiusHit> ProbeConvex(object comBody, double belowRadiusMm)
+        {
+            var hits = new List<SmallRadiusHit>();
+            if (comBody == null) return hits;
+            foreach (bool torus in new[] { false, true })
+            {
+                dynamic faces;
+                try { faces = ((dynamic)comBody).Faces[torus ? igQueryTorus : igQueryCylinder]; }
+                catch (Exception ex) { Log.Warn("Raios convexos: consulta indisponível — " + ex.GetBaseException().Message); continue; }
+                int n = 0;
+                try { n = (int)faces.Count; } catch { }
+                for (int i = 1; i <= n; i++)
+                {
+                    object face;
+                    try { face = faces.Item(i); } catch { continue; }
+                    if (!TryRadiusMm(face, torus, out double radiusMm, out string _)) continue;
+                    if (radiusMm >= belowRadiusMm - 1e-6) continue;
+                    if (IsConcave(face, torus) != false) continue;
+                    if (!torus && IsFullRevolution(face)) continue;
+                    var hit = new SmallRadiusHit
+                    {
+                        FaceId = TryFaceId(face),
+                        Kind = torus ? "raio de canto" : "canto",
+                        RadiusMm = radiusMm,
+                        Verdict = MachinabilityVerdict.BelowMinimumRadius,
+                        Concave = false
+                    };
+                    // Caixa EXATA: a T2c tira o enchimento do raio pela caixa da face, rente a ela (a GetRange é folgada).
+                    if (FaceGeometry.TryGetExactRangeMm(face, out double[] mn, out double[] mx))
+                    { hit.MinZmm = mn[2]; hit.MaxZmm = mx[2]; hit.FaceMinMm = mn; hit.FaceMaxMm = mx; }
+                    FillAxis(face, torus, hit);
+                    hits.Add(hit);
+                }
+            }
+            return hits;
+        }
+
+        /// <summary>Eixo, ponto do eixo e raio maior (toro), pelas mesmas leituras do <see cref="IsConcave"/>.</summary>
+        private static void FillAxis(object face, bool torus, SmallRadiusHit hit)
+        {
+            try
+            {
+                object geometry = (object)((dynamic)face).Geometry;
+                if (!FaceGeometry.TryOneArrayOut(geometry, "GetAxisVector", out double[] a, out string _)) return;
+                double al = Math.Sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+                if (al < 1e-12) return;
+                if (!FaceGeometry.TryOneArrayOut(geometry, torus ? "GetCenterPoint" : "GetBasePoint", out double[] o, out string _)) return;
+                hit.AxisDir = new[] { a[0] / al, a[1] / al, a[2] / al };
+                hit.AxisPointMm = new[] { Units.MToMm(o[0]), Units.MToMm(o[1]), Units.MToMm(o[2]) };
+                if (torus) hit.MajorRadiusMm = Units.MToMm((double)((dynamic)geometry).MajorRadius);
+            }
+            catch { }
         }
 
         /// <summary>
@@ -213,6 +304,69 @@ namespace AutoEDM.Machinability
         /// o raio MENOR: é ele o arredondamento que a fresa tem de caber, não a volta que ele dá.
         /// A API devolve METROS.
         /// </summary>
+        /// <summary>
+        /// A face curva é CÔNCAVA (material por fora do raio: canto interno, furo)? Compara a normal
+        /// para fora do material, no meio da face, com a direção que sai do eixo (cilindro) ou do
+        /// centro do tubo (toro). null quando a geometria não deixa decidir — quem chama trata como
+        /// côncava, que é o lado conservador.
+        /// </summary>
+        internal static bool? IsConcave(object comFace, bool torus)
+        {
+            try
+            {
+                if (!TryMidPointAndNormal(comFace, out double[] p, out double[] n)) return null;
+                object geometry = (object)((dynamic)comFace).Geometry;
+                if (!FaceGeometry.TryOneArrayOut(geometry, "GetAxisVector", out double[] a, out string _)) return null;
+                double al = Math.Sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+                if (al < 1e-12) return null;
+                a = new[] { a[0] / al, a[1] / al, a[2] / al };
+
+                double[] origin;
+                if (!FaceGeometry.TryOneArrayOut(geometry, torus ? "GetCenterPoint" : "GetBasePoint", out origin, out string _)) return null;
+                double[] v = { p[0] - origin[0], p[1] - origin[1], p[2] - origin[2] };
+                double along = v[0] * a[0] + v[1] * a[1] + v[2] * a[2];
+                double[] radial = { v[0] - along * a[0], v[1] - along * a[1], v[2] - along * a[2] };
+
+                double[] outward;
+                if (!torus) outward = radial;
+                else
+                {
+                    double rl = Math.Sqrt(radial[0] * radial[0] + radial[1] * radial[1] + radial[2] * radial[2]);
+                    if (rl < 1e-12) return null;
+                    double major = (double)((dynamic)geometry).MajorRadius;
+                    double[] tube = { origin[0] + major * radial[0] / rl, origin[1] + major * radial[1] / rl, origin[2] + major * radial[2] / rl };
+                    outward = new[] { p[0] - tube[0], p[1] - tube[1], p[2] - tube[2] };
+                }
+                double dot = n[0] * outward[0] + n[1] * outward[1] + n[2] * outward[2];
+                double ol = Math.Sqrt(outward[0] * outward[0] + outward[1] * outward[1] + outward[2] * outward[2]);
+                if (ol < 1e-12) return null;
+                return dot < 0;   // a normal aponta PARA o eixo: o material está por fora — côncava
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Ponto (metros) e normal para fora do material no meio do domínio paramétrico da face.</summary>
+        private static bool TryMidPointAndNormal(object face, out double[] point, out double[] normal)
+        {
+            point = null; normal = null;
+            object[] range = { new double[2], new double[2] };
+            var m2 = new System.Reflection.ParameterModifier(2); m2[0] = true; m2[1] = true;
+            face.GetType().InvokeMember("GetParamRange", System.Reflection.BindingFlags.InvokeMethod, null, face, range,
+                new[] { m2 }, System.Globalization.CultureInfo.InvariantCulture, null);
+            double[] lo = (double[])range[0], hi = (double[])range[1];
+            double[] mid = { (lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0 };
+
+            var m3 = new System.Reflection.ParameterModifier(3); m3[1] = true; m3[2] = true;
+            object[] pa = { 1, (double[])mid.Clone(), new double[3] };
+            face.GetType().InvokeMember("GetPointAtParam", System.Reflection.BindingFlags.InvokeMethod, null, face, pa,
+                new[] { m3 }, System.Globalization.CultureInfo.InvariantCulture, null);
+            object[] na = { 1, (double[])mid.Clone(), new double[3] };
+            face.GetType().InvokeMember("GetNormal", System.Reflection.BindingFlags.InvokeMethod, null, face, na,
+                new[] { m3 }, System.Globalization.CultureInfo.InvariantCulture, null);
+            point = (double[])pa[2]; normal = (double[])na[2];
+            return point != null && normal != null && point.Length >= 3 && normal.Length >= 3;
+        }
+
         private static bool TryRadiusMm(object comFace, bool torus, out double radiusMm, out string error)
         {
             radiusMm = 0; error = null;

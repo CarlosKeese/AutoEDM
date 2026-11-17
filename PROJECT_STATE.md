@@ -83,7 +83,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 |---|---|
 | Relatório de coordenadas de queima | ✅ construído |
 | Spec-sheet de eletrodos | ✅ construído |
-| Criar eletrodos c/ blank | ✅ validado no SE |
+| Criar eletrodos (inteligente, 2026-11-12) | 🚧 **rodado no SE pela ponte** no `15428.100`: montagem `_EDM` a partir da peça, queima rosa + roxo não fresável, união por perfil de cobre, eletrodo SÓLIDO (prisma − peça) com faixa, bloco e fixação. Falta: dividir o não usinável, corte a fio, GAP e pintura no fluxo, validar pelo botão — `docs/PLANO_CRIAR_ELETRODOS.md` |
 | Criar Base | ✅ validado no SE |
 | Criar eletrodo (manual) | ✅ validado no SE; janela de seleção por clique **validada (2026-09-24)** — face à vista pelo raio do cursor, centro certo com faces de vários postiços, 11–20 ms por clique |
 | Unir superfícies | ✅ validado no SE |
@@ -101,7 +101,7 @@ nenhum botão e nenhuma outra ferramenta trocam o ambiente.
 | Modelagem por primitivas (`se_modelar`) | ✅ **validada no SE (2026-09-18)** — exemplo `carrinho`: 6 primitivas, 0 falhas, **corpo único** |
 | Autonomia do agente (`se_captura`, `se_documentos`, `se_ativar/abrir/fechar_documento`, `se_selecionar`, `se_com_ler`, `se_com_chamar`) | ✅ **validada no SE pela ponte (2026-11-10)** — captura da tela, seleção realçada, leitura e chamada livres da API COM; `McpAutoStart` + `McpAutoWrite`; `tools/ciclo-se.ps1` fecha a SE, instala e reabre sozinho |
 | Botões da ribbon via MCP (15 ferramentas) + `se_trocar_ambiente` | 🚧 escritos (2026-09-21), compilam, catálogo coberto por teste; **aguardando o 1º run no SE** (exige trocar add-in + servidor MCP) |
-| Testes de unidade | ✅ 727 passando, 0 falhas (2026-11-10) |
+| Testes de unidade | ✅ 739 passando, 0 falhas (2026-11-12) |
 | Alojamento de O'ring (ISO 3601) | ✅ **validado no SE (2026-09-21)** — canal de face e de eixo como coroa concêntrica extrudada: acompanha o furo movido **e** a mudança de Ø; nome do anel com instância, laranja de vedação, lado da pressão; eixo/furo pela normal da face; catálogo métrico DL Seals opcional |
 | Aplicar GAP | 🚧 corrigido, **aguardando confirmação final no SE** |
 | Duplicar eletrodo p/ próximo Ra | 🚧 construído, **aguardando validação no SE** |

@@ -56,7 +56,7 @@ namespace AutoEDM.Mcp
 
                 // --- os botões da ribbon, um a um: a MESMA tabela Specs do ElectrodeRibbon ---
                 { "se_trocar_ambiente",       new Requirement(DocKind.Part,     ModelingEnv.Any) },
-                { "se_criar_eletrodos",       new Requirement(DocKind.Assembly, ModelingEnv.Any) },
+                { "se_criar_eletrodos",       new Requirement(DocKind.Any,      ModelingEnv.Any) },   // em peça, cria a montagem _EDM
                 { "se_criar_eletrodo_manual", new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_nova_peca",             new Requirement(DocKind.Assembly, ModelingEnv.Any) },
                 { "se_porta_molde_plano",     new Requirement(DocKind.Assembly, ModelingEnv.Any) },

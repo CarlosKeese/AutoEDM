@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -148,36 +148,50 @@ namespace AutoEDM.Mcp
         /// aqui a conferência é a própria chamada sem 'confirmar' — o agente mostra o texto ao
         /// usuário e só chama de novo com 'confirmar' depois do sim dele.
         /// </summary>
+        /// <summary>
+        /// "Criar eletrodos" inteligente (docs/PLANO_CRIAR_ELETRODOS.md): em PEÇA cria a montagem _EDM; acha a
+        /// queima (rosa, cores de Ra, roxo que a fresa não faz), divide, une o que cabe numa barra e, com
+        /// 'confirmar', constrói cada eletrodo SÓLIDO com base. Sem 'confirmar' só devolve o plano.
+        /// </summary>
         private static string CreateElectrodes(dynamic app, dynamic doc, string argsJson)
         {
             AutoEdmConfig cfg = AutoEdmConfig.LoadOrCreateDefault();
             ElectrodeBuilder builder = NewBuilder(app, cfg);
             ElectrodeParams p = cfg.ToElectrodeParams();
 
-            ZAnalysisResult res = builder.AnalyzeElectrodesByZ(doc, p);
-            if (res.Electrodes.Count == 0)
-                return "Nenhum eletrodo detectado (sem cor de queima MAPEADA). Nada foi criado.\n\n" + res.DescribeBurnDetection();
+            var o = new SmartElectrodeOptions();
+            o.Plan.MarginMm = ReadDouble(argsJson, "margemMm", o.Plan.MarginMm, 0.0, 10.0);
+            o.Plan.MergeGapMm = ReadDouble(argsJson, "folgaUniaoMm", o.Plan.MergeGapMm, 0.0, 200.0);
+            o.Plan.Merge = ReadBool(argsJson, "unir", true);
+            o.IncludeMachinedNotMillable = ReadBool(argsJson, "roxoNaoFresavel", false);
+            // T9: sem "dividir" (ou false) = eletrodo INTEIRO; "quina" (T6–T8) e true/"guilhotina" (T2) são experimentais.
+            o.Split = SplitModes.Parse(ReadToken(argsJson, "dividir"), out string splitNote);
+            o.UseSelection = ReadBool(argsJson, "usarSelecao", true);
+            o.SplitRules.AlignToleranceDeg = ReadDouble(argsJson, "toleranciaAlinhamentoGraus", 5.0, 0.0, 10.0);
+            o.ApplyGap = ReadBool(argsJson, "aplicarGap", false);
+            // ensaio da T2c: quanto o pedaço que fica com o enchimento passa da divisa (negativo = para antes dela)
+            o.SplitRules.CoveOverlapMm = ReadDouble(argsJson, "sobreposicaoDivisaMm", o.SplitRules.CoveOverlapMm, -0.01, 0.01);
+            o.SplitRules.MinPieceMm = ReadDouble(argsJson, "larguraMinimaMm", o.SplitRules.MinPieceMm, 0.5, 50.0);
+            o.SplitRules.MaxPieces = (int)ReadDouble(argsJson, "maxPedacos", o.SplitRules.MaxPieces, 1.0, 100.0);
+            double m6 = ReadDouble(argsJson, "profFuroM6Mm", 0.0, 0.0, 40.0);   // ensaio da T2b: forçar um furo que estoura
+            if (m6 > 0) o.Fixation = new FixationPattern { CenterHoleDepth = m6 };
+            bool build = ReadBool(argsJson, "confirmar", false);
 
-            if (!ReadBool(argsJson, "confirmar", false))
+            SmartElectrodeReport report = builder.CreateSmart(doc, p, o, build);
+            if (report.Failure != null) return "RECUSADO: " + report.Failure + Environment.NewLine + Environment.NewLine + report.Describe();
+
+            var sb = new StringBuilder();
+            sb.AppendLine(build ? "CRIAÇÃO — a montagem NÃO foi salva." : "PLANO — nada foi criado ainda.");
+            if (splitNote != null) sb.AppendLine(splitNote);
+            sb.AppendLine();
+            sb.AppendLine(report.Describe());
+            if (!build && report.Electrodes.Count > 0)
             {
-                var sb = new StringBuilder();
-                sb.AppendLine($"CONFERÊNCIA — nada foi criado ainda. {res.Electrodes.Count} eletrodo(s) seriam criados.");
                 sb.AppendLine();
-                sb.AppendLine(res.DescribeBurnDetection());
-                if (res.HasDominantUnmappedColor)
-                    sb.AppendLine("\nATENÇÃO: a maior região colorida está numa cor FORA do mapa de queima — a detecção pode estar " +
-                                  "olhando a cor errada.");
-                sb.AppendLine();
-                sb.Append("Mostre isto ao usuário. Se ele confirmar que a queima está CERTA, chame de novo com " +
-                          "\"confirmar\": true — cria uma peça VAZIA por eletrodo na subpasta 'Eletrodos' e insere " +
-                          "posicionada. A montagem NÃO é salva.");
-                return sb.ToString();
+                sb.Append("Mostre o plano ao usuário. Para construir: \"confirmar\": true. Ajustes: \"margemMm\" (pegada além das " +
+                          "faces, padrão 1), \"unir\": false (um eletrodo por região), \"folgaUniaoMm\" (distância máxima para unir, padrão 5).");
             }
-
-            int n = builder.CreateElectrodesWithBlank(doc, p);
-            return $"{n} eletrodo(s) criado(s) e posicionado(s). A montagem NÃO foi salva.\n\n" +
-                   "Próximo passo (do usuário): revisar, SALVAR a montagem, editar cada peça em contexto, copiar as faces " +
-                   "de queima e então 'se_criar_base' em cada peça.";
+            return sb.ToString();
         }
 
         private static string CreateElectrodeManual(dynamic app, dynamic doc)
@@ -1041,6 +1055,28 @@ namespace AutoEDM.Mcp
                 foreach (string l in captured.Skip(Math.Max(0, captured.Count - max))) sb.AppendLine(l);
                 return sb.ToString();
             }
+        }
+
+        /// <summary>O valor cru de um argumento: "true"/"false" para booleano, o texto para string, o número; null se ausente.</summary>
+        private static string ReadToken(string argsJson, string name)
+        {
+            if (string.IsNullOrWhiteSpace(argsJson)) return null;
+            try
+            {
+                using (JsonDocument d = JsonDocument.Parse(argsJson))
+                {
+                    if (!d.RootElement.TryGetProperty(name, out JsonElement el)) return null;
+                    switch (el.ValueKind)
+                    {
+                        case JsonValueKind.True: return "true";
+                        case JsonValueKind.False: return "false";
+                        case JsonValueKind.String: return el.GetString();
+                        case JsonValueKind.Number: return el.GetRawText();
+                    }
+                }
+            }
+            catch { }
+            return null;
         }
 
         private static string ReadString(string argsJson, string name)

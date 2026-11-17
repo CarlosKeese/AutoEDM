@@ -396,43 +396,44 @@ namespace AutoEDM.AddIn
             });
         }
 
-        /// <summary>Cria as peças de eletrodo (vazias) e as posiciona. ESCREVE na montagem. A
-        /// base (bloco/holder) é gerada depois, pela "Criar Base", sobre a geometria real.</summary>
+        /// <summary>
+        /// "Criar eletrodos" inteligente (regras do Carlos de 2026-11-10; docs/PLANO_CRIAR_ELETRODOS.md): em PEÇA
+        /// cria a montagem _EDM; mostra o PLANO (queima achada, regiões, eletrodos, barra de cada um) e, com o
+        /// sim do usuário, constrói cada eletrodo como sólido com base. A montagem não é salva.
+        /// </summary>
         private void CriarEletrodos()
         {
             Run(CmdCriarEletrodos, (connector, doc, p) =>
             {
                 var builder = NewBuilder(connector);
+                var options = new SmartElectrodeOptions();
+                // T9: com faces selecionadas, UM eletrodo só com elas. A seleção é lida AGORA: o plano abre a _EDM e ela some.
+                var selNotes = new System.Collections.Generic.List<string>();
+                options.Selection = ElectrodeBuilder.ReadSelectionForSmart(doc, selNotes);
+                int selected = options.Selection.Count;
 
-                // CONFERIR ANTES DE CRIAR (Log 57): mostra a queima detectada + as cores não
-                // mapeadas; se a maior região colorida não estiver mapeada, avisa. Assim o
-                // usuário não cria eletrodos em cor RESIDUAL quando a queima real está fora do mapa.
-                Selection.ZAnalysisResult res = builder.AnalyzeElectrodesByZ(doc, p);
-                if (res.Electrodes.Count == 0)
+                SmartElectrodeReport plan = builder.CreateSmart(doc, p, options, build: false);
+                if (plan.Failure != null || plan.Electrodes.Count == 0)
                 {
-                    MessageBox.Show(
-                        "Nenhum eletrodo detectado (sem cor de queima MAPEADA). Nada foi criado.\n\n" +
-                        "Veja no log as cores encontradas — a queima pode estar numa cor fora do mapa.",
+                    MessageBox.Show(plan.Describe() + Environment.NewLine + Environment.NewLine + "Nada foi criado.",
                         "AutoEDM — Criar eletrodos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    Log.Info("Criar eletrodos: nada detectado.");
                     return;
                 }
 
-                var icon = res.HasDominantUnmappedColor ? MessageBoxIcon.Warning : MessageBoxIcon.Question;
                 var confirm = MessageBox.Show(
-                    res.DescribeBurnDetection() +
-                    "\n\nIsto vai CRIAR uma peça VAZIA por eletrodo (sem bloco/base ainda) na subpasta 'Eletrodos' " +
-                    "ao lado da montagem e inseri-las posicionadas. A montagem NÃO será salva automaticamente.\n\n" +
-                    "A queima detectada está CORRETA? Criar os eletrodos?",
-                    "AutoEDM — Conferir antes de criar", MessageBoxButtons.YesNo, icon);
+                    (selected > 0 ? $"1 eletrodo com {selected} face(s) selecionada(s)." + Environment.NewLine + Environment.NewLine : "") +
+                    plan.Describe() + Environment.NewLine + Environment.NewLine +
+                    "Cada eletrodo nasce como SÓLIDO (negativo da peça dentro da pegada) com faixa de medição, bloco e " +
+                    "fixação, na subpasta 'Eletrodos'. A montagem NÃO será salva automaticamente." +
+                    Environment.NewLine + Environment.NewLine + "Criar os eletrodos?",
+                    "AutoEDM — Conferir antes de criar", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (confirm != DialogResult.Yes) { Log.Info("Criação cancelada pelo usuário (conferência)."); return; }
 
-                int n = builder.CreateElectrodesWithBlank(doc, p);
-                MessageBox.Show(
-                    $"{n} eletrodo(s) criado(s) e posicionado(s).\n\n" +
-                    "Revise, SALVE a montagem, edite cada peça em contexto, copie (Inter-Part Copy) as faces de " +
-                    "queima e use 'Criar Base' para gerar o bloco.",
-                    "AutoEDM — Criar eletrodos", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // O plano pode ter criado e ativado a montagem de erosão: a construção roda nela.
+                dynamic target = plan.Assembly ?? (object)doc;
+                SmartElectrodeReport done = builder.CreateSmart(target, p, options, build: true);
+                MessageBox.Show(done.Describe(), "AutoEDM — Criar eletrodos", MessageBoxButtons.OK,
+                    done.Built.Exists(x => !x.Ok) ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             });
         }
 
@@ -1648,7 +1649,7 @@ namespace AutoEDM.AddIn
             {
                 // --- montagem: nada aqui depende do ambiente de modelagem de peça ---
                 { CmdAnalisarZ,           new CommandSpec("ANALISAR ELETRODOS (Z)",               DocKind.Assembly, ModelingEnv.Any) },
-                { CmdCriarEletrodos,      new CommandSpec("CRIAR ELETRODOS",                      DocKind.Assembly, ModelingEnv.Any) },
+                { CmdCriarEletrodos,      new CommandSpec("CRIAR ELETRODOS",                      DocKind.Any,      ModelingEnv.Any) },   // em peça, cria a montagem _EDM
                 { CmdCriarEletrodoManual, new CommandSpec("CRIAR ELETRODO (MANUAL, da seleção)",  DocKind.Assembly, ModelingEnv.Any) },
                 { CmdEletrodoInterpolacao, new CommandSpec("ELETRODO DE INTERPOLAÇÃO",            DocKind.Assembly, ModelingEnv.Any) },
                 { CmdNovaPeca,            new CommandSpec("NOVA PEÇA (MOLDE)",                   DocKind.Assembly, ModelingEnv.Any) },

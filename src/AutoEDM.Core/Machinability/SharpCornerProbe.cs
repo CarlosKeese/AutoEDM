@@ -28,6 +28,10 @@ namespace AutoEDM.Machinability
         /// <summary>Inclinação da aresta em relação a Z (graus). 0 = canto perfeitamente vertical.</summary>
         public double TiltDeg { get; set; }
 
+        /// <summary>Meio da aresta em planta (mm, referencial do corpo) — para agrupar por região (T5).</summary>
+        public double MidXmm { get; set; }
+        public double MidYmm { get; set; }
+
         /// <summary>Linha pronta para o usuário (pt-BR, vírgula decimal e unidade explícita).</summary>
         public string Describe()
         {
@@ -155,7 +159,8 @@ namespace AutoEDM.Machinability
                     MaxZmm = Math.Max(a[2], b[2]),
                     LengthMm = len,
                     WallAngleDeg = wallAngleDeg,
-                    TiltDeg = tiltDeg
+                    TiltDeg = tiltDeg,
+                    MidX = midX, MidY = midY
                 });
             }
 
@@ -179,7 +184,8 @@ namespace AutoEDM.Machinability
                     LengthMm = c.LengthMm,
                     DepthMm = Math.Max(0.0, topZmm - c.MinZmm),
                     WallAngleDeg = c.WallAngleDeg,
-                    TiltDeg = c.TiltDeg
+                    TiltDeg = c.TiltDeg,
+                    MidXmm = c.MidX, MidYmm = c.MidY
                 });
             }
 
@@ -227,7 +233,7 @@ namespace AutoEDM.Machinability
             public object Edge;
             public int Sign;
             public bool OnOuterBox;
-            public double MinZmm, MaxZmm, LengthMm, WallAngleDeg, TiltDeg;
+            public double MinZmm, MaxZmm, LengthMm, WallAngleDeg, TiltDeg, MidX, MidY;
         }
 
         private static bool IsLine(object comEdge)
@@ -251,7 +257,9 @@ namespace AutoEDM.Machinability
             object[] faces;
             try
             {
-                object[] args = { 0, new object[0] };
+                // [in,out] SAFEARRAY(IDispatch): o marcador tem de ser TIPADO (Face[0]); object[0] vira SAFEARRAY(VARIANT) e
+                // dá DISP_E_TYPEMISMATCH (skill, errors.md) — medido 2026-11-16: com object[0] TODA aresta caía em "sem 2 faces planas".
+                object[] args = { 0, new SolidEdgeGeometry.Face[0] };
                 var mod = new System.Reflection.ParameterModifier(2);
                 mod[0] = true;
                 mod[1] = true;

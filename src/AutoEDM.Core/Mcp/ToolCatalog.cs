@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace AutoEDM.Mcp
@@ -332,13 +332,27 @@ namespace AutoEDM.Mcp
                 Writes = true,
                 InputSchemaJson =
                     "{\"type\":\"object\",\"properties\":{" +
-                    "\"confirmar\":{\"type\":\"boolean\",\"description\":\"false (padrão) = só a CONFERÊNCIA da queima detectada, nada é criado. true = cria.\"}}," +
+                    "\"confirmar\":{\"type\":\"boolean\",\"description\":\"false (padrão) = só o PLANO, nada é criado. true = constrói os eletrodos.\"}," +
+                    "\"margemMm\":{\"type\":\"number\",\"minimum\":0,\"maximum\":10,\"description\":\"Quanto a pegada do eletrodo passa da caixa das faces de queima, por lado. Padrão 1.\"}," +
+                    "\"unir\":{\"type\":\"boolean\",\"description\":\"Unir regiões próximas num eletrodo só quando a pegada couber num perfil de cobre. Padrão true.\"}," +
+                    "\"folgaUniaoMm\":{\"type\":\"number\",\"minimum\":0,\"maximum\":200,\"description\":\"Distância máxima, em planta, entre regiões para poderem ser unidas. Padrão 5.\"}," +
+                    "\"roxoNaoFresavel\":{\"type\":\"boolean\",\"description\":\"Tratar como queima as faces usinadas (roxo, estilo 16) que a fresa não alcança. Padrão false (Carlos, 2026-11-17: só o rosa queima; roxo é usinado no aço).\"}," +
+                    "\"dividir\":{\"type\":[\"boolean\",\"string\"],\"description\":\"EXPERIMENTAL. Ausente ou false (padrão) = eletrodo INTEIRO por região; o juiz lista cada achado (com o GAP do Ra) com a posição na montagem. \\\"quina\\\" = divisão pelo plano da parede do canto reprovado (T6–T8). true ou \\\"guilhotina\\\" = guilhotina de borda a borda pelos raios (T2).\"}," +
+                    "\"usarSelecao\":{\"type\":\"boolean\",\"description\":\"Com faces selecionadas (peça aberta ou peça na montagem), constrói UM eletrodo só com elas e avisa as faces rosa não selecionadas dentro da pegada. Padrão true; false ignora a seleção e varre a peça.\"}," +
+                    "\"toleranciaAlinhamentoGraus\":{\"type\":\"number\",\"minimum\":0,\"maximum\":10,\"description\":\"Quanto o eixo de um raio pode fugir de Z ou de X/Y e ainda ganhar corte (canto com saída). Padrão 5 (decisão do Carlos, 2026-11-16); 0 desliga.\"}," +
+                    "\"larguraMinimaMm\":{\"type\":\"number\",\"minimum\":0.5,\"maximum\":50,\"description\":\"Menor largura de um pedaço da divisão. Padrão 2.\"}," +
+                    "\"maxPedacos\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100,\"description\":\"Máximo de pedaços por eletrodo; acima disso a divisão é abandonada. Padrão 12.\"}," +
+                    "\"profFuroM6Mm\":{\"type\":\"number\",\"minimum\":0,\"maximum\":40,\"description\":\"Ensaio: profundidade forçada do furo M6 da fixação (0 = a padrão). O furo que estoura o cobre é encurtado.\"}," +
+                    "\"aplicarGap\":{\"type\":\"boolean\",\"description\":\"Recuar as faces de queima o GAP do Ra (Ra 1,6 → 0,10 mm; Ra 3,2 → 0,20 mm); a peça do eletrodo termina em ORDENADO. Padrão false: em ensaio (o recuo ainda sai com falha).\"}}," +
                     "\"additionalProperties\":false}",
                 Description =
-                    "Botão 'Criar eletrodos'. MONTAGEM ativa. Sem 'confirmar' devolve só a CONFERÊNCIA — a queima detectada " +
-                    "por cor e quantos eletrodos sairiam — sem criar nada: MOSTRE ao usuário e só chame com 'confirmar':true " +
-                    "depois do sim dele (é a pergunta que o botão faz). Com 'confirmar' cria uma peça VAZIA por eletrodo na " +
-                    "subpasta 'Eletrodos' e insere posicionada. Não salva a montagem."
+                    "Botão 'Criar eletrodos' (inteligente). Numa PEÇA cria/abre a montagem de erosão '<código>_EDM.asm' com a peça " +
+                    "no zero-máquina (origem na face de fechamento, centro em X e Y). Numa MONTAGEM usa-a como está. Acha a queima em " +
+                    "todas as peças — rosa '17 - EROS. CAVIDADES' (Ra 1,6) e cores de Ra; o roxo '16' é usinado e só entra com 'roxoNaoFresavel' —, " +
+                    "divide por faces vizinhas, une regiões que cabem num perfil de cobre e reconhece geometria idêntica. Sem " +
+                    "'confirmar' devolve só o PLANO: MOSTRE ao usuário. Com 'confirmar' constrói cada eletrodo como SÓLIDO " +
+                    "(prisma sobre a pegada menos o corpo da peça) com faixa de medição, bloco e fixação, e insere em cada posição. Com faces selecionadas (e 'usarSelecao'), um eletrodo só com elas. " +
+                    "Não salva a montagem."
             },
             new ToolSpec
             {

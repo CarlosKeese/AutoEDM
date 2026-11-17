@@ -50,6 +50,7 @@ Atualizar o add-in exige o SE **fechado** (DLLs travados). Logs: `%LOCALAPPDATA%
 | Cópia entre peças (Inter-Part): o que já falhou | `docs/INTER-PART.md` |
 | Descobrir API por introspecção | `docs/GUIA_SOLID_EDGE_COM.md`, `docs/INDEX.md`, `docs/api/` |
 | Porta-molde | `docs/PLANO_MOLDE.md` |
+| "Criar Eletrodos" inteligente: diagnóstico, rota provada e decisões em aberto | `docs/PLANO_CRIAR_ELETRODOS.md` |
 | Validações pendentes no SE | `docs/PLANO_TESTE_SE.md` |
 
 Desatualizados (não confiar sem conferir): `docs/PROJECT.md` (roadmap de julho/2026) e a seção in-place de
